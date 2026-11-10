@@ -1,0 +1,226 @@
+# media-wireless-sync — App PC "cầu nối" gửi video sang điện thoại qua WiFi
+
+> Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
+> thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1).
+> **Đổi giao thức = sửa tệp này trước, rồi sửa cả hai phía** (bản bên `video-player` phải giống hệt mục 6).
+> Mục 3 là đề xuất gốc; bố cục thật của repo ở `CLAUDE.md`.
+
+---
+
+## 1. App PC là gì (và không là gì)
+
+Điện thoại có thư viện video. Máy tính có video (tải về, quay màn hình, xuất từ trình dựng). App PC là **cái ống** nối hai
+đầu qua WiFi nhà: kéo thả video vào là nó chảy sang điện thoại, đứt mạng thì tự nối lại, xong thì im lặng.
+
+- **Là**: cầu nối đẩy (PC → điện thoại) là chính, kéo về (điện thoại → PC) là phụ. Chạy nền ở khay hệ thống.
+- **Không là**: trình phát video, trình quản lý thư viện, trình sửa video. Không có "đồng bộ hai chiều" kiểu Dropbox
+  (không xoá hộ, không tự kéo mọi thứ về). Điện thoại là chủ thư viện; PC chỉ gửi và nhận khi được bảo.
+
+Trang web (`http://<ip>:<port>` + PIN) trên điện thoại vẫn còn cho máy lạ / dùng một lần. App PC dành cho **máy của
+mình, dùng hằng ngày**: ghép một lần, sau đó không phải gõ gì nữa.
+
+## 2. Triết lý thiết kế
+
+1. **Không bắt người dùng nghĩ về mạng.** Không bao giờ hỏi IP/cổng ở luồng chính: dò bằng mDNS, nhớ thiết bị theo
+   `id` (không theo IP — IP DHCP đổi hoài). Ô "nhập địa chỉ tay" chỉ nằm trong mục nâng cao (mạng chặn multicast).
+2. **Ghép một lần, tin lâu dài.** PIN 6 số chỉ dùng lúc ghép. Sau đó dùng token lâu dài, cất trong kho khoá của hệ
+   điều hành (Keychain / Credential Manager / Secret Service) — không bao giờ ghi ra file cấu hình thường.
+3. **Hàng đợi là trung tâm, không phải nút "Gửi".** Mọi thứ người dùng thả vào thành một mục trong hàng đợi bền
+   (ghi đĩa). Tắt app, sập điện, đổi WiFi, điện thoại tắt sync → mở lại vẫn còn nguyên, tự chạy tiếp từ byte cuối.
+4. **Tiếp tục, không làm lại.** Upload luôn dùng giao thức nối tiếp (§6.5). Đứt giữa chừng 3 GB không bao giờ gửi lại từ
+   đầu (trừ khi điện thoại đã tắt server — phiên upload mất, §6.5).
+5. **Điện thoại là nguồn sự thật.** Trước khi gửi, hỏi danh sách: trùng tên + cỡ thì bỏ qua (báo "đã có"). Tên trên
+   điện thoại có thể khác tên gửi (điện thoại tự đổi khi trùng) — tin vào phản hồi, không tự đoán.
+6. **Im lặng khi ổn, rõ ràng khi hỏng.** Không popup cho từng file xong. Một thông báo hệ thống khi cả lô xong. Lỗi thì
+   nói việc người dùng phải làm ("Bật Sync WiFi trên điện thoại", "Điện thoại hết chỗ — cần thêm 1,2 GB"), không nói mã
+   HTTP.
+7. **Lõi tách khỏi giao diện.** Một crate lõi không phụ thuộc UI (dò, ghép, hàng đợi, truyền), có test riêng; UI kit
+   Rust chỉ vẽ trạng thái và gửi lệnh. Sau này làm CLI hay bản khác chỉ việc dùng lại lõi.
+8. **Nhẹ và lịch sự với máy.** Không quét ổ cứng. Không giữ CPU khi rảnh. Băng thông: mặc định hết cỡ, có tuỳ chọn giới
+   hạn. Một file một lúc cho mỗi điện thoại (điện thoại ghi đĩa tuần tự nhanh hơn ghi song song).
+
+## 3. Kiến trúc đề xuất (gốc — bố cục thật ở `CLAUDE.md`)
+
+```
+pc-app/
+  core/            crate thư viện, không UI
+    discovery      mDNS browse `_vpsync._tcp`, + địa chỉ tay; phát sự kiện Online/Offline theo device id
+    pairing        POST /api/v1/pair, cất/xoá token trong keyring
+    client         HTTP thuần: info, list, download (Range), upload nối tiếp
+    queue          hàng đợi bền (SQLite hoặc JSON append-only), máy trạng thái từng mục, retry/backoff
+    watch          (tuỳ chọn) thư mục "Gửi sang điện thoại": file mới ổn định → vào hàng đợi
+  app/             UI kit của chủ dự án: khay hệ thống + cửa sổ
+```
+
+- Lõi chạy trên một runtime async (tokio) riêng; UI nhận **ảnh chụp trạng thái** qua channel (không chia sẻ mutex với UI).
+- Crate gợi ý (cân nhắc theo UI kit đang dùng): `mdns-sd` (dò), `reqwest` hoặc `hyper` (stream thân request từ file,
+  không đọc cả file vào RAM), `keyring` (token), `directories` (đường dữ liệu), `rusqlite` hoặc `serde_json` (hàng đợi),
+  `notify` (theo dõi thư mục), `uuid` (client id).
+- Client id: UUID sinh một lần lúc cài, lưu cạnh cấu hình. Tên client: tên máy (`hostname`), cho đổi.
+
+## 4. Màn hình
+
+Ít, phẳng, mỗi màn một việc.
+
+1. **Khay hệ thống** (luôn có): biểu tượng có 3 trạng thái — rảnh / đang gửi (kèm %) / cần chú ý. Menu: mở cửa sổ,
+   tạm dừng tất cả, thoát.
+2. **Cửa sổ chính** = một vùng thả lớn + hàng đợi bên dưới.
+   - Đầu cửa sổ: thiết bị đang chọn (tên điện thoại, chấm xanh/xám online). Nhiều điện thoại thì là menu chọn.
+   - Thả file/thư mục vào (hoặc nút "Chọn video…"): chỉ nhận đuôi video (§6.6); thư mục thì lấy video bên trong (đệ quy).
+   - Hàng đợi: mỗi dòng = tên, cỡ, thanh tiến độ, tốc độ, trạng thái; nút tạm dừng / huỷ / thử lại. Mục xong gom vào
+     "Đã gửi" (gập được), giữ 7 ngày rồi tự dọn.
+3. **Thư viện điện thoại** (tab phụ): danh sách từ `GET /api/v1/list` — tên, cỡ, ngày. Chọn → "Tải về…" (vào hàng đợi
+   chiều ngược lại, tải tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
+4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
+   điện thoại dò thấy (chưa ghép). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
+5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
+   thông, khởi động cùng hệ thống, địa chỉ tay (nâng cao).
+
+Văn bản: tiếng Việt + tiếng Anh theo ngôn ngữ hệ thống. Dùng chữ "Gửi sang điện thoại" / "Tải về máy", tránh chữ
+"upload/sync" với người dùng.
+
+## 5. Máy trạng thái
+
+### Thiết bị
+
+```
+Unknown ─(mDNS thấy, chưa có token)→ Discovered ─(PIN đúng)→ Paired
+Paired ──(mDNS thấy + GET /api/v1/info → paired:true)→ Online
+Online ─(mất mDNS 30 s / lỗi kết nối)→ Offline ─(thấy lại)→ Online
+Online/Offline ─(info trả paired:false hoặc 401)→ NeedsRepair   (điện thoại đã "Quên máy tính")
+```
+
+- `Offline` là bình thường (điện thoại chưa bật Sync WiFi). Hàng đợi chờ, không báo lỗi; nhắc nhẹ trên khay:
+  "Bật Sync WiFi trên điện thoại để gửi N video".
+- Khi thấy lại thiết bị ở IP mới: cập nhật địa chỉ, không hỏi gì.
+
+### Mục upload
+
+```
+Queued → Checking (list: trùng tên+cỡ? → Skipped)
+       → Creating (POST /uploads → upload id, lưu ngay vào hàng đợi)
+       → Sending  (PATCH theo khúc; sau mỗi khúc lưu offset)
+       → Done (201 + mục thư viện)            ← lưu tên thật trên điện thoại
+Lỗi mạng / 5xx / 503 → Waiting (backoff 2 s, 4 s … tối đa 60 s) → HEAD lấy offset → Sending
+404 upload id (server đã tắt) → Creating lại từ đầu
+409 Upload-Offset lệch → HEAD → tiếp từ offset đúng
+415 / 413 → Failed (không thử lại; nói lý do)
+507 → Paused (hết chỗ; báo số GB thiếu; người dùng bấm thử lại)
+File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã thay đổi"
+```
+
+## 6. Giao thức v1 (điện thoại = server, PC = client)
+
+### 6.1 Chung
+
+- HTTP/1.1 thường (không TLS) trên LAN. **Mỗi kết nối đúng một request** — server luôn trả `Connection: close`. Đừng
+  dùng keep-alive pool (hoặc tắt nó: `reqwest::ClientBuilder::pool_max_idle_per_host(0)`).
+- Server đọc chờ tối đa 60 s không nhận byte nào thì đóng. Tối đa 16 kết nối đồng thời; quá thì `503` + `Retry-After: 2`.
+- Header tên file: URL-encoded UTF-8 (percent-encoding mọi byte ngoài ASCII in được).
+- Lỗi: thân `text/plain` ngắn, chỉ để log; client quyết theo **mã trạng thái**.
+- Xác thực: `Authorization: Bearer <token>`. Token từ §6.3 (lâu dài) hoặc từ đăng nhập trang web (sống tới khi tắt server).
+- Server chỉ chạy khi người dùng bật Sync WiFi trên điện thoại (foreground service, có thông báo). Android 15+ giới hạn
+  ~6 giờ/ngày: hết hạn mức thì server tự tắt → client thấy `Offline`.
+
+### 6.2 Dò thiết bị
+
+- mDNS/DNS-SD: kiểu dịch vụ **`_vpsync._tcp`**, tên instance = tên điện thoại (có thể bị hệ thống thêm hậu tố
+  ` (2)` khi trùng). TXT:
+  - `api=1` — phiên bản giao thức; client bỏ qua thiết bị có `api` lớn hơn bản mình hiểu… nhưng vẫn gọi `info`.
+  - `id=<16 ký tự hex>` — id cố định của điện thoại (giữ qua lần bật/tắt, đổi khi cài lại app). **Khoá nhận dạng.**
+- Địa chỉ lấy từ bản ghi SRV/A của mDNS. Có thể có nhiều địa chỉ: chọn IPv4 cùng subnet với PC trước.
+- Nhập tay: `ip:port` (màn điện thoại hiện sẵn), rồi `GET /api/v1/info` để lấy `id`.
+
+### 6.3 Thông tin + ghép đôi
+
+`GET /api/v1/info` — không cần xác thực.
+```json
+{"app":"xmobile.videoplayer","api":1,"id":"3f9a0c1d2b4e5a67","name":"Pixel 8","paired":false}
+```
+`paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
+
+`POST /api/v1/pair` — không cần xác thực.
+- Header: `X-Client-Id: <8–64 ký tự [A-Za-z0-9_-]>` (UUID của PC), `X-Client-Name: <URL-encoded, ≤ 64 ký tự>` (tuỳ chọn, thiếu thì "PC"),
+  `Content-Type: text/plain`, `Content-Length`.
+- Thân: PIN 6 số (đang hiện trên màn điện thoại; PIN mới mỗi lần bật server).
+- `200` →
+  ```json
+  {"token":"<64 hex>","id":"3f9a0c1d2b4e5a67","name":"Pixel 8"}
+  ```
+  Token lâu dài, sống qua lần bật/tắt server và khởi động lại máy. Ghép lại cùng `X-Client-Id` → token cũ mất hiệu lực.
+  Điện thoại nhớ tối đa 16 máy (máy lâu không dùng nhất bị bỏ).
+- `400` thiếu/sai header · `403` sai PIN · `429` + `Retry-After: <giây>` khi sai 5 lần liền (khoá 30 s, chung cả trang
+  web) · `411`/`413` thân thiếu/quá dài.
+
+`DELETE /api/v1/pair` — Bearer. Máy PC tự "quên điện thoại": huỷ token trên điện thoại. `204`.
+Điện thoại cũng có nút "Quên các máy tính đã ghép" → mọi token lâu dài chết → PC nhận `401` → `NeedsRepair`.
+
+### 6.4 Danh sách + tải về
+
+`GET /api/v1/list` — Bearer. `200`:
+```json
+{"items":[{"id":"…","name":"clip.mp4","size":7340032,"modified":1762761600000,"mime":"video/mp4"}]}
+```
+- `id` là chuỗi mờ (opaque), dùng nguyên văn trong URL (URL-encode khi ghép đường dẫn). Không suy luận gì từ nó.
+- `modified`: mili giây Unix. Mới nhất trước. Gồm thư viện của app ở mọi nơi lưu (bộ nhớ riêng, `Movies/VideoPlayer`, thư mục lưu người dùng chọn).
+
+`GET` / `HEAD /api/v1/file/<id>` — Bearer. Tải về; hỗ trợ `Range: bytes=a-b` (một khoảng), `If-Range` với `ETag`,
+`206`/`416`; `Content-Disposition` có `filename*`. Tải tiếp: lưu `ETag`, gửi `Range: bytes=<đã có>-` + `If-Range: <etag>`;
+nhận `200` (file đã đổi) thì ghi lại từ đầu.
+
+### 6.5 Upload nối tiếp (kiểu tus rút gọn)
+
+1. **Tạo** — `POST /api/v1/uploads`, Bearer, không thân (`Content-Length: 0`).
+   Header: `X-File-Name: <URL-encoded>` (chỉ lấy phần tên, không thư mục), `Upload-Length: <tổng byte, > 0>`.
+   - `201` + `Location: /api/v1/uploads/<uid>` + thân `{"id":"<uid>","offset":0,"length":<tổng>}`
+   - `415` không phải đuôi video · `507` không đủ chỗ (cần tổng + 16 MB) · `400` thiếu header · `503` quá nhiều phiên
+     upload dở (tối đa 8).
+2. **Gửi khúc** — `PATCH /api/v1/uploads/<uid>`, Bearer.
+   Header: `Upload-Offset: <byte bắt đầu khúc này>`, `Content-Length: <cỡ khúc, > 0>`, `Content-Type:
+   application/offset+octet-stream`. Thân: byte thô.
+   - `204` + `Upload-Offset: <offset mới>` — chưa đủ, gửi khúc tiếp.
+   - `201` + thân mục thư viện (như một phần tử của `list`) — **khúc cuối, file đã vào thư viện**. `name` có thể khác tên
+     gửi (trùng thì điện thoại đổi).
+   - `409` + `Upload-Offset: <offset đúng>` — offset gửi lên lệch. Tiếp từ offset đúng.
+   - `423` — đang có một PATCH khác cho cùng upload. Chờ rồi `HEAD`.
+   - `413` — khúc vượt quá `Upload-Length`. `404` — không có upload này (server đã tắt/khởi động lại, hoặc quá hạn) → tạo lại.
+   - Đứt kết nối giữa khúc: phần byte đã tới **được giữ**. Client `HEAD` để biết offset thật rồi gửi tiếp.
+   - Khúc gợi ý: 32 MB. Mỗi khúc một kết nối mới; đứt giữa khúc không mất byte đã tới, nên khúc lớn chỉ tiết kiệm bắt
+     tay TCP — đừng nhỏ hơn 4 MB.
+3. **Hỏi offset** — `HEAD /api/v1/uploads/<uid>`, Bearer → `200` + `Upload-Offset`, `Upload-Length`. `404` như trên.
+4. **Huỷ** — `DELETE /api/v1/uploads/<uid>`, Bearer → `204`, file tạm bị xoá.
+
+Vòng đời phiên upload: chỉ trong bộ nhớ điện thoại khi server chạy. Tắt Sync WiFi / app bị kill → mọi phiên dở bị huỷ,
+file tạm xoá → PC nhận `404` → tạo lại từ 0. Phiên không có byte mới trong 60 phút cũng bị huỷ.
+
+### 6.6 Đuôi video nhận
+
+`mp4 m4v mov mkv webm ts 3gp avi flv` (không phân biệt hoa thường). Lọc phía PC cho khỏi phí
+một request; server vẫn kiểm (`415`).
+
+### 6.7 API cũ (trang web, vẫn chạy)
+
+`GET /` trang · `POST /api/login` (thân PIN → cookie) · `GET /api/list` (mảng JSON) · `GET /api/file/<id>` ·
+`PUT /api/upload` (một phát, không nối tiếp). App PC **không** dùng các route này.
+
+## 7. Kiểm thử
+
+- **Không cần điện thoại thật**: Android emulator + `adb forward tcp:18080 tcp:8080` → nhập tay `127.0.0.1:18080`
+  (mDNS không qua được `adb forward`; để kiểm dò thì dùng điện thoại thật cùng WiFi).
+- Bật server trên emulator: mở app → menu → Sync WiFi → Bật (hoặc `adb shell am start -n
+  com.xmobile.videoplayer/.sync.ui.SyncActivity` với bản debug). PIN hiện trên màn hình.
+- `curl` mẫu:
+  ```bash
+  curl -s http://127.0.0.1:18080/api/v1/info
+  curl -s -X POST -H 'X-Client-Id: 0e5e6d0c-test' -H 'X-Client-Name: My%20PC' --data '123456' http://127.0.0.1:18080/api/v1/pair
+  curl -s -i -X POST -H "Authorization: Bearer $T" -H 'X-File-Name: a.mp4' -H 'Upload-Length: 7340032' http://127.0.0.1:18080/api/v1/uploads
+  curl -s -i -X PATCH -H "Authorization: Bearer $T" -H 'Upload-Offset: 0' --data-binary @part0 http://127.0.0.1:18080/api/v1/uploads/$U
+  ```
+- Lõi PC nên có test với một server giả trong tiến trình (cùng hợp đồng §6) cho các ca: đứt giữa khúc, `409`, `404`
+  phiên mất, `507`, `401` sau khi bị quên, IP đổi giữa chừng.
+
+## 8. Ngoài phạm vi v1 (đừng làm trước)
+
+Xoá video trên điện thoại từ PC · đồng bộ thư mục hai chiều · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
+(điện thoại phải tự bật Sync WiFi) · nhiều điện thoại gửi song song cùng lúc (cho phép chọn, nhưng hàng đợi mỗi máy chạy
+tuần tự) · iOS (chờ phía iOS cài giao thức này).
