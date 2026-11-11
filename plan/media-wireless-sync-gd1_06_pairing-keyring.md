@@ -11,6 +11,19 @@
 | Phụ thuộc mới | `keyring` (MIT/Apache; Linux qua Secret Service — soát cây phụ thuộc không kéo `libdbus` LGPL, dùng backend thuần Rust nếu có) |
 | File đụng tới | MỚI `crates/core/src/pairing.rs`; SỬA `crates/core/src/config.rs` (danh sách thiết bị đã ghép: `id`, tên hiển thị, địa chỉ cuối) |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_02 -->
+
+- **`Secret` đã có ở `protocol::Secret`** (`new`, `expose`, `Debug` che, không `Display` / `Serialize`) — dùng lại, đừng định
+  nghĩa thêm.
+- **Đã có sẵn**: `PhoneClient::pair(&Secret pin, client_id, client_name) -> PairResponse { token: Secret, id, name }` (không tự
+  giữ token: cất kho khoá rồi `set_token(Some(..))`), `unpair()`, `info().paired`. `client_name` tự cắt 64 ký tự + URL-encode.
+- **Lỗi**: `WrongPin` (403), `RateLimited { retry_after: Option<Duration> }` (429 — lần sai thứ 5 đã trả 429), `Unauthorized`
+  (401 ⇒ `NeedsRepair`), `BadRequest` (client id sai dạng: 8–64 ký tự `[A-Za-z0-9_-]`).
+- **`fake_phone`**: `PIN = "123456"`, `forget_tokens()` (C2), `issue_token(client_id)` bỏ qua bước PIN, `restart()` reset khoá PIN.
+- **Soát lại**: `cargo test -p mws-core --test client c1` (luồng ghép), `tests/real_phone.rs` (app thật, PIN lấy trên màn Sync WiFi).
+
 ## 1. Làm gì
 - `pair(device, pin)` ⇒ `POST /api/v1/pair` với `clientId` / `clientName` ⇒ token vào kho khoá OS (khoá `media-wireless-sync/<device id>`), thiết bị vào config (không token).
 - Sai PIN / `429` trả lỗi có `retry_after` cho UI đếm ngược.

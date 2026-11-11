@@ -11,6 +11,25 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/core/src/transfer/{mod,upload,throttle}.rs`, `crates/core/tests/upload.rs` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_02 -->
+
+- **Đã có sẵn**: `client::PhoneClient` (`upload_create(name, length, dir: Option<&str>)`, `upload_patch(uid, offset, reader,
+  len) -> PatchOutcome::{Partial(u64), Done(LibraryItem)}`, `upload_head -> UploadStatus`, `upload_delete`, `list`),
+  `client::CHUNK_SIZE` (32 MB), `protocol::{is_video_name, normalize_dir, feature::DIRS}`, `Info::has_feature`.
+- **`upload_patch` nhận `AsyncRead` đã seek** tới `offset` (vd `tokio::fs::File` + `seek`) — runner giữ tệp, kiểm
+  `size`/`mtime`, bọc token bucket quanh reader. Bộ đọc trong client đọc đúng `len` byte, buffer 64 KB.
+- **Lỗi để quyết** (`ClientError`): `Network(_)` ⇒ `upload_head` rồi gửi tiếp; `OffsetMismatch(o)` ⇒ tiếp từ `o`;
+  `NotFound` ⇒ tạo lại từ 0; `InsufficientStorage` ⇒ Paused; `Unauthorized` ⇒ `DeviceNeedsRepair`; `Locked` ⇒ chờ + HEAD;
+  `Busy { retry_after }`; `Local(_)` (đọc tệp nguồn hỏng / tệp ngắn hơn khúc, `UnexpectedEof`) ⇒ Failed, đừng thử lại.
+- **Địa chỉ đổi (C7, C-W3b)**: một `PhoneClient` = một `SocketAddr`; đổi địa chỉ ⇒ dựng client mới (rẻ), cùng `uid`.
+- **`fake_phone`** (`tests/fake_phone/mod.rs`, `mod fake_phone;`): `issue_token`, `cut_next_patch_after(n)`, `restart()`
+  (mất phiên ⇒ 404), `fail_next(507|503|…, retry_after)`, `set_free_space`, `set_features(&[])` (không `dirs`),
+  `set_discard_data(true)` (upload lớn không tốn RAM test), `files()`, `connections()`, `v4()` / `v6()` (cùng cổng). Chưa có
+  "đổi cổng giữa chừng": thêm nút vào tệp này (vd nghe thêm một listener cổng khác dùng chung `state`).
+- **Soát lại**: `cargo test -p mws-core --test client`; mục 9 của `plan/media-wireless-sync-gd1_02_protocol-client.md`.
+
 ## 0. Bàn giao từ gd1_03 (11/11/2026)
 
 <!-- handoff: media-wireless-sync-gd1_03 -->

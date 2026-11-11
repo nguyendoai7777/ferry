@@ -13,11 +13,18 @@ dirs = "6"
 gethostname = "1"
 interprocess.workspace = true
 log.workspace = true
+# Mã hoá tên tệp / thư mục trong header (PROTOCOL 6.1, 6.9). MIT/Apache.
+percent-encoding = "2"
+# Client HTTP v1 (PROTOCOL 6): không TLS, không HTTP/2, không proxy hệ thống; `stream` cho thân PATCH đọc dần từ đĩa. MIT/Apache.
+reqwest = { version = "0.13", default-features = false, features = ["stream"] }
 # Hàng đợi bền (`queue::store`). MIT; SQLite biên dịch kèm (public domain), không phụ thuộc thư viện hệ thống.
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sys-locale = "0.3"
+tokio = { version = "1", features = ["io-util"] }
+# `ReaderStream`: thân PATCH đọc từng khúc nhỏ từ tệp, không đọc cả khúc 32 MB vào RAM. MIT.
+tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 # `clientId` (PROTOCOL 6.3): UUID v4 từ nguồn ngẫu nhiên của OS.
 uuid = { version = "1", default-features = false, features = ["std", "v4"] }
@@ -28,6 +35,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 tempfile = "3"
+# Server giả `tests/fake_phone` (TCP thô) + test async.
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 
 [lints]
 workspace = true

@@ -11,6 +11,22 @@
 | Phụ thuộc mới | `mdns-sd` (MIT/Apache) — đo RAM / CPU rảnh của `mws` trước / sau |
 | File đụng tới | MỚI `crates/core/src/{discovery,device}.rs` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_02 -->
+
+- **Đã có sẵn**: `client::PhoneClient::new(addr: SocketAddr, device: Option<&DeviceId>, token)` — một client một địa chỉ,
+  host giả `<id>.vpsync.invalid` + `resolve` (v4 / v6 / v6 + `scope_id` đều chạy, đã test). Happy eyeballs = đua nhiều
+  `PhoneClient` (`info()`), client tự không đổi địa chỉ. `connect_timeout` 10 s (`client::CONNECT_TIMEOUT`) — đua thì tự
+  `tokio::time::timeout`.
+- **`protocol::Info`**: `id: DeviceId`, `api`, `port: Option<u16>` (điện thoại cũ `None` ⇒ cổng đang nối), `addresses:
+  Vec<String>` (IP không cổng, không link-local), `features`, `paired`; `protocol::API_VERSION = 1`.
+- Nhập tay chưa biết `id` ⇒ `PhoneClient::new(addr, None, None).info()` rồi dựng lại với `Some(&info.id)`.
+- `ClientError::Network(e)`: `e.kind()` = `ConnectionRefused` khi nối hỏng (địa chỉ chết), `TimedOut`, `Other` đứt giữa chừng.
+- **`fake_phone`** (`tests/fake_phone/mod.rs`) nghe cả `127.0.0.1` và `[::1]` cùng cổng, `info.addresses = ["127.0.0.1",
+  "::1"]`; C-W3b ("chỉ nghe `[::1]`") cần thêm nút vào tệp này (vd `start_v6_only`).
+- **Bẫy**: `adb forward` chỉ nghe `127.0.0.1` ⇒ IPv6 / mDNS thật phải dùng điện thoại thật cùng WiFi.
+
 ## 1. Làm gì
 - Browse `_vpsync._tcp`; đọc TXT `api`, `id`; thứ tự địa chỉ theo PROTOCOL 6.2 (xem bổ sung W-3 dưới). `api` lớn hơn bản hiểu ⇒ vẫn gọi `info`, đánh dấu "cần cập nhật app".
 - Địa chỉ tay `ip:port` ⇒ `info` lấy `id`; lưu vào config là danh sách địa chỉ thử định kỳ (thưa, không poll dày).

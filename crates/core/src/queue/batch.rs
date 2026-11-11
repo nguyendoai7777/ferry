@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use super::UnixMs;
 
-/// Đuôi video điện thoại nhận (`PROTOCOL.md` 6.6), so không phân biệt hoa thường.
-pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "ts", "3gp", "avi", "flv"];
+/// Đuôi video điện thoại nhận (`PROTOCOL.md` 6.6) — một nguồn ở `protocol` (gd1_02).
+pub use crate::protocol::VIDEO_EXTENSIONS;
 
 /// Trần độ sâu khi duyệt (điện thoại nhận tối đa 8 cấp `dir`, §6.9; dư cho đích đã có vài cấp).
 const MAX_DEPTH: usize = 32;
