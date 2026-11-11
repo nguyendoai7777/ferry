@@ -1,9 +1,14 @@
 //! Khay chờ gửi (PROTOCOL 4.2): danh sách ngắn tệp / thư mục đã chọn, bỏ được từng mục, và nút "Gửi sang điện thoại…".
+//! App điện thoại chưa có `dirs` (§6.9) ⇒ không có hộp chọn nơi lưu: nút thành "Gửi sang điện thoại" (gửi luôn vào gốc)
+//! và khay báo cần cập nhật app trên điện thoại.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use ferry_core::device::DeviceState;
 use ferry_core::i18n::I18n;
+use ferry_core::ipc::DeviceView;
+use ferry_core::protocol::feature;
 use materiant::button::{Button, IconButton, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{App, ElementId, IntoElement, SharedString, Window, div, px};
@@ -65,11 +70,18 @@ pub fn known_size(tray: &[TrayEntry]) -> Option<u64> {
     (!tray.is_empty() && tray.iter().all(|e| !e.is_dir)).then(|| tray.iter().map(|e| e.size).sum())
 }
 
+/// Điện thoại đang online mà `info.features` không có `dirs`: app trên điện thoại quá cũ để chọn nơi lưu. Offline ⇒
+/// `false` (chưa biết chắc; hộp chọn tự hiện danh sách lần trước).
+pub fn lacks_dirs(d: &DeviceView) -> bool {
+    d.state == DeviceState::Online && !d.features.iter().any(|f| f == feature::DIRS)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn send_tray(
     i18n: &I18n,
     tray: &[TrayEntry],
     can_send: bool,
+    no_dirs: bool,
     on_remove: Rc<dyn Fn(usize, &mut Window, &mut App)>,
     on_clear: Rc<dyn Fn(&mut Window, &mut App)>,
     on_send: Rc<dyn Fn(&mut Window, &mut App)>,
@@ -144,13 +156,23 @@ pub fn send_tray(
                                 .on_click(move |_, window, cx| on_clear(window, cx)),
                         )
                         .child(
-                            Button::new("tray-send", i18n.t("main.send"))
+                            Button::new("tray-send", i18n.t(if no_dirs { "main.send_root" } else { "main.send" }))
                                 .size(Size::Sm)
                                 .disabled(!can_send)
                                 .on_click(move |_, window, cx| on_send(window, cx)),
                         ),
                 ),
         )
+        .when(no_dirs, |d| {
+            d.child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .text_xs()
+                    .text_color(c.warning)
+                    .child(SharedString::from(i18n.t("main.tray_no_dirs").to_owned())),
+            )
+        })
         .child(
             ScrollArea::new("tray-scroll")
                 .vertical()
@@ -180,6 +202,16 @@ mod tests {
         assert_eq!(known_size(&tray), None);
         assert_eq!(known_size(&tray[..3]), Some(6));
         assert_eq!(known_size(&[]), None);
+    }
+
+    #[test]
+    fn texts_for_phone_without_dirs() {
+        for lang in [Language::Vi, Language::En] {
+            let i18n = I18n::new(lang);
+            for key in ["main.send_root", "main.tray_no_dirs"] {
+                assert_ne!(i18n.t(key), key, "{lang:?} {key}");
+            }
+        }
     }
 
     #[test]

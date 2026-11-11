@@ -97,6 +97,7 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
 - **Dò mDNS** (`discovery`, gd1_05): test `--test discovery` C2 chạy mDNS thật trong tiến trình (cần interface ngoài
   loopback, không có thì tự bỏ qua). Kiểm điện thoại thật: `cargo run -p ferry-core --example discover`. Link-local cần
   `scope_id` (index interface nhận bản ghi); config lưu dạng `[fe80::x%en0]:port` (tên, không index — index đổi sau khởi động).
+- **App điện thoại chưa có `dirs`** (§6.9; bản `xmobile.videoplayer` 11/2026 vẫn chưa có `features`): không có hộp chọn nơi lưu — `send_tray::lacks_dirs` (chỉ khi online) ⇒ nút "Gửi sang điện thoại" gửi thẳng vào gốc, khay báo cần cập nhật app điện thoại; offline thì vẫn mở hộp chọn. Thử hộp chọn cần điện thoại có `dirs` (hoặc `fake_phone`).
 - **Tường lửa chặn mDNS** (W-6, `ferry_core::firewall`): Linux `ufw` bật (`/etc/ufw/ufw.conf` `ENABLED=yes`, đọc không cần root)
   và chưa có dấu đã cho phép ⇒ `Snapshot::mdnsFirewall` ngay từ ảnh chụp đầu (tắt khi mDNS thấy điện thoại) ⇒ vào màn Thêm điện
   thoại là tự mở hộp thoại xin quyền (một lần mỗi lần mở màn; "Để sau" còn nút mở lại) ⇒ `PhoneOp::AllowMdnsFirewall` ⇒ `pkexec /bin/sh -c "<ufw> allow in proto udp to 224.0.0.251 port 5353 comment 'ferry mDNS'

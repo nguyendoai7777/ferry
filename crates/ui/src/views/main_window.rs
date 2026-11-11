@@ -29,7 +29,7 @@ use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
 use super::phone_library::{LibraryEvent, PhoneLibrary};
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
-use super::send_tray::{self, TrayEntry, send_tray};
+use super::send_tray::{self, TrayEntry, lacks_dirs, send_tray};
 use super::settings::{SettingsEvent, SettingsPage};
 use super::side_nav::{self, Active, NavItem, SideNav};
 use crate::fmt;
@@ -290,6 +290,11 @@ impl MainWindow {
         if self.tray.is_empty() {
             return;
         }
+        // App điện thoại chưa có `dirs` (§6.9): không chọn nơi lưu được, mọi thứ vào gốc ⇒ gửi luôn, khay đã báo.
+        if self.model.read(cx).current().is_some_and(lacks_dirs) {
+            self.send(String::new(), window, cx);
+            return;
+        }
         let mode = BrowserMode::Destination {
             what: send_tray::summary(&self.i18n, &self.tray),
             bytes: send_tray::known_size(&self.tray),
@@ -399,6 +404,7 @@ impl MainWindow {
             (paired, selected, m.connected(), m.current().cloned())
         };
         let has_phone = device.is_some();
+        let no_dirs = device.as_ref().is_some_and(lacks_dirs);
 
         let header = {
             let w1 = weak.clone();
@@ -445,6 +451,7 @@ impl MainWindow {
                 &i18n,
                 &self.tray,
                 has_phone && connected,
+                no_dirs,
                 Rc::new(move |ix, _, cx| {
                     let _ = w1.update(cx, |this, cx| {
                         if ix < this.tray.len() {

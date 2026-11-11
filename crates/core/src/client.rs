@@ -141,7 +141,16 @@ impl ClientError {
         } else {
             io::ErrorKind::Other
         };
-        Self::Network(io::Error::new(kind, e))
+        // `reqwest` chỉ in "error sending request for url (…)": nối cả chuỗi nguyên nhân (timeout, connection refused,
+        // no route…) để log daemon nói được vì sao.
+        let mut msg = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(cause) = src {
+            msg.push_str(": ");
+            msg.push_str(&cause.to_string());
+            src = cause.source();
+        }
+        Self::Network(io::Error::new(kind, msg))
     }
 }
 
