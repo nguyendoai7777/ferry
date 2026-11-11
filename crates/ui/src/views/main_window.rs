@@ -135,7 +135,11 @@ impl MainWindow {
             ModelEvent::Changed => {
                 if let Page::AddPhone { view, .. } = &self.page {
                     let devices = self.model.read(cx).snapshot.devices.clone();
-                    view.update(cx, |v, cx| v.set_devices(devices, cx));
+                    let firewall = self.model.read(cx).snapshot.mdns_firewall.clone();
+                    view.update(cx, |v, cx| {
+                        v.set_devices(devices, cx);
+                        v.set_firewall(firewall, cx);
+                    });
                 }
                 cx.notify();
             }
@@ -214,7 +218,12 @@ impl MainWindow {
             Rc::new(move |op: PhoneOp, cx: &mut materiant::gpui_kit::App| model.update(cx, |m, _| m.phone(op)));
         let devices = self.model.read(cx).snapshot.devices.clone();
         let i18n = self.i18n.clone();
-        let view = cx.new(|cx| AddPhoneView::new(i18n, send, devices, repair, window, cx));
+        let firewall = self.model.read(cx).snapshot.mdns_firewall.clone();
+        let view = cx.new(|cx| {
+            let mut v = AddPhoneView::new(i18n, send, devices, repair, window, cx);
+            v.set_firewall(firewall, cx);
+            v
+        });
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &AddPhoneEvent, window, cx| {
             if let AddPhoneEvent::Paired(id) = ev {
                 let id = id.clone();

@@ -97,4 +97,14 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
 - **Dò mDNS** (`discovery`, gd1_05): test `--test discovery` C2 chạy mDNS thật trong tiến trình (cần interface ngoài
   loopback, không có thì tự bỏ qua). Kiểm điện thoại thật: `cargo run -p ferry-core --example discover`. Link-local cần
   `scope_id` (index interface nhận bản ghi); config lưu dạng `[fe80::x%en0]:port` (tên, không index — index đổi sau khởi động).
+- **Tường lửa chặn mDNS** (W-6, `ferry_core::firewall`): Linux `ufw` bật (`/etc/ufw/ufw.conf` `ENABLED=yes`, đọc không cần root)
+  mà dò `HINT_AFTER` (20 s) chưa thấy điện thoại nào qua mDNS ⇒ `Snapshot::mdnsFirewall` ⇒ màn Thêm điện thoại hiện nút "Cho
+  phép" ⇒ `PhoneOp::AllowMdnsFirewall` ⇒ `pkexec /bin/sh -c "<ufw> allow in proto udp to 224.0.0.251 port 5353 comment 'ferry mDNS'
+  && { <ufw> … ff02::fb … || true; }"` (một hộp mật khẩu cho hai luật; IPv6 tắt trong ufw thì luật v6 lỗi, bỏ qua). Mã thoát
+  `pkexec`: 126 = người dùng huỷ, 127 = không có agent polkit ⇒ UI hiện câu lệnh để chép. Xong ⇒ dấu `mdns-firewall-allowed` cạnh
+  `config.json` + dò lại mDNS. Postinst `.deb` thêm cùng luật + dấu `/var/lib/ferry/ufw-mdns-allowed`; postrm xoá luật theo
+  comment (`ufw show added`) — đổi comment phải sửa cả hai (test `deb_scripts_use_the_same_comment`). Ubuntu mặc định đã có luật
+  mDNS multicast trong `/etc/ufw/before.rules` (đọc phải root) ⇒ ufw bật chưa chắc là thủ phạm: WiFi công ty / AP isolation chặn
+  multicast thì cho phép xong vẫn không thấy, còn đường nhập địa chỉ tay. Windows: luật `netsh` của NSIS giữ `profile=any` (WiFi
+  mới mặc định là Public). macOS: tường lửa ứng dụng tự hỏi, không thêm bước. Không bao giờ tắt tường lửa / đổi luật khác.
 - RSS của `ferry` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

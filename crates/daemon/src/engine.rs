@@ -18,6 +18,7 @@ use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
 use ferry_core::discovery::mdns::{Browser, MdnsEvent};
 use ferry_core::discovery::{self, ConnectError, Connected};
+use ferry_core::firewall::{self, AllowResult};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
     Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView,
@@ -198,6 +199,12 @@ enum Internal {
         device: DeviceId,
         files: u64,
     },
+    /// `pkexec ufw allow …` xong (W-6).
+    FirewallAllowed {
+        outbox: Outbox,
+        req: u64,
+        result: AllowResult,
+    },
 }
 
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
@@ -252,6 +259,18 @@ struct Engine {
     watch_stable_for: Duration,
     /// Lần bật bộ theo dõi gần nhất hỏng (chữ của OS) — `SettingsView::watch_error`.
     watch_error: Option<String>,
+    /// W-6: tường lửa đoán lúc khởi động (`firewall::detect`); chỉ khi có dò mDNS.
+    firewall: firewall::Detected,
+    /// Dò mDNS từ lúc này (`None` ⇒ không dò).
+    mdns_since: Option<Instant>,
+    /// Đã thấy ít nhất một điện thoại qua mDNS ⇒ tường lửa không chặn.
+    mdns_found: bool,
+    /// Đang gợi ý "Cho phép" (`Snapshot::mdns_firewall`).
+    fw_hint: bool,
+    /// Hộp `pkexec` đang mở.
+    fw_allowing: bool,
+    /// Vòng chính dựng lại `Browser` ở lượt kế (sau khi mở tường lửa).
+    restart_mdns: bool,
 }
 
 struct Subscriber {
@@ -309,7 +328,22 @@ impl Engine {
             watch_tx,
             watch_stable_for: cfg.watch_stable_for,
             watch_error: None,
+            firewall: firewall::Detected::NONE,
+            mdns_since: browser.as_ref().map(|_| Instant::now()),
+            mdns_found: false,
+            fw_hint: false,
+            fw_allowing: false,
+            restart_mdns: false,
         };
+        if browser.is_some() {
+            engine.firewall = firewall::detect(&engine.firewall_marker());
+            if engine.firewall.may_block {
+                log::info!(
+                    "engine: ufw is enabled, mDNS may be blocked (hint after {:?} without phones)",
+                    firewall::HINT_AFTER
+                );
+            }
+        }
         let paired: Vec<DeviceId> = engine.config.devices.iter().map(|d| d.id.clone()).collect();
         for id in paired {
             engine.ensure_runner(&id);
@@ -326,6 +360,7 @@ impl Engine {
         loop {
             let deadline = self.devices.next_deadline().map(tokio::time::Instant::from_std);
             let push_at = self.push_due().map(tokio::time::Instant::from_std);
+            let hint_at = self.firewall_hint_at().map(tokio::time::Instant::from_std);
             tokio::select! {
                 input = inputs.recv() => match input {
                     Some(Input::Shutdown { done }) => {
@@ -344,6 +379,10 @@ impl Engine {
                 Some(ready) = rx.watch.recv() => self.on_watch_ready(ready),
                 ev = next_mdns(rx.browser.as_ref()) => match ev {
                     Some(MdnsEvent::Announced(ann)) => {
+                        self.mdns_found = true;
+                        if std::mem::take(&mut self.fw_hint) {
+                            self.dirty = true;
+                        }
                         let ev = self.devices.announce(ann, Instant::now());
                         self.on_device_events(ev);
                     }
@@ -355,7 +394,14 @@ impl Engine {
                 },
                 () = sleep_until(deadline) => self.on_deadline(),
                 () = sleep_until(push_at) => self.push(false),
+                () = sleep_until(hint_at) => self.on_firewall_deadline(),
                 _ = purge.tick() => self.purge(),
+            }
+            if std::mem::take(&mut self.restart_mdns) {
+                // Thả bộ cũ trước (tắt luồng + socket của nó) rồi dò lại từ đầu.
+                rx.browser = None;
+                rx.browser = Browser::start().map_err(|e| log::warn!("engine: mdns restart failed: {e}")).ok();
+                self.mdns_since = rx.browser.as_ref().map(|_| Instant::now());
             }
         }
         log::info!("engine: stopped");
@@ -474,6 +520,19 @@ impl Engine {
                         Err(e) => log::warn!("engine: remove queue task: {e}"),
                     }
                     let _ = tx.send(Internal::Forgot { outbox, req });
+                });
+                None
+            }
+            PhoneOp::AllowMdnsFirewall => {
+                if self.fw_allowing {
+                    return Some(Err(CommandError::InvalidInput));
+                }
+                self.fw_allowing = true;
+                let (detected, tx, outbox) = (self.firewall.clone(), self.internal_tx.clone(), outbox.clone());
+                // `pkexec` chờ người dùng xác nhận (có thể rất lâu) ⇒ luồng chặn riêng, không giữ vòng chính.
+                tokio::task::spawn_blocking(move || {
+                    let result = firewall::allow_with_prompt(&detected);
+                    let _ = tx.send(Internal::FirewallAllowed { outbox, req, result });
                 });
                 None
             }
@@ -1049,6 +1108,21 @@ impl Engine {
                 self.dirty = true;
                 reply_to(&outbox, req, Ok(outcome));
             }
+            Internal::FirewallAllowed { outbox, req, result } => {
+                self.fw_allowing = false;
+                if result == AllowResult::Allowed {
+                    let marker = self.firewall_marker();
+                    if let Err(e) = std::fs::write(&marker, b"allowed by the user in ferry (W-6)\n") {
+                        log::warn!("engine: write {}: {e}", marker.display());
+                    }
+                    self.firewall.may_block = false;
+                    self.fw_hint = false;
+                    self.dirty = true;
+                    self.restart_mdns = self.mdns_since.is_some();
+                    log::info!("engine: mDNS allowed in the firewall, browsing again");
+                }
+                reply_to(&outbox, req, Ok(Outcome::Firewall { result }));
+            }
             Internal::Forgot { outbox, req } => {
                 self.dirty = true;
                 reply_to(&outbox, req, Ok(Outcome::Done));
@@ -1268,7 +1342,34 @@ impl Engine {
     }
 
     fn snapshot_from(&self, uploads: Vec<UploadItem>) -> Snapshot {
-        snapshot_parts(&self.store, &self.devices, &self.locals, &self.summary, &self.progress, uploads)
+        let mut snapshot =
+            snapshot_parts(&self.store, &self.devices, &self.locals, &self.summary, &self.progress, uploads);
+        snapshot.mdns_firewall = self.fw_hint.then(|| self.firewall.hint());
+        snapshot
+    }
+
+    /// Dấu "người dùng đã cho phép mDNS" (W-6), cạnh `config.json`.
+    fn firewall_marker(&self) -> PathBuf {
+        self.config_path.with_file_name(firewall::USER_MARKER)
+    }
+
+    /// Lúc bật gợi ý tường lửa (W-6); `None` ⇒ không cần hẹn.
+    fn firewall_hint_at(&self) -> Option<Instant> {
+        if self.fw_hint || self.mdns_found || !self.firewall.may_block {
+            return None;
+        }
+        self.mdns_since.map(|t| t + firewall::HINT_AFTER)
+    }
+
+    fn on_firewall_deadline(&mut self) {
+        if firewall::hint_due(self.firewall.may_block, self.mdns_since, self.mdns_found, Instant::now()) {
+            log::info!(
+                "engine: no phone over mDNS for {:?} with ufw enabled, suggesting to allow it",
+                firewall::HINT_AFTER
+            );
+            self.fw_hint = true;
+            self.dirty = true;
+        }
     }
 
     // ---- việc nền ----
@@ -1402,6 +1503,7 @@ fn snapshot_parts(
         can_resume_all: !can_pause_all && (summary.can_resume_all() || dl_paused),
         downloads,
         downloads_omitted,
+        mdns_firewall: None,
     }
 }
 

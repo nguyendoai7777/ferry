@@ -3,11 +3,16 @@
 //!
 //! View không tự nối IPC: chủ (cửa sổ chính) đưa vào `send` (gửi `PhoneOp`, trả `req`), gọi [`AddPhoneView::set_devices`]
 //! mỗi khi có `Snapshot` mới và [`AddPhoneView::on_reply`] với mỗi `Reply`. PIN không giữ lại sau khi gửi (xoá ô ngay).
+//!
+//! W-6: `Snapshot::mdns_firewall` có ⇒ (qua [`AddPhoneView::set_firewall`]) bước đầu hiện khối "tường lửa có thể chặn" +
+//! nút "Cho phép" (`PhoneOp::AllowMdnsFirewall`, hệ thống hỏi mật khẩu); không hỏi được thì hiện câu lệnh để chép. Đường nhập
+//! địa chỉ tay vẫn ở dưới.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use ferry_core::device::{DeviceId, DeviceState};
+use ferry_core::firewall::{AllowResult, MdnsFirewallHint};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{CommandError, DeviceView, Outcome, PhoneOp, Pin};
 use materiant::badge::Badge;
@@ -16,8 +21,8 @@ use materiant::card::{Card, CardGroup, CardItem};
 use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString,
-    Subscription, WeakEntity, Window, div, px,
+    AnyElement, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    SharedString, Subscription, WeakEntity, Window, div, px,
 };
 use materiant::icon::IconName;
 use materiant::progress::ProgressCircular;
@@ -57,6 +62,27 @@ struct Pending {
     kind: PendingKind,
 }
 
+/// Trạng thái nút "Cho phép" (W-6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FirewallStatus {
+    Idle,
+    /// Hộp xác nhận của hệ thống đang mở (lệnh `req`).
+    Waiting(u64),
+    Done(AllowResult),
+}
+
+/// Khoá i18n cho dòng trạng thái dưới nút "Cho phép"; `None` ⇒ không có dòng.
+pub fn firewall_status_key(status: FirewallStatus) -> Option<&'static str> {
+    match status {
+        FirewallStatus::Idle => None,
+        FirewallStatus::Waiting(_) => Some("add_phone.firewall_waiting"),
+        FirewallStatus::Done(AllowResult::Allowed) => Some("add_phone.firewall_allowed"),
+        FirewallStatus::Done(AllowResult::Cancelled) => Some("add_phone.firewall_cancelled"),
+        FirewallStatus::Done(AllowResult::NoPrompt) => Some("add_phone.firewall_no_prompt"),
+        FirewallStatus::Done(AllowResult::Failed) => Some("add_phone.firewall_failed"),
+    }
+}
+
 pub struct AddPhoneView {
     i18n: Rc<I18n>,
     send: SendPhoneOp,
@@ -70,6 +96,11 @@ pub struct AddPhoneView {
     locked_until: Option<Instant>,
     pin: Entity<TextField>,
     address: Entity<TextField>,
+    /// W-6: gợi ý từ `Snapshot::mdns_firewall`.
+    firewall: Option<MdnsFirewallHint>,
+    firewall_status: FirewallStatus,
+    /// Câu lệnh của lần gợi ý gần nhất — giữ để hiện khi không hỏi được quyền (gợi ý có thể đã tắt).
+    firewall_command: Option<String>,
     focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -179,6 +210,9 @@ impl AddPhoneView {
             locked_until: None,
             pin,
             address,
+            firewall: None,
+            firewall_status: FirewallStatus::Idle,
+            firewall_command: None,
             focus: cx.focus_handle(),
             _subs: subs,
         };
@@ -197,8 +231,38 @@ impl AddPhoneView {
         }
     }
 
+    /// Snapshot mới: gợi ý tường lửa (W-6).
+    pub fn set_firewall(&mut self, hint: Option<MdnsFirewallHint>, cx: &mut Context<Self>) {
+        if self.firewall != hint {
+            if let Some(h) = &hint {
+                self.firewall_command = Some(h.command.clone());
+            }
+            self.firewall = hint;
+            cx.notify();
+        }
+    }
+
+    fn allow_firewall(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.firewall_status, FirewallStatus::Waiting(_)) {
+            return;
+        }
+        self.firewall_status = match (self.send)(PhoneOp::AllowMdnsFirewall, cx) {
+            Some(req) => FirewallStatus::Waiting(req),
+            None => FirewallStatus::Done(AllowResult::Failed),
+        };
+        cx.notify();
+    }
+
     /// `Reply` từ daemon; bỏ qua nếu không phải của lệnh đang chờ.
     pub fn on_reply(&mut self, req: u64, outcome: &Outcome, window: &mut Window, cx: &mut Context<Self>) {
+        if self.firewall_status == FirewallStatus::Waiting(req) {
+            self.firewall_status = match outcome {
+                Outcome::Firewall { result } => FirewallStatus::Done(*result),
+                _ => FirewallStatus::Done(AllowResult::Failed),
+            };
+            cx.notify();
+            return;
+        }
         let Some(pending) = self.pending.as_ref().filter(|p| p.req == req) else { return };
         let kind = pending.kind;
         self.pending = None;
@@ -322,10 +386,81 @@ impl AddPhoneView {
 
     // ---- Vẽ ----
 
+    /// Khối W-6: hiện khi daemon gợi ý, hoặc khi người dùng vừa bấm (giữ kết quả sau khi gợi ý tắt).
+    fn render_firewall(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.firewall.is_none() && self.firewall_status == FirewallStatus::Idle {
+            return None;
+        }
+        let c = cx.theme().colors().clone();
+        let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
+        let status = self.firewall_status;
+        let waiting = matches!(status, FirewallStatus::Waiting(_));
+        let allowed = status == FirewallStatus::Done(AllowResult::Allowed);
+        let can_prompt = self.firewall.as_ref().is_none_or(|h| h.can_prompt);
+        let show_command =
+            !can_prompt || matches!(status, FirewallStatus::Done(AllowResult::NoPrompt | AllowResult::Failed));
+        let status_line = firewall_status_key(status).map(|k| {
+            let color = match status {
+                FirewallStatus::Done(AllowResult::Allowed) => c.success,
+                FirewallStatus::Done(AllowResult::Failed | AllowResult::NoPrompt) => c.danger,
+                _ => c.muted,
+            };
+            div().text_color(color).child(t(k))
+        });
+        let command = self.firewall_command.clone().filter(|_| show_command && !allowed).map(|cmd| {
+            let copy = cmd.clone();
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_color(c.muted).child(t("add_phone.firewall_command_hint")))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(c.surface)
+                                .font_family("monospace")
+                                .text_sm()
+                                .child(SharedString::from(cmd)),
+                        )
+                        .child(
+                            IconButton::new("add-phone-firewall-copy", IconName::Copy)
+                                .accessibility_label(t("add_phone.firewall_copy"))
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                                }),
+                        ),
+                )
+        });
+        let button = (can_prompt && !allowed).then(|| {
+            div().flex().child(
+                Button::new("add-phone-firewall-allow", t("add_phone.firewall_allow"))
+                    .icon(IconName::Check)
+                    .loading(waiting)
+                    .disabled(waiting)
+                    .on_click(cx.listener(|this, _, _, cx| this.allow_firewall(cx))),
+            )
+        });
+        let card = Card::new("add-phone-firewall")
+            .title(t("add_phone.firewall_title"))
+            .description(t("add_phone.firewall_body"))
+            .child(div().flex().flex_col().gap_3().children(button).children(status_line).children(command));
+        Some(card.into_any_element())
+    }
+
     fn render_pick(&self, cx: &mut Context<Self>) -> AnyElement {
         let c = cx.theme().colors().clone();
         let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
         let list = pairable(&self.devices);
+        let firewall = self.render_firewall(cx);
         let body = if list.is_empty() {
             div()
                 .flex()
@@ -366,6 +501,7 @@ impl AddPhoneView {
                     .description(t("add_phone.step_enable"))
                     .child(body),
             )
+            .children(firewall)
             .child(div().flex().child(
                 Button::new("add-phone-manual", t("add_phone.manual_link")).text().base().size(Size::Sm).on_click(
                     cx.listener(|this, _, window, cx| {
@@ -514,6 +650,32 @@ mod tests {
         assert_eq!(lock_remaining_secs(now + Duration::from_millis(1500), now), 2);
         assert_eq!(lock_remaining_secs(now + Duration::from_secs(3), now), 3);
         assert_eq!(lock_remaining_secs(now, now + Duration::from_secs(1)), 0);
+    }
+
+    /// W-6: mọi trạng thái nút "Cho phép" có chữ ở cả hai ngôn ngữ.
+    #[test]
+    fn firewall_texts_in_both_languages() {
+        let statuses = [
+            FirewallStatus::Waiting(1),
+            FirewallStatus::Done(AllowResult::Allowed),
+            FirewallStatus::Done(AllowResult::Cancelled),
+            FirewallStatus::Done(AllowResult::NoPrompt),
+            FirewallStatus::Done(AllowResult::Failed),
+        ];
+        assert_eq!(firewall_status_key(FirewallStatus::Idle), None);
+        for lang in [Language::Vi, Language::En] {
+            let i18n = I18n::new(lang);
+            let keys = statuses.iter().filter_map(|s| firewall_status_key(*s)).chain([
+                "add_phone.firewall_title",
+                "add_phone.firewall_body",
+                "add_phone.firewall_allow",
+                "add_phone.firewall_command_hint",
+                "add_phone.firewall_copy",
+            ]);
+            for k in keys {
+                assert!(!i18n.t(k).contains("add_phone."), "{lang:?} missing {k}");
+            }
+        }
     }
 
     #[test]

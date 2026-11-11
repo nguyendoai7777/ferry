@@ -9,8 +9,14 @@
 # Gói: /usr/bin/{ferry,ferry-ui} (hai exe cạnh nhau: daemon bật `ferry-ui` nằm cạnh nó), mục menu `ferry.desktop` (trùng
 # `app_id` `ferry` của cửa sổ ⇒ dock gom đúng), icon hicolor, AppStream, trang giấy phép. Không cài mục tự chạy: đó là lựa chọn
 # của từng người dùng (`crates/daemon/src/autostart.rs` ghi `~/.config/autostart/ferry.desktop` trỏ `/usr/bin/ferry --autostart`,
-# có `TryExec` nên gỡ gói thì GNOME bỏ qua mục đó). Phụ thuộc thư viện lấy từ `dpkg-shlibdeps`. Không maintainer script: trigger
-# của `desktop-file-utils`, `hicolor-icon-theme` tự cập nhật menu, icon.
+# có `TryExec` nên gỡ gói thì GNOME bỏ qua mục đó). Phụ thuộc thư viện lấy từ `dpkg-shlibdeps`. Trigger của `desktop-file-utils`,
+# `hicolor-icon-theme` tự cập nhật menu, icon.
+#
+# Maintainer script chỉ lo tường lửa cho dò mDNS (W-6, cài gói đã là bước người dùng xác nhận quyền root): postinst — `ufw` có
+# và đang bật ⇒ cho phép chiều vào UDP 5353 tới 224.0.0.251 + ff02::fb, comment `ferry mDNS`, ghi dấu
+# `/var/lib/ferry/ufw-mdns-allowed` (daemon thấy dấu thì không gợi ý nữa — `ferry_core::firewall`); postrm `remove` / `purge` —
+# xoá đúng các luật mang comment đó (cả luật app thêm qua `pkexec`) + dấu. Không ufw / không bật / ufw lỗi ⇒ bỏ qua im lặng,
+# không bao giờ làm cài / gỡ gói lỗi. Không tắt tường lửa, không đụng luật khác.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -123,6 +129,50 @@ Description: Send files and folders to your phone over WiFi
  a dropped connection. Videos can also be downloaded back from the phone.
  On GNOME the tray icon needs the AppIndicator extension.
 EOF
+
+# W-6: comment phải khớp `ferry_core::firewall::RULE_COMMENT` (test `deb_scripts_use_the_same_comment`).
+cat > "$root/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+# ferry: cho phép dò điện thoại qua mDNS khi ufw đang bật (W-6). Lỗi ở đây không bao giờ làm hỏng cài gói.
+set -e
+comment='ferry mDNS'
+marker=/var/lib/ferry/ufw-mdns-allowed
+if [ "$1" = configure ] && command -v ufw >/dev/null 2>&1; then
+  if ufw status 2>/dev/null | grep -q "^Status: active"; then
+    # IPv6 tắt trong /etc/default/ufw ⇒ luật ff02::fb báo lỗi: không tính là hỏng.
+    ufw allow in proto udp to ff02::fb port 5353 comment "$comment" >/dev/null 2>&1 || true
+    if ufw allow in proto udp to 224.0.0.251 port 5353 comment "$comment" >/dev/null 2>&1; then
+      mkdir -p /var/lib/ferry && echo "added by the ferry package" > "$marker" || true
+    else
+      echo "ferry: could not add the ufw rule for mDNS; the app will ask again" >&2
+    fi
+  fi
+fi
+exit 0
+EOF
+cat > "$root/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+# ferry: gỡ đúng các luật ufw mang comment của ferry (W-6). Lỗi ở đây không bao giờ làm hỏng gỡ gói.
+set -e
+comment='ferry mDNS'
+case "$1" in
+  remove|purge)
+    if command -v ufw >/dev/null 2>&1; then
+      # "ufw show added" in mỗi luật dạng: ufw allow in proto udp to 224.0.0.251 port 5353 comment 'ferry mDNS'
+      ufw show added 2>/dev/null | grep -F "comment '$comment'" | while read -r line; do
+        rule=${line#ufw }
+        rule=${rule% comment *}
+        # shellcheck disable=SC2086 # tách từ có chủ ý: luật không chứa khoảng trắng nào ngoài comment đã bỏ
+        ufw delete $rule >/dev/null 2>&1 || echo "ferry: could not delete ufw rule: $rule" >&2
+      done || true
+    fi
+    rm -f /var/lib/ferry/ufw-mdns-allowed
+    rmdir /var/lib/ferry 2>/dev/null || true
+    ;;
+esac
+exit 0
+EOF
+chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/postrm"
 
 suffix=""
 [ -z "$draft" ] || suffix="_draft"

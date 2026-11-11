@@ -18,6 +18,7 @@
 //! - `Cli` (lần chạy `ferry` thứ hai, cửa sổ cài đặt) không nhận đẩy — chỉ `Reply` cho lệnh của nó.
 //! - gd1_12 thêm: `Settings{req, op}` ([`SettingsOp`], mọi lệnh trả [`Outcome::Settings`] = cài đặt sau khi áp),
 //!   [`DaemonToUi::OpenSettings`] (menu khay "Cài đặt…"), [`CommandError::NotWritable`].
+//! - W-6 thêm: [`PhoneOp::AllowMdnsFirewall`] ⇒ [`Outcome::Firewall`], [`Snapshot::mdns_firewall`].
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ThemeChoice, WatchFolder};
 use crate::device::{DeviceId, DeviceState};
+use crate::firewall::{AllowResult, MdnsFirewallHint};
 use crate::i18n::LanguagePref;
 use crate::protocol::LibraryItem;
 use crate::queue::store::{BatchInfo, BatchProgress, DownloadItem, UploadItem};
@@ -107,6 +109,9 @@ pub enum PhoneOp {
     /// Địa chỉ nhập tay (mọi dạng của `discovery::address::parse_address`) ⇒ hỏi `info` ⇒ thiết bị vào danh sách. Trả
     /// [`Outcome::Found`].
     AddAddress { address: String },
+    /// W-6: cho phép chiều vào mDNS ở tường lửa (Linux: `pkexec` + `ufw`, hệ thống hỏi mật khẩu). Trả
+    /// [`Outcome::Firewall`]; xong ⇒ daemon dò mDNS lại và bỏ [`Snapshot::mdns_firewall`].
+    AllowMdnsFirewall,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -293,6 +298,10 @@ pub struct Snapshot {
     /// Mục tải về không đưa vào `downloads` (vượt trần).
     #[serde(default)]
     pub downloads_omitted: u64,
+    /// W-6: tường lửa có thể chặn dò mDNS (`ufw` bật, dò một lúc chưa thấy điện thoại nào) ⇒ màn "Thêm điện thoại" xin
+    /// cho phép. `None` ⇒ không gợi ý.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mdns_firewall: Option<MdnsFirewallHint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -367,6 +376,10 @@ pub enum Outcome {
     },
     /// Mọi lệnh `Settings` (gd1_12).
     Settings(SettingsView),
+    /// `AllowMdnsFirewall` (W-6).
+    Firewall {
+        result: AllowResult,
+    },
     Failed {
         error: CommandError,
     },
