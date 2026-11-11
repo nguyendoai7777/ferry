@@ -11,6 +11,22 @@
 | Phụ thuộc mới | `tokio`, `reqwest` (`default-features = false`, `stream`; không TLS) — MIT/Apache; test: `hyper` server hoặc `tokio` TCP thô cho server giả |
 | File đụng tới | MỚI `crates/core/src/{protocol,client}.rs`, `crates/core/tests/fake_phone/mod.rs`, `crates/core/tests/client.rs` |
 
+## 0. Bàn giao từ gd1_01 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_01 -->
+
+- **Đã có sẵn**: `mws-core` khai sẵn mọi module (tệp rỗng ghi task chủ) — chỉ thêm mã vào tệp của mình, không sửa `lib.rs`.
+  `queue` và `transfer` là thư mục (`queue/mod.rs`, `transfer/mod.rs`).
+- **Kiểu dùng chung W-3**: `device::DeviceId` (chuỗi trong suốt), `config::PairedDevice { id, name, addresses: Vec<String> }`
+  (địa chỉ dạng chuỗi giữ `%iface`), `queue::BatchId::new()` (UUID v4). Dùng lại, đừng định nghĩa song song.
+- **Phụ thuộc đã có trong `mws-core`**: `serde`, `serde_json`, `uuid` (v4), `log`, `dirs`, `toml`, `interprocess`,
+  `gethostname`, `sys-locale`; dev: `tempfile`. Thêm crate ⇒ khai ở `crates/core/Cargo.toml` (crate dùng chung nhiều
+  crate thì vào `[workspace.dependencies]`), soát `cargo deny check licenses`.
+- **Đường dẫn**: `paths::data_dir()` (ghi đè `MWS_DATA_DIR`) cho SQLite / tệp tạm; test dùng `tempfile`, không đụng thư mục thật.
+- **Soát lại khi làm**: build ở `<gốc>/media-wireless-sync/target/w<N>`; đổi mã theo OS ⇒ thêm clippy `--target
+  x86_64-pc-windows-msvc` / `x86_64-unknown-linux-gnu` (lệnh ở `CLAUDE.md` mục Lệnh).
+- **Bẫy**: socket Unix ≤ 104 byte (đã tự xử lý trong `ipc`); số RAM trên macOS đo bằng `footprint`, không RSS.
+
 ## 1. Làm gì
 - `protocol`: kiểu JSON của PROTOCOL 6.3–6.5 (`Info`, `PairResponse`, `LibraryItem`, `UploadCreated`), header, đuôi video 6.6 (`is_video_name`), mã hoá tên tệp percent-encoding UTF-8.
 - `client::PhoneClient { base: SocketAddr, token: Option<Secret> }`: `info`, `pair(pin, client_id, client_name)`, `unpair`, `list`, `upload_create`, `upload_patch(uid, offset, reader, len)` stream từ tệp, `upload_head`, `upload_delete`, `file_head`, `file_get_range` stream ra writer.

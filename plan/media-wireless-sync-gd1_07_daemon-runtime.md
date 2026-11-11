@@ -17,6 +17,10 @@
 - Lệnh IPC: `AddFiles{device, paths}` (lọc đuôi 6.6, thư mục đệ quy), `ItemAction{id, pause|resume|cancel|retry}`, `PauseAll/ResumeAll`, `Pair/Forget/AddManualAddress`, `ListLibrary`, `Download` — ≤ 4 biến thể mới mỗi lần thêm, tách nếu vượt trần.
 - Khay 3 trạng thái (rảnh / đang gửi kèm % / cần chú ý), tooltip "Bật Sync WiFi trên điện thoại để gửi N video" khi có mục chờ mà Offline; menu: Mở cửa sổ, Tạm dừng tất cả, Thoát.
 - Một thông báo hệ thống khi cả lô xong; lỗi cần người dùng làm (hết chỗ, cần ghép lại) báo một lần.
+- Nợ từ gd1_01: **khay Linux** — bê StatusNotifierItem tự viết của fastcast (`fastcast/crates/daemon/src/platform/linux/sni.rs`,
+  không GTK / libappindicator) vào `crates/daemon/src/platform/linux.rs` (hiện chỉ kênh chặn, không icon). Khung đã có:
+  `Event`, `Daemon::handle`, `tray::{menu_action, phone_rgba}`, IPC `UiToDaemon` / `DaemonToUi` + `Hello`/`Ok`.
+  Mốc RAM gd1_01: `mws` rảnh footprint 10 MB (RSS 44 MB) trên macOS — C4 so với số này.
 
 ## 6. Nghiệm thu
 - C1. Client IPC giả nhận snapshot đầu đủ, rồi delta theo tiến độ ≤ 10 / s. `[opus-unit]`

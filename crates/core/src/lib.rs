@@ -1,0 +1,22 @@
+//! Lõi media-wireless-sync (`CLAUDE.md` mục Bố cục): mọi thứ không phải UI. Daemon `mws` chạy nó; `mws-ui` chỉ dùng
+//! `i18n`, `config` (đọc), `paths`, `logging`, `ipc`.
+//!
+//! Mọi module đã khai sẵn từ gd1_01 để task sau chỉ thêm mã vào tệp của mình, không giẫm `lib.rs`. Chủ của từng module
+//! ghi ở đầu tệp đó.
+
+pub mod client;
+pub mod config;
+pub mod device;
+pub mod discovery;
+pub mod i18n;
+pub mod ipc;
+pub mod logging;
+pub mod pairing;
+pub mod paths;
+pub mod protocol;
+pub mod queue;
+pub mod transfer;
+pub mod watch;
+
+/// Phiên bản app (theo workspace), in vào log và `Hello`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

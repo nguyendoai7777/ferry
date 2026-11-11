@@ -1,0 +1,50 @@
+# Workspace của media-wireless-sync: lõi `mws-core`, tiến trình nền `mws` (khay, IPC, không GPU) và cửa sổ `mws-ui`
+# (GPUI + materiant). Bố cục + luật: `CLAUDE.md`; hợp đồng với điện thoại: `PROTOCOL.md` (W-1).
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+# Mã đóng (D-2): không publish, cargo-deny bỏ qua crate nội bộ.
+license = "LicenseRef-media-wireless-sync-proprietary"
+publish = false
+
+[workspace.dependencies]
+mws-core = { path = "crates/core" }
+# Repo anh em trong workspace xdesktop (clone cạnh repo này). Worktree ở `.claude/worktrees/` cần lối nối
+# `.claude/worktrees/materiant` → `materiant` (junction / symlink) để đường dẫn này trỏ đúng.
+materiant = { path = "../materiant" }
+# Inspector kiểu DevTools (crate `devtool` trong repo materiant, D-25): chỉ bản debug, bản release rỗng.
+devtool = { path = "../materiant/devtool" }
+
+futures = "0.3"
+interprocess = "2.4"
+log = { version = "0.4", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+
+# target/ nhẹ đi: mã của ta giữ số dòng cho backtrace, thư viện ngoài bỏ debuginfo.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Bản vá GPUI của materiant (inspector Ctrl+Shift+I chỉ ở bản debug cần `Window::inspector_ancestor_sources`):
+# `materiant/CLAUDE.md`, mục "GPUI vá ở vendor/gpui-pre". Thiếu khối này thì materiant không biên dịch.
+[patch.crates-io]
+gpui-pre = { path = "../materiant/vendor/gpui-pre" }

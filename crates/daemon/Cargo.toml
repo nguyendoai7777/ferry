@@ -1,0 +1,36 @@
+[package]
+name = "mws-daemon"
+description = "Tiến trình nền `mws`: khay, IPC, bật cửa sổ `mws-ui`, chạy hàng đợi — không GPU, không framework UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mws"
+path = "src/main.rs"
+
+[dependencies]
+mws-core.workspace = true
+interprocess.workspace = true
+log.workspace = true
+
+# Linux không dùng `tray-icon` (đòi GTK + libappindicator): khay SNI tự viết như fastcast — chưa có, xem `platform/linux.rs`.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.26", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSGraphicsContext", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

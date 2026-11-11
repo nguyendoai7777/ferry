@@ -1,0 +1,12 @@
+# English UI strings. Same keys as vi.toml (test `i18n::tests`). Sentence case (D-13).
+# The app name is not final (plan/_backlog.md): change `app.name` in both files.
+
+[app]
+name = "Media Wireless Sync"
+
+[tray]
+open_window = "Open window"
+quit = "Quit"
+
+[window]
+placeholder = "Drop videos here to send them to your phone"

@@ -9,10 +9,9 @@ nối tiếp từ byte cuối, xong thì im lặng; kéo video từ điện tho�
 thái (5), giao thức HTTP v1 (6). Mã lõi trỏ về mục của nó (`// PROTOCOL 6.5`). Đổi giao thức ⇒ sửa `PROTOCOL.md` trước,
 rồi sửa cả hai phía; không tự thêm route, header, mã trạng thái ở phía PC.
 
-**Đang ở giai đoạn khởi tạo** (11/11/2026): repo mới có tài liệu + plan, chưa có mã. Task đầu là
-`plan/media-wireless-sync-gd1_01_workspace.md`.
+**GĐ1 đang làm** (từ 11/11/2026): gd1_01 dựng workspace 3 crate + khay + cửa sổ trống; các task sau theo `ROADMAP.md`.
 
-## Bố cục (cargo workspace — dự kiến, task 01 dựng)
+## Bố cục (cargo workspace)
 
 Tách hai tiến trình như fastcast (`fst` / `fastcast-ui`) vì luật "RAM là tính năng": app chạy nền cả ngày ở khay, cửa sổ
 chỉ mở vài lần.
@@ -43,11 +42,27 @@ chỉ mở vài lần.
 
 ## Lệnh
 
-Chưa có (task 01 thêm `start.sh`, soát xanh). Soát xanh mỗi task: `cargo build`, `cargo clippy --all-targets -- -D warnings`,
-`cargo test`, `cargo deny check licenses`.
+```bash
+bash start.sh                      # bản debug: build mws + mws-ui, chạy mws (khay); theo dõi mã, --no-watch chạy một lần
+bash ../start.sh media-wireless-sync   # cùng việc, gọi từ gốc workspace
+```
+
+- Build: `CARGO_TARGET_DIR=<gốc>/media-wireless-sync/target/w<N>` trong worktree (D-18); `start.sh` tự đặt.
+- Dữ liệu dev riêng (`start.sh`): `MWS_DATA_DIR` (log, khoá một-instance, socket), `MWS_CONFIG_FILE` — trỏ vào
+  `target/dev`. Mức log `MWS_LOG=debug`, bản release ghi stderr khi có `MWS_LOG_STDERR`.
+- Soát xanh mỗi task: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check licenses`.
+  Đổi mã theo OS ⇒ thêm `cargo clippy -p mws-core -p mws-daemon --all-targets --target x86_64-pc-windows-msvc` (và
+  `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`.
+- `mws` lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `mws-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
 
 Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb forward tcp:18080 tcp:8080`, nhập tay `127.0.0.1:18080`).
 
 ## Bẫy
 
-(chưa có — ghi khi gặp)
+- **Socket Unix ≤ 104 byte** (macOS; Linux 108): `MWS_DATA_DIR` sâu làm `bind` hỏng ("exceeds capacity of sun_path").
+  `ipc::Endpoint::daemon` tự rơi về `<tmp>/mws-<băm>/daemon.sock` khi đường dẫn quá 100 byte — đừng gỡ.
+- **Khay Linux chưa có**: `tray-icon` đòi GTK + libappindicator ⇒ không dùng; bê SNI tự viết của fastcast (nợ gd1_07).
+  Tới lúc đó Linux mở cửa sổ bằng cách chạy `mws` lần nữa.
+- macOS: thử menu khay tự động bằng AppleScript không được (status item không lộ menu qua AX) ⇒ bấm bằng sự kiện chuột
+  `CGEvent` (vị trí icon: `position of menu bar item 1 of menu bar 1` của tiến trình `mws`).
+- RSS của `mws` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

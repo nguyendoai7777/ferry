@@ -1,0 +1,52 @@
+# Soát giấy phép cả cây phụ thuộc của workspace mới (D-2: mã đóng, chỉ phát hành bản cài).
+#   cargo deny check licenses
+# Thêm giấy phép mới vào `allow` ⇒ phải có trong danh sách D-2 ở `.claude/rules/decisions/` của repo gốc.
+
+[graph]
+# Soát cả cây của mọi nền tảng phát hành, không chỉ máy đang chạy.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = false
+
+[licenses]
+# Cấm GPL / AGPL. LGPL chỉ khi link động và phải hỏi chủ dự án ⇒ không nằm trong `allow`, thêm `exceptions` theo crate.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # Biến thể thoáng hơn của BSD / Apache (không ràng buộc thêm) — báo chủ dự án 29/10/2026:
+    # 0BSD: recvmsg, doctest-file (qua interprocess); LLVM-exception: target-lexicon (chỉ lúc build, Linux).
+    "0BSD",
+    "Apache-2.0 WITH LLVM-exception",
+    # CC0-1.0 (công cộng — đã chốt cho materiant, D-2): tiny-keccak, chỉ lúc build, chỉ Linux (qua GPUI của `mws-ui`).
+    "CC0-1.0",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "OFL-1.1",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Crate nội bộ (`publish = false`) là mã đóng của ta — không soát.
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

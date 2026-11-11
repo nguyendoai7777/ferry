@@ -1,0 +1,12 @@
+# Chữ hiển thị tiếng Việt. Cùng bộ khoá với en.toml (test `i18n::tests`). Viết hoa chữ cái đầu (D-13).
+# Tên app chưa chốt (plan/_backlog.md): đổi ở `app.name` của cả hai tệp.
+
+[app]
+name = "Media Wireless Sync"
+
+[tray]
+open_window = "Mở cửa sổ"
+quit = "Thoát"
+
+[window]
+placeholder = "Thả video vào đây để gửi sang điện thoại"

@@ -1,0 +1,24 @@
+[package]
+name = "mws-ui"
+description = "Cửa sổ `mws-ui` (GPUI + materiant): chỉ vẽ trạng thái nhận qua IPC và gửi lệnh — không mạng, không kho khoá"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mws-ui"
+path = "src/main.rs"
+
+[dependencies]
+mws-core.workspace = true
+# GPUI đi qua materiant (`materiant::gpui_kit`), không ghim gpui-kit lần hai (D-6).
+materiant.workspace = true
+# Ctrl+Shift+I / Ctrl+Shift+C ở bản debug (D-19, D-25); bản release crate rỗng.
+devtool.workspace = true
+futures.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

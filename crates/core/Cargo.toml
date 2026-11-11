@@ -1,0 +1,31 @@
+[package]
+name = "mws-core"
+description = "Lõi media-wireless-sync: giao thức, hàng đợi, cấu hình, i18n, IPC — không UI, không GPU"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dirs = "6"
+# `clientName` mặc định (PROTOCOL 6.3): tên máy. Apache-2.0.
+gethostname = "1"
+interprocess.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sys-locale = "0.3"
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
+# `clientId` (PROTOCOL 6.3): UUID v4 từ nguồn ngẫu nhiên của OS.
+uuid = { version = "1", default-features = false, features = ["std", "v4"] }
+
+[target.'cfg(windows)'.dependencies]
+# DACL của pipe, soát exe của server (`ipc.rs`). Đã có trong cây qua `interprocess`.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
