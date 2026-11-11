@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod daemon_link;
+mod views;
 
 use ferry_core::i18n::I18n;
 use ferry_core::{VERSION, config, logging, paths};

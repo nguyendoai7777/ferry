@@ -2,7 +2,7 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Trạng thái | ☐ |
+| Trạng thái | ✅ (11/11/2026) |
 | Repo | ferry |
 | Model | sonnet |
 | Cỡ | S — ~350 dòng |
@@ -42,4 +42,13 @@
 - C2. Ghép với điện thoại thật / emulator theo PROTOCOL mục 7. `[owner-qa]`
 
 ## 9. Bàn giao thực tế
+- `views/add_phone.rs` (MỚI) + khoá `add_phone.*` ở `i18n/{vi,en}.toml`; `views/mod.rs` + `mod views;` ở `main.rs` chỉ thêm dòng (gd1_08 cũng tạo `views/mod.rs` ⇒ khi rebase giữ cả hai dòng `pub mod`).
+- Giao diện ghép: `AddPhoneView::new(i18n, send, devices, repair, window, cx)`. `send: Rc<dyn Fn(PhoneOp) -> u64>` do chủ cấp (gửi `UiToDaemon::Phone{req, op}`, trả `req`). Chủ gọi `set_devices(snapshot.devices)` mỗi Snapshot và `on_reply(req, &outcome, window, cx)` mỗi Reply. View phát `AddPhoneEvent::Paired(DeviceId)` (chủ chọn máy đó, đóng màn) và `Back`. `repair = Some(id)` ⇒ mở thẳng bước PIN (máy `NeedsRepair`). Hiện `#![allow(dead_code)]` ở đầu tệp vì chưa có chỗ gọi — gd1_08 nối xong thì gỡ.
+- Không thêm lệnh IPC / biến thể nào. Nhập tay: `AddAddress` ⇒ `Found` ⇒ sang bước PIN; `UnknownInterface` ⇒ "Không thấy card mạng <tên>".
+- Component materiant: Card/CardGroup/CardItem, Badge, Button/IconButton, TextField (ô PIN: sanitize "123 456" ⇒ 123456, xoá ô ngay khi gửi), ProgressCircular.
+- `RateLimited`: khoá nút Ghép + đếm ngược mỗi giây (timer nền 1 s, tự nhả).
+- Chữ `err_keyring` bỏ "GNOME" (test D-13 cấm từ toàn hoa) ⇒ "Keyring hoặc KWallet".
+- Soát: build, clippy -D warnings, test (112 core + ui), deny licenses xanh. C1 phủ bằng test `pin_accepts_six_digits_only`; thêm test danh sách, đếm ngược, thông báo lỗi vi/en.
+- Chưa chạy cửa sổ thật (view chưa nối vào cửa sổ chính); C2 `[owner-qa]` chờ gd1_08 nối + điện thoại / emulator.
 ## 10. Đề xuất cải tiến
+[ux] Daemon chưa đẩy snapshot khi mDNS dò thêm máy mới? — chưa kiểm — soát lúc nối vào gd1_08 — S — P3.
