@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use ferry_core::device::{DeviceId, DeviceState};
-use ferry_core::ipc::{DaemonToUi, DeviceView, LibraryOp, Outcome, ProgressDelta, QueueOp, Sender, Snapshot, UiToDaemon};
+use ferry_core::ipc::{
+    DaemonToUi, DeviceView, LibraryOp, Outcome, PhoneOp, ProgressDelta, QueueOp, Sender, Snapshot, UiToDaemon,
+};
 use ferry_core::protocol::LibraryItem;
 use materiant::gpui_kit::{Context, EventEmitter};
 
@@ -69,6 +71,10 @@ impl Model {
     /// Gửi lệnh hàng đợi; trả `req` để đối chiếu `ModelEvent::Reply`. `None` khi chưa nối daemon.
     pub fn queue(&mut self, op: QueueOp) -> Option<u64> {
         self.send(|req| UiToDaemon::Queue { req, op })
+    }
+
+    pub fn phone(&mut self, op: PhoneOp) -> Option<u64> {
+        self.send(|req| UiToDaemon::Phone { req, op })
     }
 
     pub fn library(&mut self, op: LibraryOp) -> Option<u64> {
@@ -142,7 +148,7 @@ impl Model {
 /// Vá tiến độ lên ảnh chụp: chỉ mục đã có trong `uploads` (id lạ ⇒ bỏ qua, chờ ảnh chụp kế); `sent` mới thay cũ.
 pub fn apply_progress(snapshot: &mut Snapshot, delta: &ProgressDelta) {
     for p in &delta.items {
-        if !snapshot.uploads.iter().any(|u| u.id == p.id) {
+        if !snapshot.uploads.iter().any(|u| u.id == p.id) && !snapshot.downloads.iter().any(|d| d.id == p.id) {
             continue;
         }
         match snapshot.progress.iter_mut().find(|q| q.id == p.id) {

@@ -4,9 +4,6 @@
 //! View không tự nối IPC: chủ (cửa sổ chính) đưa vào `send` (gửi `PhoneOp`, trả `req`), gọi [`AddPhoneView::set_devices`]
 //! mỗi khi có `Snapshot` mới và [`AddPhoneView::on_reply`] với mỗi `Reply`. PIN không giữ lại sau khi gửi (xoá ô ngay).
 
-// Chủ (gd1_08) nối màn này vào cửa sổ chính sau; tới lúc đó không có chỗ gọi.
-#![allow(dead_code)]
-
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -39,8 +36,8 @@ pub enum AddPhoneEvent {
     Back,
 }
 
-/// Gửi một lệnh điện thoại sang daemon, trả `req` của lệnh (chủ tự đánh số).
-pub type SendPhoneOp = Rc<dyn Fn(PhoneOp) -> u64>;
+/// Gửi một lệnh điện thoại sang daemon, trả `req` của lệnh (chủ tự đánh số); `None` = chưa nối được daemon.
+pub type SendPhoneOp = Rc<dyn Fn(PhoneOp, &mut materiant::gpui_kit::App) -> Option<u64>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -287,9 +284,8 @@ impl AddPhoneView {
         }
         // PIN không giữ lại sau khi gửi.
         self.pin.update(cx, |f, cx| f.set_value("", window, cx));
-        let req = (self.send)(PhoneOp::Pair { device, pin: Pin(pin) });
-        self.pending = Some(Pending { req, kind: PendingKind::Pair });
-        self.error = None;
+        let req = (self.send)(PhoneOp::Pair { device, pin: Pin(pin) }, cx);
+        self.start(req, PendingKind::Pair);
         cx.notify();
     }
 
@@ -301,10 +297,19 @@ impl AddPhoneView {
         if address.is_empty() {
             return;
         }
-        let req = (self.send)(PhoneOp::AddAddress { address });
-        self.pending = Some(Pending { req, kind: PendingKind::Address });
-        self.error = None;
+        let req = (self.send)(PhoneOp::AddAddress { address }, cx);
+        self.start(req, PendingKind::Address);
         cx.notify();
+    }
+
+    fn start(&mut self, req: Option<u64>, kind: PendingKind) {
+        match req {
+            Some(req) => {
+                self.pending = Some(Pending { req, kind });
+                self.error = None;
+            }
+            None => self.error = Some(self.i18n.t("add_phone.err_internal").to_owned().into()),
+        }
     }
 
     fn pick(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {

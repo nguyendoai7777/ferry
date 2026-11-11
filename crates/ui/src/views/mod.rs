@@ -6,5 +6,6 @@ pub mod device_header;
 pub mod drop_zone;
 pub mod main_window;
 pub mod phone_browser;
+pub mod phone_library;
 pub mod queue_list;
 pub mod send_tray;

@@ -2,7 +2,7 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Trạng thái | ☐ |
+| Trạng thái | ✅ (11/11/2026) |
 | Repo | ferry |
 | Model | sonnet |
 | Cỡ | S — ~350 dòng |
@@ -55,4 +55,11 @@
 - C-W3. Danh sách có `dir` lồng + `null` ⇒ cây đúng; dán vào thư mục con ⇒ lô có `dir` đúng. `[sonnet-run]`
 
 ## 9. Bàn giao thực tế
+- `views/phone_library.rs` (MỚI): `PhoneLibrary` bọc `PhoneBrowser` (`BrowserMode::Library`) + thanh trên "Quay lại" / "Tải về máy (N)" (`LibraryOp::Download`, toast theo `DownloadsAdded` added / alreadyQueued / missing; offline ⇒ nút mờ). Thả / dán (Ctrl+V) tệp ⇒ `QueueOp::AddFiles` với `dest_dir` = thư mục đang mở (`destination()`); nhóm "Khác" ⇒ toast từ chối (W-3, §6.9).
+- `main_window.rs`: `Page::{Library, AddPhone}`; nút "Thư viện điện thoại" ở hàng tiêu đề hàng đợi. **Việc thêm: nối "Thêm điện thoại"** — bỏ `MainEvent` (không ai nghe), nút ở `device_header` gọi thẳng `open_add_phone`; `Changed` ⇒ `set_devices`, `Reply` ⇒ `on_reply`; `Paired` ⇒ chọn máy đó rồi về màn chính. `SendPhoneOp` của gd1_09 đổi thành `Fn(PhoneOp, &mut App) -> Option<u64>` (chủ không có `cx` trong closure; `None` ⇒ báo lỗi nội bộ thay vì chờ mãi), gỡ `allow(dead_code)`. `Model::phone()` mới.
+- `queue_list.rs`: mục tải về còn sống (và `Failed`, có nút Thử lại) hiện chung hàng đợi với upload (nhãn "Tải về máy" ở meta, tiến độ / tốc độ); `apply_progress` nhận cả id của `downloads`. Test `downloads_show_as_rows_…`. Tải xong thì rời hàng, chưa có nhóm "Đã tải về" / nút "Mở thư mục" (`dest` có sẵn trong snapshot) — để dành.
+- i18n: `library.*`, `state.downloading|downloaded|download_*|offline_download`, `queue.download_tag`, `main.library` (vi + en).
+- Soát xanh: `cargo build`, `clippy --all-targets -D warnings`, `cargo test` (ui 18 test), `cargo deny check licenses` — xanh trong worktree w3. 
+- **Chưa chạy cửa sổ thật**: máy Linux Wayland (HDMI-1/HDMI-2), không đặt được cửa sổ lên màn phụ nên không mở để khỏi đè màn chủ dự án. Chờ kiểm tay: `bash ferry/start.sh --no-watch` → mở Thư viện, Tải về máy, Thêm điện thoại (emulator PROTOCOL 7). C1 (2000 mục cuộn mượt) và C-W3 thả/dán vào thư mục con chưa kiểm tay; phần thuần của W-3 đã có test `ferry_core::browse`.
+- Handoff: không chèn khối 0 vào gd1_12 (đang làm ở ferry-w1, tránh đụng tệp); gd1_12 chỉ cần biết `open_add_phone(repair)` đã có để nối "Ghép lại" nếu cần.
 ## 10. Đề xuất cải tiến

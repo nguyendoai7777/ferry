@@ -1,5 +1,6 @@
 //! Cửa sổ chính (PROTOCOL 4.2): đầu thiết bị + vùng thả + khay chờ + hàng đợi; "Gửi sang điện thoại…" chuyển sang
-//! trình duyệt điện thoại (4.6) ở chế độ chọn đích rồi quay lại. Giữ trạng thái người dùng chọn (khay, lô đang mở);
+//! trình duyệt điện thoại (4.6) ở chế độ chọn đích rồi quay lại; "Thư viện điện thoại" (4.3) và "Thêm điện thoại" (4.4)
+//! là trang con thay nội dung cửa sổ. Giữ trạng thái người dùng chọn (khay, lô đang mở);
 //! trạng thái daemon nằm ở [`Model`].
 
 use std::collections::HashSet;
@@ -8,34 +9,32 @@ use std::rc::Rc;
 
 use ferry_core::device::DeviceId;
 use ferry_core::i18n::I18n;
-use ferry_core::ipc::{Action, CommandError, Outcome, QueueOp};
+use ferry_core::ipc::{Action, CommandError, Outcome, PhoneOp, QueueOp};
 use ferry_core::queue::BatchId;
 use materiant::button::{Button, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    AppContext, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement,
-    KeyDownEvent, PathPromptOptions, Render, SharedString, Subscription, WeakEntity, Window, div, px,
+    AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement, KeyDownEvent,
+    PathPromptOptions, Render, SharedString, Subscription, WeakEntity, Window, div, px,
 };
-use materiant::toast::{Toast, ToastKind, ToastSpec, ToastViewport};
 use materiant::theme::ActiveTheme;
+use materiant::toast::{Toast, ToastKind, ToastSpec, ToastViewport};
 
+use super::add_phone::{AddPhoneEvent, AddPhoneView};
 use super::device_header::device_header;
 use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
+use super::phone_library::{LibraryEvent, PhoneLibrary};
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
 use super::send_tray::{self, TrayEntry, send_tray};
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
 
-/// Yêu cầu của cửa sổ chính với phần còn lại của app (màn khác do task khác dựng).
-pub enum MainEvent {
-    /// "Thêm điện thoại" (màn hướng dẫn, gd1_09).
-    AddPhone,
-}
-
 enum Page {
     Main,
     Browse { browser: Entity<PhoneBrowser>, _sub: Subscription },
+    Library { library: Entity<PhoneLibrary>, _sub: Subscription },
+    AddPhone { view: Entity<AddPhoneView>, _sub: Subscription },
 }
 
 pub struct MainWindow {
@@ -52,8 +51,6 @@ pub struct MainWindow {
     sending_dest: Option<(DeviceId, String)>,
     _sub: Subscription,
 }
-
-impl EventEmitter<MainEvent> for MainWindow {}
 
 impl Focusable for MainWindow {
     fn focus_handle(&self, _: &materiant::gpui_kit::App) -> FocusHandle {
@@ -87,7 +84,13 @@ impl MainWindow {
 
     fn on_model(&mut self, ev: &ModelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
-            ModelEvent::Changed => cx.notify(),
+            ModelEvent::Changed => {
+                if let Page::AddPhone { view, .. } = &self.page {
+                    let devices = self.model.read(cx).snapshot.devices.clone();
+                    view.update(cx, |v, cx| v.set_devices(devices, cx));
+                }
+                cx.notify();
+            }
             ModelEvent::Reply { req, outcome } if Some(*req) == self.sending => {
                 self.sending = None;
                 let dest = self.sending_dest.take();
@@ -113,7 +116,12 @@ impl MainWindow {
                             Toast::push(window, cx, ToastSpec::new(ToastKind::Info, msg));
                         }
                         if *unreadable > 0 {
-                            let msg = fmt::plural(&self.i18n, "main.unreadable", *unreadable, &[("count", &unreadable.to_string())]);
+                            let msg = fmt::plural(
+                                &self.i18n,
+                                "main.unreadable",
+                                *unreadable,
+                                &[("count", &unreadable.to_string())],
+                            );
                             Toast::push(window, cx, ToastSpec::new(ToastKind::Warning, msg));
                         }
                         self.tray.clear();
@@ -129,8 +137,49 @@ impl MainWindow {
                 }
                 cx.notify();
             }
-            ModelEvent::Reply { .. } => {}
+            ModelEvent::Reply { req, outcome } => {
+                if let Page::AddPhone { view, .. } = &self.page {
+                    view.update(cx, |v, cx| v.on_reply(*req, outcome, window, cx));
+                }
+            }
         }
+    }
+
+    /// Mở thư viện của điện thoại đang chọn (PROTOCOL 4.3).
+    fn open_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(device) = self.model.read(cx).current().map(|d| d.id.clone()) else { return };
+        let (model, i18n) = (self.model.clone(), self.i18n.clone());
+        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
+        let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
+            LibraryEvent::Back => this.back_to_main(window, cx),
+        });
+        self.page = Page::Library { library, _sub: sub };
+        cx.notify();
+    }
+
+    /// "Thêm điện thoại" (PROTOCOL 4.4). `repair`: mở thẳng bước PIN cho máy cần ghép lại.
+    fn open_add_phone(&mut self, repair: Option<DeviceId>, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.clone();
+        let send: super::add_phone::SendPhoneOp =
+            Rc::new(move |op: PhoneOp, cx: &mut materiant::gpui_kit::App| model.update(cx, |m, _| m.phone(op)));
+        let devices = self.model.read(cx).snapshot.devices.clone();
+        let i18n = self.i18n.clone();
+        let view = cx.new(|cx| AddPhoneView::new(i18n, send, devices, repair, window, cx));
+        let sub = cx.subscribe_in(&view, window, |this, _, ev: &AddPhoneEvent, window, cx| {
+            if let AddPhoneEvent::Paired(id) = ev {
+                let id = id.clone();
+                this.model.update(cx, |m, cx| m.select(id, cx));
+            }
+            this.back_to_main(window, cx);
+        });
+        self.page = Page::AddPhone { view, _sub: sub };
+        cx.notify();
+    }
+
+    fn back_to_main(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.page = Page::Main;
+        window.focus(&self.focus, cx);
+        cx.notify();
     }
 
     pub fn add_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
@@ -140,7 +189,8 @@ impl MainWindow {
     }
 
     fn pick(&mut self, directories: bool, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions { files: !directories, directories, multiple: true, prompt: None });
+        let picked =
+            cx.prompt_for_paths(PathPromptOptions { files: !directories, directories, multiple: true, prompt: None });
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
                 let _ = this.update(cx, |this, cx| this.add_paths(&paths, cx));
@@ -231,8 +281,15 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors().clone();
         let root = div().size_full().relative().bg(c.surface).text_color(c.text).child(ToastViewport::new());
-        if let Page::Browse { browser, .. } = &self.page {
-            return root.child(div().size_full().child(browser.clone())).into_any_element();
+        match &self.page {
+            Page::Browse { browser, .. } => {
+                return root.child(div().size_full().child(browser.clone())).into_any_element();
+            }
+            Page::Library { library, .. } => {
+                return root.child(div().size_full().child(library.clone())).into_any_element();
+            }
+            Page::AddPhone { view, .. } => return root.child(div().size_full().child(view.clone())).into_any_element(),
+            Page::Main => {}
         }
         let weak = cx.weak_entity();
         let i18n = self.i18n.clone();
@@ -257,8 +314,8 @@ impl Render for MainWindow {
                         let _ = w1.update(cx, |this, cx| this.model.update(cx, |m, cx| m.select(id, cx)));
                     }
                 }),
-                Rc::new(move |_, cx| {
-                    let _ = w2.update(cx, |_, cx| cx.emit(MainEvent::AddPhone));
+                Rc::new(move |window, cx| {
+                    let _ = w2.update(cx, |this, cx| this.open_add_phone(None, window, cx));
                 }),
                 cx,
             )
@@ -318,9 +375,16 @@ impl Render for MainWindow {
                 .items_center()
                 .justify_center()
                 .gap_1()
-                .child(div().font_weight(cx.theme().title_weight()).child(SharedString::from(i18n.t("main.no_phone").to_owned())))
                 .child(
-                    div().text_sm().text_color(c.muted).child(SharedString::from(i18n.t("main.no_phone_hint").to_owned())),
+                    div()
+                        .font_weight(cx.theme().title_weight())
+                        .child(SharedString::from(i18n.t("main.no_phone").to_owned())),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(c.muted)
+                        .child(SharedString::from(i18n.t("main.no_phone_hint").to_owned())),
                 )
                 .into_any_element(),
             Some(dev) => {
@@ -335,6 +399,7 @@ impl Render for MainWindow {
                 let empty = rows.is_empty();
                 let w = weak.clone();
                 let w_all = weak.clone();
+                let w_lib = weak.clone();
                 let on_command: Rc<dyn Fn(RowCommand, &mut Window, &mut materiant::gpui_kit::App)> =
                     Rc::new(move |cmd, _, cx| {
                         let _ = w.update(cx, |this, cx| this.command(cmd, cx));
@@ -368,8 +433,18 @@ impl Render for MainWindow {
                                 div()
                                     .flex()
                                     .gap_1()
+                                    .child(
+                                        Button::new("open-library", i18n.t("main.library"))
+                                            .size(Size::Sm)
+                                            .text()
+                                            .on_click(move |_, window, cx| {
+                                                let _ = w_lib.update(cx, |this, cx| this.open_library(window, cx));
+                                            }),
+                                    )
                                     .when(can_pause, |d| d.child(all(Action::Pause, "all-pause", "queue.pause_all")))
-                                    .when(can_resume, |d| d.child(all(Action::Resume, "all-resume", "queue.resume_all"))),
+                                    .when(can_resume, |d| {
+                                        d.child(all(Action::Resume, "all-resume", "queue.resume_all"))
+                                    }),
                             ),
                     )
                     .child(if empty {
@@ -428,4 +503,3 @@ impl Render for MainWindow {
         .into_any_element()
     }
 }
-

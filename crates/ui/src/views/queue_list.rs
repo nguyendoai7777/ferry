@@ -7,8 +7,8 @@ use std::rc::Rc;
 use ferry_core::device::DeviceState;
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{Action, DeviceView, Snapshot};
-use ferry_core::queue::state::{FailReason, PauseReason, UploadState};
-use ferry_core::queue::store::UploadItem;
+use ferry_core::queue::state::{DownloadFailReason, DownloadState, FailReason, PauseReason, UploadState};
+use ferry_core::queue::store::{DownloadItem, UploadItem};
 use ferry_core::queue::{BatchId, ItemId};
 use materiant::button::{Button, IconButton, Size};
 use materiant::gpui_kit::prelude::*;
@@ -75,7 +75,9 @@ fn sent_bytes(snapshot: &Snapshot, item: &UploadItem) -> u64 {
 pub fn item_status(i18n: &I18n, item: &UploadItem, device: DeviceState) -> (String, Tone) {
     let offline = device != DeviceState::Online;
     match &item.state {
-        UploadState::Queued | UploadState::Waiting { .. } if offline => (i18n.t("state.offline").to_owned(), Tone::Muted),
+        UploadState::Queued | UploadState::Waiting { .. } if offline => {
+            (i18n.t("state.offline").to_owned(), Tone::Muted)
+        }
         UploadState::Queued => (i18n.t("state.queued").to_owned(), Tone::Muted),
         UploadState::Checking => (i18n.t("state.checking").to_owned(), Tone::Normal),
         UploadState::Creating => (i18n.t("state.creating").to_owned(), Tone::Normal),
@@ -117,10 +119,9 @@ fn item_actions(state: &UploadState) -> Vec<Action> {
 fn item_row(i18n: &I18n, snapshot: &Snapshot, item: &UploadItem, device: DeviceState, nested: bool) -> Row {
     let (status, tone) = item_status(i18n, item, device);
     let sent = sent_bytes(snapshot, item);
-    let show_bar = matches!(
-        item.state,
-        UploadState::Sending { .. } | UploadState::Waiting { .. } | UploadState::Paused { .. }
-    ) && item.size > 0;
+    let show_bar =
+        matches!(item.state, UploadState::Sending { .. } | UploadState::Waiting { .. } | UploadState::Paused { .. })
+            && item.size > 0;
     let speed = match item.state {
         UploadState::Sending { .. } => snapshot
             .progress
@@ -140,6 +141,62 @@ fn item_row(i18n: &I18n, snapshot: &Snapshot, item: &UploadItem, device: DeviceS
         progress: show_bar.then(|| fmt::fraction(sent, item.size)),
         speed,
         actions: item_actions(&item.state),
+    }
+}
+
+/// Chữ trạng thái mục tải về (chiều điện thoại → PC, gd1_11).
+pub fn download_status(i18n: &I18n, item: &DownloadItem, device: DeviceState) -> (String, Tone) {
+    let offline = device != DeviceState::Online;
+    match &item.state {
+        DownloadState::Queued | DownloadState::Waiting { .. } if offline => {
+            (i18n.t("state.offline_download").to_owned(), Tone::Muted)
+        }
+        DownloadState::Queued => (i18n.t("state.queued").to_owned(), Tone::Muted),
+        DownloadState::Fetching { .. } => (i18n.t("state.downloading").to_owned(), Tone::Normal),
+        DownloadState::Waiting { .. } => (i18n.t("state.waiting").to_owned(), Tone::Muted),
+        DownloadState::Paused { .. } => (i18n.t("state.paused").to_owned(), Tone::Muted),
+        DownloadState::Done => (i18n.t("state.downloaded").to_owned(), Tone::Success),
+        DownloadState::Cancelled => (i18n.t("state.cancelled").to_owned(), Tone::Muted),
+        DownloadState::Failed { reason } => {
+            let key = match reason {
+                DownloadFailReason::RemoteGone => "state.download_gone",
+                DownloadFailReason::LocalWrite => "state.download_write",
+            };
+            (i18n.t(key).to_owned(), Tone::Danger)
+        }
+    }
+}
+
+fn download_row(i18n: &I18n, snapshot: &Snapshot, item: &DownloadItem, device: DeviceState) -> Row {
+    let (status, tone) = download_status(i18n, item, device);
+    let base = item.state.bytes_done(item.size);
+    let prog = snapshot.progress.iter().find(|p| p.id == item.id);
+    let got = prog.map_or(base, |p| p.sent.max(base)).min(item.size);
+    let show_bar = matches!(
+        item.state,
+        DownloadState::Fetching { .. } | DownloadState::Waiting { .. } | DownloadState::Paused { .. }
+    ) && item.size > 0;
+    let speed = match item.state {
+        DownloadState::Fetching { .. } => prog
+            .filter(|p| p.bytes_per_sec > 0)
+            .map(|p| i18n.t_args("queue.speed", &[("speed", &fmt::size(p.bytes_per_sec, i18n.language()))])),
+        _ => None,
+    };
+    let actions = match &item.state {
+        DownloadState::Paused { .. } => vec![Action::Resume, Action::Cancel],
+        DownloadState::Failed { .. } => vec![Action::Retry, Action::Cancel],
+        s if s.is_terminal() => vec![],
+        _ => vec![Action::Pause, Action::Cancel],
+    };
+    Row {
+        kind: RowKind::Item { id: item.id, nested: false },
+        title: item.name.clone(),
+        meta: format!("{} · {}", i18n.t("queue.download_tag"), fmt::size(item.size, i18n.language())),
+        status: if show_bar { format!("{} · {} %", status, fmt::percent(got, item.size)) } else { status },
+        tone,
+        progress: show_bar.then(|| fmt::fraction(got, item.size)),
+        speed,
+        actions,
     }
 }
 
@@ -170,10 +227,8 @@ pub fn build_rows(
         let members: Vec<&&UploadItem> = items.iter().filter(|u| u.batch_id.as_ref() == Some(&b.info.id)).collect();
         let first = members.iter().map(|u| u.id).min().unwrap_or(0);
         let p = &b.progress;
-        let inflight: u64 = members
-            .iter()
-            .map(|u| sent_bytes(snapshot, u).saturating_sub(u.state.bytes_done(u.size)))
-            .sum();
+        let inflight: u64 =
+            members.iter().map(|u| sent_bytes(snapshot, u).saturating_sub(u.state.bytes_done(u.size))).sum();
         let speed: u64 = members
             .iter()
             .filter(|u| matches!(u.state, UploadState::Sending { .. }))
@@ -183,7 +238,10 @@ pub fn build_rows(
         let remaining = p.files.saturating_sub(p.finished_files + p.failed_files + p.cancelled_files);
         let any_sending = members.iter().any(|u| u.state.is_active());
         let (status, tone) = if p.failed_files > 0 {
-            (fmt::plural(i18n, "state.batch_failed", p.failed_files, &[("count", &p.failed_files.to_string())]), Tone::Danger)
+            (
+                fmt::plural(i18n, "state.batch_failed", p.failed_files, &[("count", &p.failed_files.to_string())]),
+                Tone::Danger,
+            )
         } else if any_sending {
             (i18n.t("state.sending").to_owned(), Tone::Normal)
         } else if device.state != DeviceState::Online {
@@ -205,15 +263,20 @@ pub fn build_rows(
         if remaining > 0 || p.failed_files > 0 {
             actions.push(Action::Cancel);
         }
-        let title = b.info.label.clone().unwrap_or_else(|| {
-            fmt::plural(i18n, "queue.files", p.files, &[("count", &p.files.to_string())])
-        });
+        let title = b
+            .info
+            .label
+            .clone()
+            .unwrap_or_else(|| fmt::plural(i18n, "queue.files", p.files, &[("count", &p.files.to_string())]));
         let mut rows = vec![Row {
             kind: RowKind::Batch { id: b.info.id.clone(), open },
             title,
             meta: format!(
                 "{} · {}",
-                i18n.t_args("queue.batch_progress", &[("done", &p.finished_files.to_string()), ("total", &p.files.to_string())]),
+                i18n.t_args(
+                    "queue.batch_progress",
+                    &[("done", &p.finished_files.to_string()), ("total", &p.files.to_string())]
+                ),
                 fmt::size(p.total_bytes, lang)
             ),
             status: format!("{} · {} %", status, fmt::percent(done, p.total_bytes)),
@@ -229,6 +292,12 @@ pub fn build_rows(
     }
     for u in items.iter().filter(|u| !is_sent(&u.state) && !in_live(u)) {
         live.push((u.id, vec![item_row(i18n, snapshot, u, device.state, false)]));
+    }
+    // Mục tải về còn sống chung hàng (id không trùng với upload).
+    for d in snapshot.downloads.iter().filter(|d| {
+        d.device_id == device.id && (!d.state.is_terminal() || matches!(d.state, DownloadState::Failed { .. }))
+    }) {
+        live.push((d.id, vec![download_row(i18n, snapshot, d, device.state)]));
     }
     live.sort_by_key(|(id, _)| *id);
 
@@ -387,9 +456,7 @@ fn render_row(
                         .child(SharedString::from(row.title.clone())),
                 )
                 .when(!row.meta.is_empty(), |d| {
-                    d.child(
-                        div().flex_none().text_xs().text_color(c.muted).child(SharedString::from(row.meta.clone())),
-                    )
+                    d.child(div().flex_none().text_xs().text_color(c.muted).child(SharedString::from(row.meta.clone())))
                 }),
         )
         .when(!row.status.is_empty() || row.progress.is_some(), |d| {
@@ -489,7 +556,13 @@ mod tests {
                     skipped_files: 1,
                     created: 0,
                 },
-                progress: BatchProgress { files: 2, finished_files: 0, total_bytes: 2000, done_bytes: 100, ..Default::default() },
+                progress: BatchProgress {
+                    files: 2,
+                    finished_files: 0,
+                    total_bytes: 2000,
+                    done_bytes: 100,
+                    ..Default::default()
+                },
             }],
             uploads: vec![
                 item(1, "a.mp4", 1000, sending, Some("b1")),
@@ -564,5 +637,35 @@ mod tests {
         assert_eq!(item_actions(&paused), vec![Action::Resume, Action::Cancel]);
         assert_eq!(item_actions(&UploadState::Queued), vec![Action::Pause, Action::Cancel]);
         assert!(item_actions(&UploadState::Skipped).is_empty());
+    }
+
+    #[test]
+    fn downloads_show_as_rows_with_progress_and_skip_finished() {
+        let dl = |id: i64, state: DownloadState| DownloadItem {
+            id,
+            device_id: DeviceId("p".into()),
+            remote_id: format!("v{id}"),
+            name: format!("v{id}.mp4"),
+            remote_dir: None,
+            size: 100,
+            dest: format!("/d/v{id}.mp4").into(),
+            state,
+            failures: 0,
+            created: 0,
+            updated: 0,
+        };
+        let mut snap = Snapshot::default();
+        snap.downloads.push(dl(1, DownloadState::Fetching { offset: 10, etag: None }));
+        snap.downloads.push(dl(2, DownloadState::Done));
+        snap.downloads.push(dl(3, DownloadState::Failed { reason: DownloadFailReason::RemoteGone }));
+        snap.progress.push(ItemProgress { id: 1, sent: 40, size: 100, bytes_per_sec: 5 });
+        let vi = I18n::new(Language::Vi);
+        let rows = build_rows(&vi, &snap, &device(DeviceState::Online), &HashSet::new(), false);
+        assert_eq!(rows.len(), 2, "mục đã tải xong không nằm ở hàng sống");
+        assert_eq!(rows[0].kind, RowKind::Item { id: 1, nested: false });
+        assert!(rows[0].status.contains("40 %"));
+        assert_eq!(rows[0].actions, vec![Action::Pause, Action::Cancel]);
+        assert_eq!(rows[1].actions, vec![Action::Retry, Action::Cancel]);
+        assert_eq!(rows[1].tone, Tone::Danger);
     }
 }

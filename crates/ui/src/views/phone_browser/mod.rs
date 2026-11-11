@@ -36,7 +36,6 @@ pub enum BrowserMode {
     /// Chọn thư mục đích cho khay chờ: `what` = "3 tệp, 1 thư mục", `bytes` = tổng cỡ khi biết.
     Destination { what: String, bytes: Option<u64> },
     /// Thư viện điện thoại (gd1_11 thêm nút "Tải về máy").
-    #[allow(dead_code)] // gd1_11 dùng chế độ thư viện
     Library,
 }
 
@@ -159,7 +158,6 @@ impl PhoneBrowser {
     }
 
     /// Mục thư viện đang chọn (cho gd1_11 "Tải về máy").
-    #[allow(dead_code)] // gd1_11: "Tải về máy"
     pub fn selected_items(&self) -> Vec<&LibraryItem> {
         self.selected.iter().filter_map(|&i| self.entries.get(i)).filter_map(|e| e.item).filter_map(|i| self.items.get(i)).collect()
     }
