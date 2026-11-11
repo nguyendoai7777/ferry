@@ -30,6 +30,7 @@ use ferry_core::queue::state::PauseReason;
 use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
 use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
 use ferry_core::transfer::download;
+use ferry_core::watch::{self, FolderWatcher, Ready};
 use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
     UploadRunner, link_channel,
@@ -64,6 +65,8 @@ pub struct EngineConfig {
     pub autostart: fn(bool) -> Result<(), String>,
     /// Lỗi của lần đồng bộ autostart lúc khởi động (`autostart::sync_on_start`).
     pub autostart_error: Option<String>,
+    /// Thư mục theo dõi: tệp đứng yên chừng này mới vào hàng đợi (`watch::STABLE_FOR`; test rút ngắn).
+    pub watch_stable_for: Duration,
 }
 
 /// Đầu ra không qua IPC. Test thay bằng hàm ghi lại.
@@ -184,6 +187,11 @@ enum Internal {
         outbox: Outbox,
         req: u64,
     },
+    /// Thư mục theo dõi: đã thêm `files` tệp vào hàng đợi của `device` (`add_watched`).
+    Watched {
+        device: DeviceId,
+        files: u64,
+    },
 }
 
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
@@ -198,6 +206,7 @@ struct Receivers {
     transfer: mpsc::UnboundedReceiver<TransferEvent>,
     internal: mpsc::UnboundedReceiver<Internal>,
     browser: Option<Browser>,
+    watch: mpsc::UnboundedReceiver<Ready>,
 }
 
 struct Engine {
@@ -229,6 +238,12 @@ struct Engine {
     /// Đã báo "cần ghép lại" / "hết chỗ" — báo một lần tới khi thiết bị chạy lại.
     told_repair: HashSet<DeviceId>,
     told_no_space: HashSet<DeviceId>,
+    /// Bộ theo dõi thư mục đang chạy (gd1_13); thả ⇒ luồng của nó dừng.
+    watcher: Option<FolderWatcher>,
+    /// Thế hệ bộ theo dõi hiện tại — lô `Ready` của bộ cũ (vừa đổi thư mục) bị bỏ.
+    watch_gen: u64,
+    watch_tx: mpsc::UnboundedSender<Ready>,
+    watch_stable_for: Duration,
 }
 
 struct Subscriber {
@@ -241,6 +256,7 @@ impl Engine {
     fn new(cfg: EngineConfig, sinks: Sinks) -> (Engine, Receivers) {
         let (transfer_tx, transfer) = mpsc::unbounded_channel();
         let (internal_tx, internal) = mpsc::unbounded_channel();
+        let (watch_tx, watch) = mpsc::unbounded_channel();
         let locals = address::local_interfaces();
         let devices = Devices::from_config(&cfg.config.devices, locals.clone(), Instant::now());
         let browser = if cfg.mdns {
@@ -280,13 +296,18 @@ impl Engine {
             tray: None,
             told_repair: HashSet::new(),
             told_no_space: HashSet::new(),
+            watcher: None,
+            watch_gen: 0,
+            watch_tx,
+            watch_stable_for: cfg.watch_stable_for,
         };
         let paired: Vec<DeviceId> = engine.config.devices.iter().map(|d| d.id.clone()).collect();
         for id in paired {
             engine.ensure_runner(&id);
         }
         engine.probe_manual_addresses();
-        (engine, Receivers { transfer, internal, browser })
+        engine.restart_watch();
+        (engine, Receivers { transfer, internal, browser, watch })
     }
 
     async fn run(mut self, mut inputs: mpsc::UnboundedReceiver<Input>, mut rx: Receivers) {
@@ -311,6 +332,7 @@ impl Engine {
                 },
                 Some(ev) = rx.transfer.recv() => self.on_transfer(ev),
                 Some(msg) = rx.internal.recv() => self.on_internal(msg),
+                Some(ready) = rx.watch.recv() => self.on_watch_ready(ready),
                 ev = next_mdns(rx.browser.as_ref()) => match ev {
                     Some(MdnsEvent::Announced(ann)) => {
                         let ev = self.devices.announce(ann, Instant::now());
@@ -628,7 +650,10 @@ impl Engine {
             }
             Settled::WatchFolder(folder, check) => {
                 check?;
-                self.config.watch_folder = folder;
+                if self.config.watch_folder != folder {
+                    self.config.watch_folder = folder;
+                    self.restart_watch();
+                }
             }
             Settled::Autostart(enabled, result) => {
                 self.config.autostart = enabled;
@@ -686,6 +711,39 @@ impl Engine {
                 CommandError::Unreachable
             });
             let _ = tx.send(Internal::Probed { outbox, req, addr, result, remember });
+        });
+    }
+
+    // ---- thư mục theo dõi (gd1_13) ----
+
+    /// Dừng bộ theo dõi cũ (nếu có), bật bộ mới theo `config.watch_folder`. Trả về ngay: đăng ký theo dõi chạy trên luồng
+    /// của `FolderWatcher`.
+    fn restart_watch(&mut self) {
+        self.watcher = None;
+        self.watch_gen += 1;
+        let wf = &self.config.watch_folder;
+        if let (true, Some(path)) = (wf.enabled, wf.path.clone()) {
+            self.watcher =
+                Some(FolderWatcher::start(path, self.watch_gen, self.watch_stable_for, self.watch_tx.clone()));
+        }
+    }
+
+    /// Lô tệp mới đã ổn định ⇒ hàng đợi của điện thoại mặc định (điện thoại ghép đầu tiên). Chống trùng + ghi store
+    /// trong `spawn_blocking`.
+    fn on_watch_ready(&mut self, ready: Ready) {
+        if ready.generation != self.watch_gen || self.watcher.is_none() {
+            return;
+        }
+        let Some(device) = self.config.devices.first().map(|d| d.id.clone()) else {
+            log::info!("engine: watch folder: {} new file(s) but no paired phone", ready.files.len());
+            return;
+        };
+        let (store, tx) = (self.store.clone(), self.internal_tx.clone());
+        tokio::task::spawn_blocking(move || match add_watched(&store, &device, &ready) {
+            Ok(files) => {
+                let _ = tx.send(Internal::Watched { device, files });
+            }
+            Err(e) => log::warn!("engine: watch folder: {e}"),
         });
     }
 
@@ -942,6 +1000,14 @@ impl Engine {
             Internal::Forgot { outbox, req } => {
                 self.dirty = true;
                 reply_to(&outbox, req, Ok(Outcome::Done));
+            }
+            Internal::Watched { device, files } => {
+                if files > 0 {
+                    if let Some(r) = self.runners.get(&device) {
+                        r.handle.send(Command::Wake);
+                    }
+                    self.dirty = true;
+                }
             }
         }
     }
@@ -1364,6 +1430,21 @@ fn add_files(
     Ok(Outcome::Added { batch, files, skipped_non_video, unreadable })
 }
 
+/// Thêm tệp mới của thư mục theo dõi vào hàng đợi (một lô, nhãn = tên thư mục), bỏ tệp đã có trong hàng đợi / "Đã
+/// gửi" / vừa tải về (`watch::plan`). Trả số tệp đã thêm.
+fn add_watched(store: &SharedStore, device: &DeviceId, ready: &Ready) -> Result<u64, String> {
+    let mut store = lock(store);
+    let uploads = store.uploads().map_err(|e| e.to_string())?;
+    let downloads = store.downloads().map_err(|e| e.to_string())?;
+    let plan = watch::plan(ready, &uploads, &downloads);
+    if plan.files.is_empty() {
+        return Ok(0);
+    }
+    store.add_batch(device, &plan, now_ms()).map_err(|e| e.to_string())?;
+    log::info!("engine: watch folder queued {} file(s) for {device}", plan.files.len());
+    Ok(plan.files.len() as u64)
+}
+
 /// Thư mục tải về: tạo nếu chưa có, rồi thử ghi một tệp tạm (quyền, ổ chỉ đọc, ổ mạng rớt).
 fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
     let probe = dir.join(format!(".ferry-write-test-{}", std::process::id()));
@@ -1503,6 +1584,7 @@ mod tests {
             i18n: I18n::new(Language::En),
             autostart: |_| Ok(()),
             autostart_error: None,
+            watch_stable_for: Duration::from_millis(300),
         };
         let engine = spawn(&tokio::runtime::Handle::current(), cfg, sinks);
         Rig { engine, captured, store }
@@ -1690,6 +1772,44 @@ mod tests {
             Outcome::Settings(v) => v,
             other => panic!("expected settings, got {other:?}"),
         }
+    }
+
+    /// gd1_13 (mức engine): bật thư mục theo dõi ⇒ tệp mới ở thư mục con chảy sang điện thoại với `dir` giữ cây (C-W3);
+    /// đổi tên sau khi gửi không gửi lại (C2); tắt ⇒ tệp mới không vào hàng đợi.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gd1_13_watch_folder_queues_new_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let rig = start(tmp.path(), &phone, None).await;
+        let e = &rig.engine;
+        let root = tmp.path().join("Gửi");
+        std::fs::create_dir_all(root.join("Phim")).unwrap();
+        std::fs::write(root.join("cũ.mp4"), b"existing").unwrap();
+        let on = WatchFolder { enabled: true, path: Some(root.clone()) };
+        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: on }).await).watch_folder.path, Some(root.clone()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let src = root.join("Phim").join("a.mp4");
+        std::fs::write(&src, vec![3u8; 300 * 1024]).unwrap();
+        let uploads = || lock(&rig.store).uploads().unwrap();
+        wait_for("watched file sent", || {
+            let u = uploads();
+            u.len() == 1 && matches!(u[0].state, UploadState::Done { .. })
+        })
+        .await;
+        let u = uploads();
+        assert_eq!(u[0].path, src);
+        assert_eq!(u[0].dir, "Gửi/Phim", "C-W3: tree kept like copy/paste");
+
+        std::fs::rename(&src, root.join("Phim").join("b.mp4")).unwrap();
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert_eq!(uploads().len(), 1, "C2: rename is not a new file; old file never sent");
+
+        let off = WatchFolder { enabled: false, path: Some(root.clone()) };
+        view(ask(e, SettingsOp::SetWatchFolder { folder: off }).await);
+        std::fs::write(root.join("sau.mp4"), b"later").unwrap();
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert_eq!(uploads().len(), 1, "disabled watch adds nothing");
     }
 
     /// C1 (gd1_12, mức engine): đổi từng mục qua IPC ⇒ `config.json` đúng khoá camelCase, đọc lại còn; lỗi nói rõ.
