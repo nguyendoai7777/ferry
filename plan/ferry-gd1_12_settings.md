@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_12 — settings
+# ferry-gd1_12 — settings
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | sonnet (autostart theo OS: Opus bê từ fastcast) |
 | Cỡ | M — ~500 dòng |
 | Phụ thuộc | gd1_07 |

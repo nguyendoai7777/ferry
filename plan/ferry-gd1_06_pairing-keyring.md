@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_06 — pairing-keyring
+# ferry-gd1_06 — pairing-keyring
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ✅ (11/11/2026) |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | opus |
 | Cỡ | S — ~350 dòng |
 | Phụ thuộc | gd1_02, gd1_05 |
@@ -11,9 +11,9 @@
 | Phụ thuộc mới | `keyring` 4.2 (`v1`: Keychain / Credential Manager / Secret Service qua `zbus` thuần Rust — không `libdbus`; MIT/Apache, `cargo deny` xanh cả 6 target) |
 | File đụng tới | MỚI `crates/core/src/pairing.rs`, `crates/core/tests/pairing.rs`; SỬA `crates/core/src/config.rs` (`remember_device` / `forget_device`), `crates/core/src/queue/store.rs` (`remove_device`), `crates/core/tests/real_phone.rs` |
 
-## 0. Bàn giao từ media-wireless-sync-gd1_05 (11/11/2026)
+## 0. Bàn giao từ ferry-gd1_05 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_05 -->
+<!-- handoff: ferry-gd1_05 -->
 
 - **Đã có sẵn**: `device::Devices` (sổ thiết bị) — `paired(id, now)` sau khi token vào kho khoá (⇒ `Paired`, hẹn `info`
   ngay), `forget(id)` (⇒ `Discovered` nếu còn thấy qua mDNS, không thì ra khỏi sổ), `unauthorized(id)` (⇒ `NeedsRepair`),
@@ -24,11 +24,11 @@
   ⇒ `discovery::probe(addr)` ⇒ `Devices::info_ok(&info, addr, now)` (vào sổ ở `Discovered`).
 - **Bẫy**: `Devices` không giữ token (chỉ biết có / không qua trạng thái) — token ở `pairing` + kho khoá; `connect` nhận
   `Option<&Secret>`.
-- **Soát lại**: `cargo test -p mws-core device::` và `--test discovery`; mục 9 của `plan/media-wireless-sync-gd1_05_discovery-devices.md`.
+- **Soát lại**: `cargo test -p ferry-core device::` và `--test discovery`; mục 9 của `plan/ferry-gd1_05_discovery-devices.md`.
 
-## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
+## 0. Bàn giao từ ferry-gd1_02 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_02 -->
+<!-- handoff: ferry-gd1_02 -->
 
 - **`Secret` đã có ở `protocol::Secret`** (`new`, `expose`, `Debug` che, không `Display` / `Serialize`) — dùng lại, đừng định
   nghĩa thêm.
@@ -37,10 +37,10 @@
 - **Lỗi**: `WrongPin` (403), `RateLimited { retry_after: Option<Duration> }` (429 — lần sai thứ 5 đã trả 429), `Unauthorized`
   (401 ⇒ `NeedsRepair`), `BadRequest` (client id sai dạng: 8–64 ký tự `[A-Za-z0-9_-]`).
 - **`fake_phone`**: `PIN = "123456"`, `forget_tokens()` (C2), `issue_token(client_id)` bỏ qua bước PIN, `restart()` reset khoá PIN.
-- **Soát lại**: `cargo test -p mws-core --test client c1` (luồng ghép), `tests/real_phone.rs` (app thật, PIN lấy trên màn Sync WiFi).
+- **Soát lại**: `cargo test -p ferry-core --test client c1` (luồng ghép), `tests/real_phone.rs` (app thật, PIN lấy trên màn Sync WiFi).
 
 ## 1. Làm gì
-- `pair(device, pin)` ⇒ `POST /api/v1/pair` với `clientId` / `clientName` ⇒ token vào kho khoá OS (khoá `media-wireless-sync/<device id>`), thiết bị vào config (không token).
+- `pair(device, pin)` ⇒ `POST /api/v1/pair` với `clientId` / `clientName` ⇒ token vào kho khoá OS (khoá `ferry/<device id>`), thiết bị vào config (không token).
 - Sai PIN / `429` trả lỗi có `retry_after` cho UI đếm ngược.
 - `forget(device)` ⇒ `DELETE /api/v1/pair` nếu Online (lỗi mạng thì vẫn quên phía PC), xoá token + mục config + hàng đợi của thiết bị (hỏi ở UI).
 - `401` / `info.paired == false` ⇒ `NeedsRepair`; ghép lại ⇒ token mới thay token cũ.
@@ -69,29 +69,29 @@
 
 ## 9. Bàn giao thực tế
 
-- **API** (`mws_core::pairing`): `TokenStore` (chặn: `get` / `set` / `delete` theo `DeviceId`) — `OsKeyring` (crate
+- **API** (`ferry_core::pairing`): `TokenStore` (chặn: `get` / `set` / `delete` theo `DeviceId`) — `OsKeyring` (crate
   `keyring` 4 `v1`), `MemoryKeyring` (test, `fail_with`). `Tokens` = kho khoá + đệm RAM, async qua `spawn_blocking`, clone
   rẻ — daemon giữ một cái, `discovery::connect(id, addrs, tokens.get(id).await?.as_ref())`. `pair(&mut client, expected,
   &pin, Identity::from(&config), &tokens) -> Paired { id, name }` (token đã vào kho khoá + client). `forget(id,
   online_client, &tokens) -> Forgotten { phone_notified, keyring_error }` (`DELETE /pair` chờ ≤ 5 s, lỗi mạng / `401` vẫn
   quên phía PC). `Config::remember_device` / `forget_device`, `QueueStore::remove_device`.
-- **Khoá kho khoá**: dịch vụ `media-wireless-sync` (bản debug `media-wireless-sync.dev` — khỏi đè token của bản đã cài, hai
+- **Khoá kho khoá**: dịch vụ `ferry` (bản debug `ferry.dev` — khỏi đè token của bản đã cài, hai
   bản khác `clientId`), tài khoản = `id` điện thoại.
 - Opus chọn 11/11/2026: `keyring` 4.2 thay 3.x — vì bản `v1` của 4 dùng `zbus` thuần Rust trên Linux (3.x mặc định
   `dbus-secret-service` kéo `libdbus`, giấy phép AFL/GPL), có mã hoá phiên `crypto-rust`; không thêm feature nào.
   `NeedsRepair` không xoá token chết (ghép lại đè lên); thiếu token trong kho khoá ⇒ `Devices::unauthorized` ⇒ `NeedsRepair`.
   Không có kho khoá (Linux không Secret Service) ⇒ `KeyringError::Unavailable`, **không** rơi về tệp (PROTOCOL 2.2).
 - Ngoài phạm vi đã sửa (D-11): `cargo fmt` cho `transfer/{mod,upload}.rs`, `tests/upload.rs` (nợ fmt của gd1_04).
-- Thử thật: emulator `sdk_gphone64_arm64` qua `adb forward tcp:18080 tcp:8080`, client id `mws-gd1-06-test`; đã bấm
+- Thử thật: emulator `sdk_gphone64_arm64` qua `adb forward tcp:18080 tcp:8080`, client id `ferry-gd1-06-test`; đã bấm
   "Forget all computers" (xoá cả máy `w2test` của session w2 đã xong). Keychain không hỏi quyền (cùng một exe ghi rồi đọc).
 - Soát xanh: `cargo build`, `clippy --all-targets -D warnings` (+ chéo `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`),
-  `cargo test` (pairing 6, store +1, config +1, pairing unit 2), `cargo deny check licenses` xanh. RAM: chưa đo được — `mws`
+  `cargo test` (pairing 6, store +1, config +1, pairing unit 2), `cargo deny check licenses` xanh. RAM: chưa đo được — `ferry`
   chưa gọi `pairing` (gd1_07); Linux sẽ thêm luồng `async-io` của `zbus` khi chạm kho khoá lần đầu ⇒ gd1_07 C4 đo lại.
 - Chờ kiểm tay: C3 (`_backlog.md`).
 
 ## 10. Đề xuất cải tiến
 
-- [bảo mật|ux] macOS: exe chưa ký (D-21) mà đổi bản ⇒ mục Keychain do bản cũ tạo có thể hỏi "mws muốn dùng thông tin bí
+- [bảo mật|ux] macOS: exe chưa ký (D-21) mà đổi bản ⇒ mục Keychain do bản cũ tạo có thể hỏi "ferry muốn dùng thông tin bí
   mật" — bằng chứng: ACL Keychain gắn chữ ký exe; chưa tái hiện vì chưa có hai bản cài — đề xuất: ký ad-hoc ổn định /
   Developer ID khi phát hành — cỡ S — P2. Không làm được trong lượt: chứng chỉ ký là dịch vụ trả phí ⇒ `_backlog.md`.
 - [ux] Linux không Secret Service (KDE thiếu `kwalletd` bridge, phiên tối giản) ⇒ không ghép được — đề xuất: UI gd1_09 nói

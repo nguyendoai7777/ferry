@@ -2,7 +2,7 @@
 # The app name is not final (plan/_backlog.md): change `app.name` in both files.
 
 [app]
-name = "Media Wireless Sync"
+name = "Ferry"
 
 [tray]
 open_window = "Open window"

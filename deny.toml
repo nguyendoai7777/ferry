@@ -25,7 +25,7 @@ allow = [
     # 0BSD: recvmsg, doctest-file (qua interprocess); LLVM-exception: target-lexicon (chỉ lúc build, Linux).
     "0BSD",
     "Apache-2.0 WITH LLVM-exception",
-    # CC0-1.0 (công cộng — đã chốt cho materiant, D-2): tiny-keccak, chỉ lúc build, chỉ Linux (qua GPUI của `mws-ui`).
+    # CC0-1.0 (công cộng — đã chốt cho materiant, D-2): tiny-keccak, chỉ lúc build, chỉ Linux (qua GPUI của `ferry-ui`).
     "CC0-1.0",
     "ISC",
     "Zlib",

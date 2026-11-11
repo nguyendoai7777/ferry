@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
 use fake_phone::{FakePhone, Family};
-use mws_core::client::{ClientError, PhoneClient};
-use mws_core::config::{self, Config, PairedDevice};
-use mws_core::device::{DeviceId, DeviceState, Devices};
-use mws_core::discovery;
-use mws_core::pairing::{self, KeyringError, MemoryKeyring, PairError, TokenStore, Tokens};
-use mws_core::protocol::Secret;
+use ferry_core::client::{ClientError, PhoneClient};
+use ferry_core::config::{self, Config, PairedDevice};
+use ferry_core::device::{DeviceId, DeviceState, Devices};
+use ferry_core::discovery;
+use ferry_core::pairing::{self, KeyringError, MemoryKeyring, PairError, TokenStore, Tokens};
+use ferry_core::protocol::Secret;
 
 /// Mọi dòng log của tiến trình test (mức trace) — soát token / PIN không lọt vào log.
 static LOG: Mutex<String> = Mutex::new(String::new());

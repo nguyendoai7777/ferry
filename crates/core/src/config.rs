@@ -1,5 +1,5 @@
 //! `config.json` (khoá camelCase, mọi trường có mặc định): định danh của PC với điện thoại (`PROTOCOL.md` 6.3), ngôn
-//! ngữ, thiết bị đã ghép. Chỉ daemon `mws` ghi; `mws-ui` đọc ([`load`]), đổi gì thì gửi lệnh qua IPC.
+//! ngữ, thiết bị đã ghép. Chỉ daemon `ferry` ghi; `ferry-ui` đọc ([`load`]), đổi gì thì gửi lệnh qua IPC.
 //!
 //! Token **không bao giờ** nằm ở đây (`PROTOCOL.md` 2.2): chỉ ở kho khoá OS (`pairing`, gd1_06).
 

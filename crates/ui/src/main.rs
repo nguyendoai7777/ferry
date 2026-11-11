@@ -1,4 +1,4 @@
-//! Cửa sổ `mws-ui` (GPUI + materiant). Chỉ vẽ trạng thái daemon `mws` gửi qua IPC và gửi lệnh ngược lại — không mạng,
+//! Cửa sổ `ferry-ui` (GPUI + materiant). Chỉ vẽ trạng thái daemon `ferry` gửi qua IPC và gửi lệnh ngược lại — không mạng,
 //! không kho khoá, không SQLite (`CLAUDE.md` mục Bố cục). Đóng cửa sổ ⇒ tiến trình thoát, nhả GPU / RAM; daemon vẫn chạy.
 //!
 //! gd1_01: cửa sổ trống. Màn chính (vùng thả + hàng đợi) là gd1_08.
@@ -7,14 +7,14 @@
 
 mod daemon_link;
 
+use ferry_core::i18n::I18n;
+use ferry_core::{VERSION, config, logging, paths};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
     self, App, AppContext, Bounds, Context, IntoElement, Render, SharedString, TitlebarOptions, Window, WindowBounds,
     WindowOptions, div, px, size,
 };
 use materiant::theme::ActiveTheme;
-use mws_core::i18n::I18n;
-use mws_core::{VERSION, config, logging, paths};
 
 /// Cỡ mở đầu của cửa sổ chính, px logic.
 const WINDOW_SIZE: (f32, f32) = (720., 520.);
@@ -22,7 +22,7 @@ const WINDOW_MIN_SIZE: (f32, f32) = (480., 360.);
 
 fn main() {
     let log_file = logging::init("ui");
-    log::info!("mws-ui {VERSION} starting (pid {}, log: {log_file:?})", std::process::id());
+    log::info!("ferry-ui {VERSION} starting (pid {}, log: {log_file:?})", std::process::id());
 
     // Chỉ đọc: daemon là bên ghi `config.json`.
     let language = paths::config_file()
@@ -45,7 +45,7 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions { title: Some(title.clone()), ..Default::default() }),
             window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
-            app_id: Some("media-wireless-sync".into()),
+            app_id: Some("ferry".into()),
             ..materiant::window::window_options()
         };
         let handle = match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| MainView { placeholder })) {
@@ -69,7 +69,7 @@ fn main() {
             daemon_link::listen(link, handle, cx);
         }
     });
-    log::info!("mws-ui stopped");
+    log::info!("ferry-ui stopped");
 }
 
 struct MainView {

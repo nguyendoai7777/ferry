@@ -1,23 +1,23 @@
 //! Dò điện thoại trên LAN và in sự kiện — kiểm tay C4 của gd1_05 (điện thoại thật bật Sync WiFi) và đo CPU / RAM rảnh:
 //!
 //! ```bash
-//! cargo run -p mws-core --example discover            # Ctrl+C để thoát
-//! MWS_NO_MDNS=1 cargo run -p mws-core --example discover   # mốc so sánh: chỉ runtime, không mDNS
+//! cargo run -p ferry-core --example discover            # Ctrl+C để thoát
+//! FERRY_NO_MDNS=1 cargo run -p ferry-core --example discover   # mốc so sánh: chỉ runtime, không mDNS
 //! ```
 //!
 //! Vòng lặp đúng kiểu daemon sẽ chạy (gd1_07): chờ tin mDNS hoặc mốc `Devices::next_deadline`, không poll.
 
 use std::time::{Duration, Instant};
 
-use mws_core::device::Devices;
-use mws_core::discovery::{self, address, mdns};
+use ferry_core::device::Devices;
+use ferry_core::discovery::{self, address, mdns};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let t0 = Instant::now();
     let mut devices = Devices::from_config(&[], address::local_interfaces(), t0);
-    if std::env::var_os("MWS_NO_MDNS").is_some() {
-        eprintln!("MWS_NO_MDNS: idle runtime only (pid {})", std::process::id());
+    if std::env::var_os("FERRY_NO_MDNS").is_some() {
+        eprintln!("FERRY_NO_MDNS: idle runtime only (pid {})", std::process::id());
         std::future::pending::<()>().await;
     }
     let browser = mdns::Browser::start().expect("mdns");

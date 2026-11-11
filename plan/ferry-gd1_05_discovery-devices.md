@@ -1,19 +1,19 @@
-# media-wireless-sync-gd1_05 — discovery-devices
+# ferry-gd1_05 — discovery-devices
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ✅ 11/11/2026 |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | opus |
 | Cỡ | M — ~500 dòng |
 | Phụ thuộc | gd1_02 |
 | Quyết định áp dụng | W-1, W-3, D-3 |
-| Phụ thuộc mới | `mdns-sd` (MIT/Apache) — đo RAM / CPU rảnh của `mws` trước / sau |
+| Phụ thuộc mới | `mdns-sd` (MIT/Apache) — đo RAM / CPU rảnh của `ferry` trước / sau |
 | File đụng tới | MỚI `crates/core/src/discovery/{mod,address,mdns}.rs`, `crates/core/tests/discovery.rs`, `crates/core/examples/discover.rs`; SỬA `crates/core/src/device.rs`, `tests/fake_phone/mod.rs` (chỉ thêm `start_v6_only`) |
 
-## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
+## 0. Bàn giao từ ferry-gd1_02 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_02 -->
+<!-- handoff: ferry-gd1_02 -->
 
 - **Đã có sẵn**: `client::PhoneClient::new(addr: SocketAddr, device: Option<&DeviceId>, token)` — một client một địa chỉ,
   host giả `<id>.vpsync.invalid` + `resolve` (v4 / v6 / v6 + `scope_id` đều chạy, đã test). Happy eyeballs = đua nhiều
@@ -46,7 +46,7 @@
 - C2. Quảng bá `_vpsync._tcp` giả bằng chính `mdns-sd` trong test ⇒ Seen với đúng `id`; dừng quảng bá ⇒ Lost sau 30 s (đồng hồ giả). `[opus-unit]`
 - C3. Hai địa chỉ (IPv6 + IPv4 cùng subnet) ⇒ chọn IPv4. `[opus-unit]`
 - C4. Điện thoại thật cùng WiFi bật Sync WiFi ⇒ hiện trong ≤ 5 s. `[owner-qa]` — **chờ kiểm tay** (lệnh ở mục 9).
-- C5. CPU `mws` rảnh khi có mDNS ≈ 0 %, ghi RAM trước / sau vào mục 9. `[opus-run]`
+- C5. CPU `ferry` rảnh khi có mDNS ≈ 0 %, ghi RAM trước / sau vào mục 9. `[opus-run]`
 - C-W3a. Thứ tự chọn địa chỉ (bảng ca: chỉ v4, chỉ v6, link-local, v4 sai subnet) — hàm thuần. `[opus-unit]`
 - C-W3b. Địa chỉ đầu không nối được ⇒ địa chỉ kế thắng trong ≤ 300 ms (server giả nghe `[::1]` chỉ). `[opus-unit]`
 
@@ -79,9 +79,9 @@
 - Daemon chưa chạy discovery (runtime tokio là gd1_07) ⇒ C5 đo bằng `examples/discover` (cùng vòng lặp daemon sẽ chạy).
 - `mdns-sd` giữ feature mặc định (`async` = `flume/async`, để `recv_async` trong tokio; không thêm luồng chuyển tiếp).
 
-**Đo C5** (macOS, bản release, sau 80 s rảnh, không điện thoại trên LAN): `MWS_NO_MDNS=1` (chỉ runtime) footprint
+**Đo C5** (macOS, bản release, sau 80 s rảnh, không điện thoại trên LAN): `FERRY_NO_MDNS=1` (chỉ runtime) footprint
 1,66 MB / RSS 6,4 MB / CPU 0:00.01; có mDNS 1,78 MB / 6,99 MB / 0:00.02 ⇒ **mDNS thêm ~0,1 MB footprint, CPU ≈ 0 %**.
-Mốc `mws` gd1_01 = 10 MB footprint ⇒ dự kiến ~10,1 MB sau khi gd1_07 nối vào; gd1_07 C4 đo lại trên `mws` thật.
+Mốc `ferry` gd1_01 = 10 MB footprint ⇒ dự kiến ~10,1 MB sau khi gd1_07 nối vào; gd1_07 C4 đo lại trên `ferry` thật.
 Phụ thuộc mới: `mdns-sd` 0.21.7 (MIT/Apache; kéo `flume`, `mio`, `socket2`, `socket-pktinfo`, `fastrand`), `if-addrs`
 0.15 (MIT/BSD-3, đã có qua `mdns-sd`); `cargo deny check licenses` ok.
 
@@ -91,16 +91,16 @@ bỏ qua); C3 `address::tests::same_subnet_v4_beats_v6`; C-W3a `address::tests::
 chỉ v6, chỉ link-local, v4 sai subnet, link-local PC không tính /64, không rõ interface); C-W3b
 `dead_v4_then_v6_only_phone_wins_fast` (v4 từ chối ⇒ v6 thắng ≤ 300 ms; v4 nhận kết nối mà im ⇒ v6 thắng ở 250–400 ms)
 + `race` với đồng hồ giả (4 test). Thêm: nhập tay `[::1]:port`, IP của máy khác bị loại, đổi interface ⇒ đổi thứ tự.
-Soát: `cargo build`, `cargo clippy --all-targets -- -D warnings` (+ `-p mws-core` chéo `x86_64-pc-windows-msvc`,
+Soát: `cargo build`, `cargo clippy --all-targets -- -D warnings` (+ `-p ferry-core` chéo `x86_64-pc-windows-msvc`,
 `x86_64-unknown-linux-gnu`), `cargo test`, `cargo deny check licenses` — xanh.
 
 **Chờ kiểm tay (C4)**: điện thoại thật cùng WiFi với PC, app `video-player` bật Sync WiFi, rồi
-`cargo run -p mws-core --example discover` ⇒ dòng `Seen { … }` + `info via …` trong ≤ 5 s (emulator không quảng bá
+`cargo run -p ferry-core --example discover` ⇒ dòng `Seen { … }` + `info via …` trong ≤ 5 s (emulator không quảng bá
 mDNS ra LAN của Mac). Ghi ở `plan/_backlog.md`.
 
 ## 10. Đề xuất cải tiến
 
 - [ram] `mdns-sd` soát interface mỗi 5 s mặc định — đã hạ 15 s (`IP_CHECK_INTERVAL_SECS`); có thể nâng 30 s nếu đo
-  `mws` thật (gd1_07) thấy đánh thức đáng kể — S — P3. Chưa làm: chờ số đo của daemon thật.
+  `ferry` thật (gd1_07) thấy đánh thức đáng kể — S — P3. Chưa làm: chờ số đo của daemon thật.
 - [ux] `Browser` báo `newer_api` — UI (gd1_09) cần chữ "Cập nhật app trên máy tính để dùng điện thoại này" — S — P2.
   Đã ghi thẳng vào mục 1 của gd1_09 (kèm thông báo lỗi nhập tay `UnknownInterface`).

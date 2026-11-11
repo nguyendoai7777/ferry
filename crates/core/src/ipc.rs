@@ -1,4 +1,4 @@
-//! IPC daemon `mws` ↔ cửa sổ `mws-ui` (↔ lần chạy `mws` thứ hai): JSON một dòng mỗi thông điệp qua local socket — named
+//! IPC daemon `ferry` ↔ cửa sổ `ferry-ui` (↔ lần chạy `ferry` thứ hai): JSON một dòng mỗi thông điệp qua local socket — named
 //! pipe trên Windows, Unix socket trên macOS / Linux (crate `interprocess`, đồng bộ, không async runtime). Bê từ
 //! `fastcast_core::ipc`.
 //!
@@ -30,7 +30,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub enum UiToDaemon {
     /// Thông điệp đầu tiên của mọi kết nối.
     Hello { role: Role, pid: u32, protocol: u32 },
-    /// Đưa cửa sổ chính lên trước (chưa mở thì daemon bật `mws-ui`). Lần chạy `mws` thứ hai gửi cái này rồi thoát.
+    /// Đưa cửa sổ chính lên trước (chưa mở thì daemon bật `ferry-ui`). Lần chạy `ferry` thứ hai gửi cái này rồi thoát.
     Focus,
 }
 
@@ -50,9 +50,9 @@ pub enum DaemonToUi {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// Cửa sổ `mws-ui`: nhận thông điệp đẩy suốt đời kết nối.
+    /// Cửa sổ `ferry-ui`: nhận thông điệp đẩy suốt đời kết nối.
     Ui,
-    /// Lần chạy `mws` thứ hai / lệnh dòng lệnh: gửi một lệnh rồi đóng.
+    /// Lần chạy `ferry` thứ hai / lệnh dòng lệnh: gửi một lệnh rồi đóng.
     Cli,
 }
 
@@ -89,7 +89,7 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Endpoint thật của daemon. Windows: pipe theo tên người dùng (pipe là toàn máy, không theo phiên); có
-    /// `MWS_DATA_DIR` thì thêm hậu tố theo thư mục đó (hai bản dev không chung pipe). Unix: `<runtime_dir>/daemon.sock`.
+    /// `FERRY_DATA_DIR` thì thêm hậu tố theo thư mục đó (hai bản dev không chung pipe). Unix: `<runtime_dir>/daemon.sock`.
     pub fn daemon() -> io::Result<Endpoint> {
         #[cfg(windows)]
         {
@@ -104,7 +104,7 @@ impl Endpoint {
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '_' })
                 .collect();
-            Ok(Endpoint { id: format!("media-wireless-sync-{tag}"), guarded: true })
+            Ok(Endpoint { id: format!("ferry-{tag}"), guarded: true })
         }
         #[cfg(unix)]
         {
@@ -117,11 +117,11 @@ impl Endpoint {
     pub fn custom(tag: &str) -> Endpoint {
         #[cfg(windows)]
         {
-            Endpoint { id: format!("media-wireless-sync-{tag}"), guarded: false }
+            Endpoint { id: format!("ferry-{tag}"), guarded: false }
         }
         #[cfg(unix)]
         {
-            let path = std::env::temp_dir().join(format!("mws-{tag}.sock"));
+            let path = std::env::temp_dir().join(format!("ferry-{tag}.sock"));
             Endpoint { id: path.to_string_lossy().into_owned(), guarded: false }
         }
     }
@@ -138,7 +138,7 @@ impl Endpoint {
         }
         #[cfg(unix)]
         {
-            let path = std::env::temp_dir().join(format!("mws-{tag}")).join("daemon.sock");
+            let path = std::env::temp_dir().join(format!("ferry-{tag}")).join("daemon.sock");
             Endpoint { id: path.to_string_lossy().into_owned(), guarded: false }
         }
     }
@@ -199,9 +199,9 @@ impl Endpoint {
 }
 
 /// `sockaddr_un.sun_path` chỉ 104 byte (macOS) / 108 byte (Linux), tính cả NUL: thư mục dữ liệu dài (tên người dùng dài,
-/// `MWS_DATA_DIR` sâu) thì `bind` hỏng. Quá trần ⇒ `<thư mục tạm>/mws-<băm đường dẫn gốc>/daemon.sock` — thư mục tạm của
+/// `FERRY_DATA_DIR` sâu) thì `bind` hỏng. Quá trần ⇒ `<thư mục tạm>/ferry-<băm đường dẫn gốc>/daemon.sock` — thư mục tạm của
 /// macOS đã riêng từng người dùng; Linux `/tmp` chung nhưng thư mục con 0700 (`prepare_private_dir`), của người khác thì
-/// đổi quyền hỏng ⇒ lỗi, không chạy mù. Băm theo đường dẫn gốc để hai bản dev khác `MWS_DATA_DIR` không chung socket.
+/// đổi quyền hỏng ⇒ lỗi, không chạy mù. Băm theo đường dẫn gốc để hai bản dev khác `FERRY_DATA_DIR` không chung socket.
 #[cfg(unix)]
 fn short_socket_path(path: std::path::PathBuf) -> std::path::PathBuf {
     const MAX: usize = 100;
@@ -211,7 +211,7 @@ fn short_socket_path(path: std::path::PathBuf) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
-    std::env::temp_dir().join(format!("mws-{:016x}", h.finish())).join("daemon.sock")
+    std::env::temp_dir().join(format!("ferry-{:016x}", h.finish())).join("daemon.sock")
 }
 
 /// Kết nối phía client: gửi [`UiToDaemon`], nhận [`DaemonToUi`].
@@ -508,7 +508,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn long_socket_path_falls_back_to_temp_dir() {
-        let short = std::path::PathBuf::from("/run/user/1000/media-wireless-sync/daemon.sock");
+        let short = std::path::PathBuf::from("/run/user/1000/ferry/daemon.sock");
         assert_eq!(short_socket_path(short.clone()), short);
         let long = std::path::PathBuf::from(format!("/{}/daemon.sock", "x".repeat(120)));
         let a = short_socket_path(long.clone());

@@ -1,6 +1,6 @@
 [package]
-name = "mws-core"
-description = "Lõi media-wireless-sync: giao thức, hàng đợi, cấu hình, i18n, IPC — không UI, không GPU"
+name = "ferry-core"
+description = "Lõi ferry: giao thức, hàng đợi, cấu hình, i18n, IPC — không UI, không GPU"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

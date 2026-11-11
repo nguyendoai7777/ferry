@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_09 — add-phone
+# ferry-gd1_09 — add-phone
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | sonnet |
 | Cỡ | S — ~350 dòng |
 | Phụ thuộc | gd1_07 |
@@ -11,9 +11,9 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/ui/src/views/add_phone.rs`; SỬA `i18n/{vi,en}.toml` |
 
-## 0. Bàn giao từ media-wireless-sync-gd1_06 (11/11/2026)
+## 0. Bàn giao từ ferry-gd1_06 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_06 -->
+<!-- handoff: ferry-gd1_06 -->
 
 - Lỗi ghép (qua IPC của gd1_07, gốc `pairing::PairError`) ⇒ chữ nói việc cần làm: `WrongPin` "PIN không đúng, xem lại trên
   điện thoại"; `RateLimited{retryAfter}` đếm ngược rồi mới cho nhập (thiếu `Retry-After` ⇒ 60 s); `OtherPhone` "Địa chỉ này

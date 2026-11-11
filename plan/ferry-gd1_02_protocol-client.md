@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_02 — protocol-client
+# ferry-gd1_02 — protocol-client
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ✅ (11/11/2026) |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | opus |
 | Cỡ | M — ~700 dòng + test |
 | Phụ thuộc | gd1_01 |
@@ -13,17 +13,17 @@
 
 ## 0. Bàn giao từ gd1_01 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_01 -->
+<!-- handoff: ferry-gd1_01 -->
 
-- **Đã có sẵn**: `mws-core` khai sẵn mọi module (tệp rỗng ghi task chủ) — chỉ thêm mã vào tệp của mình, không sửa `lib.rs`.
+- **Đã có sẵn**: `ferry-core` khai sẵn mọi module (tệp rỗng ghi task chủ) — chỉ thêm mã vào tệp của mình, không sửa `lib.rs`.
   `queue` và `transfer` là thư mục (`queue/mod.rs`, `transfer/mod.rs`).
 - **Kiểu dùng chung W-3**: `device::DeviceId` (chuỗi trong suốt), `config::PairedDevice { id, name, addresses: Vec<String> }`
   (địa chỉ dạng chuỗi giữ `%iface`), `queue::BatchId::new()` (UUID v4). Dùng lại, đừng định nghĩa song song.
-- **Phụ thuộc đã có trong `mws-core`**: `serde`, `serde_json`, `uuid` (v4), `log`, `dirs`, `toml`, `interprocess`,
+- **Phụ thuộc đã có trong `ferry-core`**: `serde`, `serde_json`, `uuid` (v4), `log`, `dirs`, `toml`, `interprocess`,
   `gethostname`, `sys-locale`; dev: `tempfile`. Thêm crate ⇒ khai ở `crates/core/Cargo.toml` (crate dùng chung nhiều
   crate thì vào `[workspace.dependencies]`), soát `cargo deny check licenses`.
-- **Đường dẫn**: `paths::data_dir()` (ghi đè `MWS_DATA_DIR`) cho SQLite / tệp tạm; test dùng `tempfile`, không đụng thư mục thật.
-- **Soát lại khi làm**: build ở `<gốc>/media-wireless-sync/target/w<N>`; đổi mã theo OS ⇒ thêm clippy `--target
+- **Đường dẫn**: `paths::data_dir()` (ghi đè `FERRY_DATA_DIR`) cho SQLite / tệp tạm; test dùng `tempfile`, không đụng thư mục thật.
+- **Soát lại khi làm**: build ở `<gốc>/ferry/target/w<N>`; đổi mã theo OS ⇒ thêm clippy `--target
   x86_64-pc-windows-msvc` / `x86_64-unknown-linux-gnu` (lệnh ở `CLAUDE.md` mục Lệnh).
 - **Bẫy**: socket Unix ≤ 104 byte (đã tự xử lý trong `ipc`); số RAM trên macOS đo bằng `footprint`, không RSS.
 
@@ -56,7 +56,7 @@
 
 ## 9. Bàn giao thực tế
 
-**Đã làm (11/11/2026, Opus)** — nhánh `claude/gd1_02-protocol-client`, worktree `media-wireless-sync-w1`, build `target/w1`.
+**Đã làm (11/11/2026, Opus)** — nhánh `claude/gd1_02-protocol-client`, worktree `ferry-w1`, build `target/w1`.
 - `protocol.rs`: `API_VERSION`, hằng `path::*`, `header::*`, `feature::{DIRS, IPV6}`; `Info` (W-3: `port: Option<u16>`,
   `addresses`, `features` mặc định rỗng, `has_feature`), `PairResponse`, `LibraryItem` (tên này thay cả `ListItem` của spec;
   `dir: Option<String>` — vắng ⇒ `Some("")`, `null` ⇒ `None`), `ListResponse`, `UploadCreated { id, offset, length, dir }`;
@@ -100,7 +100,7 @@ mục 7 chạy với server giả (test tự bỏ qua khi máy không có `curl`
 xanh — info (`features: ipv6, dirs`), sai PIN `403`, ghép, `list`, tạo với `X-File-Dir` tiếng Việt, `204`, PATCH sai offset ⇒
 `409` + offset đúng (điện thoại trả lỗi sớm vẫn tới client), HEAD, `201` + `dir`, `HEAD file` + `Range` 206 khớp byte,
 If-Range lệch ⇒ 200, `.mp3` ⇒ `415`, `a/../b` ⇒ `400`, huỷ phiên ⇒ HEAD `404`, `unpair` ⇒ `401`. Để lại trên emulator tệp
-`mws-gd1_02/Thử nghiệm/gd1_02 thử + nghiệm.mp4` (300 KB). `adb forward` không nghe `[::1]` ⇒ IPv6 thật chưa thử (cần điện
+`ferry-gd1_02/Thử nghiệm/gd1_02 thử + nghiệm.mp4` (300 KB). `adb forward` không nghe `[::1]` ⇒ IPv6 thật chưa thử (cần điện
 thoại thật cùng WiFi — gd1_05). Điện thoại trả `id` thư viện chứa `%2F` và khoảng trắng nguyên văn ⇒ `encode_path_segment`
 mã hoá `%` thành `%25` là đúng (đã qua `HEAD file` / `GET`).
 
@@ -114,7 +114,7 @@ mã hoá `%` thành `%25` là đúng (đã qua `HEAD file` / `GET`).
 - `connect_timeout` 10 s — happy eyeballs 250 ms là việc của gd1_05 (đua nhiều `PhoneClient`).
 
 **Soát xanh** (cwd = worktree, `CARGO_TARGET_DIR=…/target/w1`): `cargo build` ✓, `cargo clippy --all-targets -- -D warnings` ✓,
-`cargo clippy -p mws-core --all-targets --target {x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu} -- -D warnings` ✓,
+`cargo clippy -p ferry-core --all-targets --target {x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu} -- -D warnings` ✓,
 `cargo test` ✓ (core lib 30, client 11 + 1 ignored, real_phone 1 ignored, daemon 3), `cargo deny check licenses` ✓.
 
 **Rebase lên gd1_03 (`1397fb8`)**: xung đột `crates/core/Cargo.toml` (`rusqlite` cạnh `percent-encoding` / `reqwest`) và khối
@@ -126,5 +126,5 @@ nguồn: `queue::batch::VIDEO_EXTENSIONS` thành `pub use crate::protocol::VIDEO
 
 Soát 4 lăng kính: **bảo mật** — token chỉ qua `Secret::expose` vào header, `Debug` của `PhoneClient` / `PairResponse` che,
 thân lỗi log ≤ 1 KB, không proxy hệ thống (token không đi qua proxy lạ) — không phát hiện thêm. **RAM** — C5 +2,1 MB / 1 GB;
-reqwest không TLS, không HTTP/2 kéo thêm `hyper` + `tower` (≈ 60 crate, đã có trong `Cargo.lock`, chỉ nạp ở `mws`) — gd1_07
+reqwest không TLS, không HTTP/2 kéo thêm `hyper` + `tower` (≈ 60 crate, đã có trong `Cargo.lock`, chỉ nạp ở `ferry`) — gd1_07
 đo lại footprint daemon khi có runtime tokio. **UI/UX**, **Pro** — không áp (lõi, không UI).

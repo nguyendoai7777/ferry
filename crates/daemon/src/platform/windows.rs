@@ -120,7 +120,7 @@ unsafe extern "system" fn on_console_ctrl(_ctrl_type: u32) -> i32 {
 }
 
 fn create_message_window() -> Result<HWND, String> {
-    let class: Vec<u16> = "media-wireless-sync-daemon\0".encode_utf16().collect();
+    let class: Vec<u16> = "ferry-daemon\0".encode_utf16().collect();
     // SAFETY: chuỗi rộng kết thúc bằng NUL sống tới hết hàm; lớp cửa sổ đăng ký trùng lần hai chỉ trả lỗi (bỏ qua).
     unsafe {
         let instance = GetModuleHandleW(null_mut());

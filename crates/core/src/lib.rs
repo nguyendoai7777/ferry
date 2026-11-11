@@ -1,4 +1,4 @@
-//! Lõi media-wireless-sync (`CLAUDE.md` mục Bố cục): mọi thứ không phải UI. Daemon `mws` chạy nó; `mws-ui` chỉ dùng
+//! Lõi ferry (`CLAUDE.md` mục Bố cục): mọi thứ không phải UI. Daemon `ferry` chạy nó; `ferry-ui` chỉ dùng
 //! `i18n`, `config` (đọc), `paths`, `logging`, `ipc`.
 //!
 //! Mọi module đã khai sẵn từ gd1_01 để task sau chỉ thêm mã vào tệp của mình, không giẫm `lib.rs`. Chủ của từng module

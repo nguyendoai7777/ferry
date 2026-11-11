@@ -1,7 +1,7 @@
-//! Tiến trình nền `mws`: khay, IPC, bật cửa sổ `mws-ui`; sau này chạy hàng đợi gửi sang điện thoại (gd1_07). Không GPU,
+//! Tiến trình nền `ferry`: khay, IPC, bật cửa sổ `ferry-ui`; sau này chạy hàng đợi gửi sang điện thoại (gd1_07). Không GPU,
 //! không framework UI ("RAM là tính năng", `CLAUDE.md` mục Bố cục).
 //!
-//! `mws` lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát.
+//! `ferry` lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -15,15 +15,15 @@ mod ui_process;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use mws_core::i18n::I18n;
-use mws_core::ipc::{ClientConnection, DaemonToUi, Endpoint, Role, UiToDaemon};
-use mws_core::{VERSION, config, logging, paths};
+use ferry_core::i18n::I18n;
+use ferry_core::ipc::{ClientConnection, DaemonToUi, Endpoint, Role, UiToDaemon};
+use ferry_core::{VERSION, config, logging, paths};
 
 use crate::daemon::Daemon;
 
 fn main() -> ExitCode {
     let log_file = logging::init("daemon");
-    log::info!("mws {VERSION} starting (pid {}, log: {log_file:?})", std::process::id());
+    log::info!("ferry {VERSION} starting (pid {}, log: {log_file:?})", std::process::id());
 
     let data_dir = match paths::data_dir() {
         Ok(d) => d,
@@ -63,7 +63,7 @@ fn main() -> ExitCode {
     drop(lock);
     match result {
         Ok(()) => {
-            log::info!("mws stopped");
+            log::info!("ferry stopped");
             ExitCode::SUCCESS
         }
         Err(e) => fail(&e),
@@ -72,7 +72,7 @@ fn main() -> ExitCode {
 
 /// Đã có daemon: bảo nó mở cửa sổ. Daemon kia có thể vừa giữ khoá mà chưa mở socket ⇒ thử lại một lúc.
 fn activate_running() -> ExitCode {
-    log::info!("another mws is running, asking it to open the window");
+    log::info!("another ferry is running, asking it to open the window");
     let mut last = None;
     for _ in 0..20 {
         match ClientConnection::open(Role::Cli).and_then(|mut c| c.request(&UiToDaemon::Focus)) {
@@ -82,7 +82,7 @@ fn activate_running() -> ExitCode {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    fail(&format!("cannot reach the running mws: {}", last.map_or_else(String::new, |e| e.to_string())))
+    fail(&format!("cannot reach the running ferry: {}", last.map_or_else(String::new, |e| e.to_string())))
 }
 
 fn fail(msg: &str) -> ExitCode {

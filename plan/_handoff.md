@@ -5,12 +5,12 @@ Tài liệu cho session điều phối mới (máy Linux) làm tiếp tới khi 
 
 ## 1. Mục tiêu
 
-App khay PC `media-wireless-sync` (Rust + GPUI + materiant; Windows · macOS · Linux) gửi tệp **và thư mục** video sang app
+App khay PC `ferry` (Rust + GPUI + materiant; Windows · macOS · Linux) gửi tệp **và thư mục** video sang app
 điện thoại `video-player` (Android) qua WiFi nhà, y như copy/paste trong Explorer / Finder; chạy trên cả IPv4 lẫn IPv6;
 đứt thì gửi tiếp từ byte cuối; kéo video về máy là phụ. Đích GĐ1: `ROADMAP.md` (14 task).
 
 Hợp đồng: `PROTOCOL.md` (W-1). Bản sao mục 6 ở repo điện thoại `xmobile/video-player/PC-implement.md` — **hai bản mục 6
-phải giống hệt**; đổi giao thức ⇒ sửa cả hai trước, rồi code hai phía. Quyết định: `../.claude/rules/decisions/media-wireless-sync.md`
+phải giống hệt**; đổi giao thức ⇒ sửa cả hai trước, rồi code hai phía. Quyết định: `../.claude/rules/decisions/ferry.md`
 — W-1 hợp đồng, W-2 phạm vi một chiều, **W-3** IPv4 + IPv6 + đẩy thư mục (`X-File-Dir`, `dir`, `addresses`, `features`),
 **W-4** nút "Chọn tệp…" (nhiều) / "Chọn thư mục…" + khay chờ + trình duyệt điện thoại kiểu Windows Explorer (`PhoneBrowser`,
 PROTOCOL 4.2, 4.6).
@@ -21,7 +21,7 @@ PROTOCOL 4.2, 4.6).
 |---|---|---|
 | `xmobile` (`nguyendoai7777/xmobile`) | `2ba2de3` | Android xong phía điện thoại: task_09 (giao thức v1), task_10 (IPv6), task_11 (thư mục) — `video-player/android/plan/` |
 | `xdesktop` (`nguyendoai7777/xdesktop`) | xem `git log` | quyết định W-3/W-4, `init.*` biết repo này |
-| `media-wireless-sync` (`nguyendoai7777/video-wireless-sync`) | `b46f3b9` + commit bàn giao này | gd1_01 → gd1_06 ✅ |
+| `ferry` (`nguyendoai7777/ferry`) | `b46f3b9` + commit bàn giao này | gd1_01 → gd1_06 ✅ |
 | `materiant` (`nguyendoai7777/materiant-rust`) | `22fefca` | không đổi trong đợt này |
 
 Task PC đã xong (chi tiết ở mục 9 từng tệp): 01 workspace · 02 protocol-client + `fake_phone` · 03 hàng đợi SQLite (lô +
@@ -41,22 +41,22 @@ sổ thiết bị (thứ tự địa chỉ, happy eyeballs 250 ms, nhập tay `[
 
 | Đợt | Task | Ghi chú |
 |---|---|---|
-| 5 | **gd1_07** daemon-runtime (opus) | một mình; gom 04/05/06 vào runtime tokio của `mws`, snapshot + lệnh qua IPC, khay 3 trạng thái, thông báo. **Bê khay Linux SNI của fastcast** (nợ gd1_01). Đọc các khối `## 0` trong tệp task |
+| 5 | **gd1_07** daemon-runtime (opus) | một mình; gom 04/05/06 vào runtime tokio của `ferry`, snapshot + lệnh qua IPC, khay 3 trạng thái, thông báo. **Bê khay Linux SNI của fastcast** (nợ gd1_01). Đọc các khối `## 0` trong tệp task |
 | 6 | gd1_08 main-window (sonnet, cỡ L — có `PhoneBrowser` W-4) · gd1_09 add-phone · gd1_12 settings · gd1_10 download-runner (opus) | song song sau 07 |
 | 7 | gd1_11 phone-library (cần 08 + 10, dùng lại `PhoneBrowser`) · gd1_13 watch-folder (cần 04 + 12) | |
 | 8 | gd1_14 packaging (opus) | bản cài ba OS, rồi `close-phase` |
 
 ## 4. Chạy tiếp trên máy Linux
 
-1. Kéo về: `git -C <xdesktop> pull --rebase`; repo app chưa có ⇒ `bash init.sh media-wireless-sync` (clone repo này +
-   materiant, soát gói apt). Có rồi ⇒ `git -C media-wireless-sync pull --rebase`, tương tự `materiant`, `xmobile`.
+1. Kéo về: `git -C <xdesktop> pull --rebase`; repo app chưa có ⇒ `bash init.sh ferry` (clone repo này +
+   materiant, soát gói apt). Có rồi ⇒ `git -C ferry pull --rebase`, tương tự `materiant`, `xmobile`.
 2. Worktree cố định (D-18, gitignore nên mỗi máy tạo một lần):
-   `for i in 1 2 3; do git -C media-wireless-sync worktree add --detach ../.claude/worktrees/media-wireless-sync-w$i master; done`
-3. Session điều phối mở ở gốc `xdesktop`, gọi `/media-wireless-sync`. Mỗi task một session con: `cwd` = worktree rảnh,
+   `for i in 1 2 3; do git -C ferry worktree add --detach ../.claude/worktrees/ferry-w$i master; done`
+3. Session điều phối mở ở gốc `xdesktop`, gọi `/ferry`. Mỗi task một session con: `cwd` = worktree rảnh,
    không tạo worktree mới, model theo cột Model của `ROADMAP.md`. Brief mẫu (đã dùng cho 02–06):
-   - task `plan/media-wireless-sync-gd1_NN_*.md`, worktree `…/media-wireless-sync-wK`, build `target/wK`;
+   - task `plan/ferry-gd1_NN_*.md`, worktree `…/ferry-wK`, build `target/wK`;
    - `git -C <worktree> switch --detach master`, nhánh `claude/gd1_NN-<tên>`;
-   - skill `run-task` + `/media-wireless-sync`; đọc `CLAUDE.md`, `PROTOCOL.md` mục liên quan, W-1…W-4, khối `## 0` của task;
+   - skill `run-task` + `/ferry`; đọc `CLAUDE.md`, `PROTOCOL.md` mục liên quan, W-1…W-4, khối `## 0` của task;
    - session song song sửa tệp nào thì không đụng; `tests/fake_phone/mod.rs` chỉ thêm hàm mới;
    - soát xanh 4 lệnh → commit → `rebase master` → soát lại → `merge --ff-only` → worktree về HEAD tách → `branch -d`;
      ghi mục 9; không push; báo cuối vài dòng.
@@ -67,5 +67,5 @@ sổ thiết bị (thứ tự địa chỉ, happy eyeballs 250 ms, nhập tay `[
 
 ## 5. Skill nên gọi
 
-`/media-wireless-sync` (ngữ cảnh) → `run-task media-wireless-sync-gd1_07` (hoặc giao session con) → `handoff` khi xong
+`/ferry` (ngữ cảnh) → `run-task ferry-gd1_07` (hoặc giao session con) → `handoff` khi xong
 từng task (run-task tự gọi) → `close-phase` khi gd1_14 ✅. Phía điện thoại: `/app-video-android` trong `xmobile`.

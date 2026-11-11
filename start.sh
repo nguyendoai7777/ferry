@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Mở media-wireless-sync bản debug để xem tay: build `mws` (khay) + `mws-ui` (cửa sổ) rồi chạy `mws`; chọn "Mở cửa sổ" ở khay
-# (hoặc chạy `mws` lần nữa) để mở cửa sổ. Gốc workspace gọi sang đây (`bash start.sh media-wireless-sync`); chạy thẳng cũng
+# Mở ferry bản debug để xem tay: build `ferry` (khay) + `ferry-ui` (cửa sổ) rồi chạy `ferry`; chọn "Mở cửa sổ" ở khay
+# (hoặc chạy `ferry` lần nữa) để mở cửa sổ. Gốc workspace gọi sang đây (`bash start.sh ferry`); chạy thẳng cũng
 # được, kể cả từ worktree (build ở target/w<N>):
-#   bash media-wireless-sync/start.sh [--no-watch]
-# Dữ liệu dev riêng, không đụng bản đã cài: cấu hình + log + khoá + socket ở media-wireless-sync/target/dev (dùng chung giữa
+#   bash ferry/start.sh [--no-watch]
+# Dữ liệu dev riêng, không đụng bản đã cài: cấu hình + log + khoá + socket ở ferry/target/dev (dùng chung giữa
 # master và mọi worktree ⇒ mỗi lúc một daemon dev, như một máy thật). Log: target/dev/data/logs/{daemon,ui}.log.
-# Mặc định theo dõi mã (tools/watch-run.mjs của gốc): lưu tệp ⇒ build lại, mở lại `mws` (cửa sổ đang mở thoát theo).
+# Mặc định theo dõi mã (tools/watch-run.mjs của gốc): lưu tệp ⇒ build lại, mở lại `ferry` (cửa sổ đang mở thoát theo).
 # --no-watch hoặc XDESKTOP_NO_WATCH=1: build rồi chạy một lần. Thoát: menu khay → Thoát (hoặc Ctrl+C).
-#   bash media-wireless-sync/start.sh --plans   chưa có plan ⇒ in rỗng (start.sh gốc bỏ bước hỏi plan)
+#   bash ferry/start.sh --plans   chưa có plan ⇒ in rỗng (start.sh gốc bỏ bước hỏi plan)
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$repo"
@@ -27,12 +27,12 @@ for a in "${xd_args[@]+"${xd_args[@]}"}"; do
   esac
 done
 
-# Master build ở media-wireless-sync/target/start; worktree w<N> build ở media-wireless-sync/target/w<N> (D-18).
-export CARGO_TARGET_DIR="$root/media-wireless-sync/target/$(xd_target_name "$repo" media-wireless-sync)"
-dev="$root/media-wireless-sync/target/dev"
-export MWS_DATA_DIR="$dev/data" MWS_CONFIG_FILE="$dev/config.json"
-echo "media-wireless-sync từ $repo (dữ liệu dev: $dev)"
+# Master build ở ferry/target/start; worktree w<N> build ở ferry/target/w<N> (D-18).
+export CARGO_TARGET_DIR="$root/ferry/target/$(xd_target_name "$repo" ferry)"
+dev="$root/ferry/target/dev"
+export FERRY_DATA_DIR="$dev/data" FERRY_CONFIG_FILE="$dev/config.json"
+echo "ferry từ $repo (dữ liệu dev: $dev)"
 m="$root/materiant"
-xd_run_app --scope media-wireless-sync.dev "$CARGO_TARGET_DIR/debug/mws" \
+xd_run_app --scope ferry.dev "$CARGO_TARGET_DIR/debug/ferry" \
   "$repo/crates|$repo/i18n|$repo/Cargo.toml|$m/src|$m/assets|$m/vendor|$m/Cargo.toml" \
-  -- --manifest-path "$repo/Cargo.toml" -p mws-daemon -p mws-ui
+  -- --manifest-path "$repo/Cargo.toml" -p ferry-daemon -p ferry-ui

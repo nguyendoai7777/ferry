@@ -1569,6 +1569,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferry-core"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "gethostname",
+ "if-addrs",
+ "interprocess",
+ "keyring",
+ "log",
+ "mdns-sd",
+ "percent-encoding",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml 1.1.8+spec-1.1.0",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ferry-daemon"
+version = "0.1.0"
+dependencies = [
+ "dispatch2",
+ "ferry-core",
+ "interprocess",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "tempfile",
+ "tray-icon",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ferry-ui"
+version = "0.1.0"
+dependencies = [
+ "devtool",
+ "ferry-core",
+ "futures",
+ "log",
+ "materiant",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3527,58 +3579,6 @@ name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
-
-[[package]]
-name = "mws-core"
-version = "0.1.0"
-dependencies = [
- "dirs 6.0.0",
- "gethostname",
- "if-addrs",
- "interprocess",
- "keyring",
- "log",
- "mdns-sd",
- "percent-encoding",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sys-locale",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml 1.1.8+spec-1.1.0",
- "uuid",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mws-daemon"
-version = "0.1.0"
-dependencies = [
- "dispatch2",
- "interprocess",
- "log",
- "mws-core",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "tempfile",
- "tray-icon",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mws-ui"
-version = "0.1.0"
-dependencies = [
- "devtool",
- "futures",
- "log",
- "materiant",
- "mws-core",
-]
 
 [[package]]
 name = "naga"

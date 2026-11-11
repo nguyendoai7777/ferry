@@ -9,9 +9,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use fake_phone::{FakePhone, Family};
-use mws_core::client::{ClientError, PatchOutcome, PhoneClient};
-use mws_core::device::DeviceId;
-use mws_core::protocol::{Secret, feature};
+use ferry_core::client::{ClientError, PatchOutcome, PhoneClient};
+use ferry_core::device::DeviceId;
+use ferry_core::protocol::{Secret, feature};
 use tokio::io::AsyncSeekExt;
 
 const CLIENT_ID: &str = "0e5e6d0c-test-pc";
@@ -385,13 +385,13 @@ async fn c6_curl_samples_match_contract() {
 }
 
 // C5 — upload 1 GB từ tệp tạm: RAM của tiến trình không tăng quá ~2 khúc (32 MB). Chạy tay:
-// `cargo test -p mws-core --test client --release -- --ignored c5 --nocapture`.
+// `cargo test -p ferry-core --test client --release -- --ignored c5 --nocapture`.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "upload 1 GB, đo RSS bằng `ps` (opus-run)"]
 async fn c5_one_gigabyte_upload_keeps_ram_flat() {
     const TOTAL: u64 = 1 << 30;
-    const CHUNK: u64 = mws_core::client::CHUNK_SIZE;
+    const CHUNK: u64 = ferry_core::client::CHUNK_SIZE;
     let Some((p, c)) = paired(Family::V4).await else { return };
     p.set_discard_data(true);
     let file = tempfile::NamedTempFile::new().unwrap();

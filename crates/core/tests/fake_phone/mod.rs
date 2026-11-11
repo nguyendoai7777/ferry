@@ -767,7 +767,7 @@ fn sanitize_dir(raw: &str) -> Option<String> {
 }
 
 fn is_video(name: &str) -> bool {
-    mws_core::protocol::is_video_name(name)
+    ferry_core::protocol::is_video_name(name)
 }
 
 const ENCODE: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~');

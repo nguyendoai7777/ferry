@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_03 — queue-store
+# ferry-gd1_03 — queue-store
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ✅ (11/11/2026) |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | opus |
 | Cỡ | M — ~600 dòng |
 | Phụ thuộc | gd1_01 (song song với 02) |
@@ -13,17 +13,17 @@
 
 ## 0. Bàn giao từ gd1_01 (11/11/2026)
 
-<!-- handoff: media-wireless-sync-gd1_01 -->
+<!-- handoff: ferry-gd1_01 -->
 
-- **Đã có sẵn**: `mws-core` khai sẵn mọi module (tệp rỗng ghi task chủ) — chỉ thêm mã vào tệp của mình, không sửa `lib.rs`.
+- **Đã có sẵn**: `ferry-core` khai sẵn mọi module (tệp rỗng ghi task chủ) — chỉ thêm mã vào tệp của mình, không sửa `lib.rs`.
   `queue` và `transfer` là thư mục (`queue/mod.rs`, `transfer/mod.rs`).
 - **Kiểu dùng chung W-3**: `device::DeviceId` (chuỗi trong suốt), `config::PairedDevice { id, name, addresses: Vec<String> }`
   (địa chỉ dạng chuỗi giữ `%iface`), `queue::BatchId::new()` (UUID v4). Dùng lại, đừng định nghĩa song song.
-- **Phụ thuộc đã có trong `mws-core`**: `serde`, `serde_json`, `uuid` (v4), `log`, `dirs`, `toml`, `interprocess`,
+- **Phụ thuộc đã có trong `ferry-core`**: `serde`, `serde_json`, `uuid` (v4), `log`, `dirs`, `toml`, `interprocess`,
   `gethostname`, `sys-locale`; dev: `tempfile`. Thêm crate ⇒ khai ở `crates/core/Cargo.toml` (crate dùng chung nhiều
   crate thì vào `[workspace.dependencies]`), soát `cargo deny check licenses`.
-- **Đường dẫn**: `paths::data_dir()` (ghi đè `MWS_DATA_DIR`) cho SQLite / tệp tạm; test dùng `tempfile`, không đụng thư mục thật.
-- **Soát lại khi làm**: build ở `<gốc>/media-wireless-sync/target/w<N>`; đổi mã theo OS ⇒ thêm clippy `--target
+- **Đường dẫn**: `paths::data_dir()` (ghi đè `FERRY_DATA_DIR`) cho SQLite / tệp tạm; test dùng `tempfile`, không đụng thư mục thật.
+- **Soát lại khi làm**: build ở `<gốc>/ferry/target/w<N>`; đổi mã theo OS ⇒ thêm clippy `--target
   x86_64-pc-windows-msvc` / `x86_64-unknown-linux-gnu` (lệnh ở `CLAUDE.md` mục Lệnh).
 - **Bẫy**: socket Unix ≤ 104 byte (đã tự xử lý trong `ipc`); số RAM trên macOS đo bằng `footprint`, không RSS.
 
@@ -87,5 +87,5 @@
 
 ## 10. Đề xuất cải tiến
 
-- [ram] `rusqlite` thêm ~1,5 MB vào exe `mws`; RAM lúc rảnh chưa đo lại vì daemon chưa mở store (gd1_07 nối) — đo
+- [ram] `rusqlite` thêm ~1,5 MB vào exe `ferry`; RAM lúc rảnh chưa đo lại vì daemon chưa mở store (gd1_07 nối) — đo
   `footprint` khi gd1_07 xong — S — P3.

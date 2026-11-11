@@ -1,9 +1,9 @@
-# media-wireless-sync — app PC gửi video sang điện thoại qua WiFi
+# ferry — app PC gửi video sang điện thoại qua WiFi
 
 Repo git riêng trong workspace `xdesktop` (luật chung, quyết định D-* / W-*: `../CLAUDE.md`, `../.claude/rules/decisions/`).
 App khay hệ thống nối PC với app điện thoại `video-player` qua WiFi nhà: thả video vào là chảy sang điện thoại, đứt thì
 nối tiếp từ byte cuối, xong thì im lặng; kéo video từ điện thoại về là phụ. Lộ trình: `ROADMAP.md`. Task:
-`plan/media-wireless-sync-gd<N>_*.md` (skill `run-task`), việc treo `plan/_backlog.md`. Skill nạp ngữ cảnh: `/media-wireless-sync`.
+`plan/ferry-gd<N>_*.md` (skill `run-task`), việc treo `plan/_backlog.md`. Skill nạp ngữ cảnh: `/ferry`.
 
 **`PROTOCOL.md` là hợp đồng với điện thoại** (W-1), không phải tài liệu thường: triết lý (mục 2), màn hình (4), máy trạng
 thái (5), giao thức HTTP v1 (6). Mã lõi trỏ về mục của nó (`// PROTOCOL 6.5`). Đổi giao thức ⇒ sửa `PROTOCOL.md` trước,
@@ -18,13 +18,13 @@ chỉ mở vài lần.
 
 | Crate | Loại | Việc | Không được mang |
 | --- | --- | --- | --- |
-| `crates/core` — `mws-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
-| `crates/daemon` — bin `mws` | bin | runtime tokio của lõi, khay (3 trạng thái), IPC server, bật tiến trình UI, một instance, thông báo hệ thống, autostart | GPUI, materiant |
-| `crates/ui` — bin `mws-ui` | bin | cửa sổ chính (vùng thả + hàng đợi), thư viện điện thoại, thêm điện thoại, cài đặt — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
+| `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
+| `crates/daemon` — bin `ferry` | bin | runtime tokio của lõi, khay (3 trạng thái), IPC server, bật tiến trình UI, một instance, thông báo hệ thống, autostart | GPUI, materiant |
+| `crates/ui` — bin `ferry-ui` | bin | cửa sổ chính (vùng thả + hàng đợi), thư viện điện thoại, thêm điện thoại, cài đặt — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
 | `crates/core/tests/fake_phone` | test | server giả trong tiến trình đúng hợp đồng §6 (đứt giữa khúc, `409`, `404`, `507`, `401`, `423`, `503`) | — |
 
-- UI không gọi mạng: mọi lệnh đi IPC sang `mws`, `mws` gửi ảnh chụp trạng thái (snapshot) khi đổi, không chia sẻ mutex.
-- Đóng cửa sổ ⇒ tiến trình UI thoát (nhả GPU / RAM); truyền vẫn chạy ở `mws`.
+- UI không gọi mạng: mọi lệnh đi IPC sang `ferry`, `ferry` gửi ảnh chụp trạng thái (snapshot) khi đổi, không chia sẻ mutex.
+- Đóng cửa sổ ⇒ tiến trình UI thoát (nhả GPU / RAM); truyền vẫn chạy ở `ferry`.
 
 ## Luật riêng
 
@@ -43,35 +43,35 @@ chỉ mở vài lần.
 ## Lệnh
 
 ```bash
-bash start.sh                      # bản debug: build mws + mws-ui, chạy mws (khay); theo dõi mã, --no-watch chạy một lần
-bash ../start.sh media-wireless-sync   # cùng việc, gọi từ gốc workspace
+bash start.sh                      # bản debug: build ferry + ferry-ui, chạy ferry (khay); theo dõi mã, --no-watch chạy một lần
+bash ../start.sh ferry   # cùng việc, gọi từ gốc workspace
 ```
 
-- Build: `CARGO_TARGET_DIR=<gốc>/media-wireless-sync/target/w<N>` trong worktree (D-18); `start.sh` tự đặt.
-- Dữ liệu dev riêng (`start.sh`): `MWS_DATA_DIR` (log, khoá một-instance, socket), `MWS_CONFIG_FILE` — trỏ vào
-  `target/dev`. Mức log `MWS_LOG=debug`, bản release ghi stderr khi có `MWS_LOG_STDERR`.
+- Build: `CARGO_TARGET_DIR=<gốc>/ferry/target/w<N>` trong worktree (D-18); `start.sh` tự đặt.
+- Dữ liệu dev riêng (`start.sh`): `FERRY_DATA_DIR` (log, khoá một-instance, socket), `FERRY_CONFIG_FILE` — trỏ vào
+  `target/dev`. Mức log `FERRY_LOG=debug`, bản release ghi stderr khi có `FERRY_LOG_STDERR`.
 - Soát xanh mỗi task: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check licenses`.
-  Đổi mã theo OS ⇒ thêm `cargo clippy -p mws-core -p mws-daemon --all-targets --target x86_64-pc-windows-msvc` (và
+  Đổi mã theo OS ⇒ thêm `cargo clippy -p ferry-core -p ferry-daemon --all-targets --target x86_64-pc-windows-msvc` (và
   `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`; đặt `LIBSQLITE3_SYS_USE_PKG_CONFIG=1`
   cho lệnh chéo (bẫy SQLite bên dưới).
-- `mws` lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `mws-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
+- `ferry` lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `ferry-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
 
 Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb forward tcp:18080 tcp:8080`, nhập tay `127.0.0.1:18080`).
 
 ## Bẫy
 
-- **Socket Unix ≤ 104 byte** (macOS; Linux 108): `MWS_DATA_DIR` sâu làm `bind` hỏng ("exceeds capacity of sun_path").
-  `ipc::Endpoint::daemon` tự rơi về `<tmp>/mws-<băm>/daemon.sock` khi đường dẫn quá 100 byte — đừng gỡ.
+- **Socket Unix ≤ 104 byte** (macOS; Linux 108): `FERRY_DATA_DIR` sâu làm `bind` hỏng ("exceeds capacity of sun_path").
+  `ipc::Endpoint::daemon` tự rơi về `<tmp>/ferry-<băm>/daemon.sock` khi đường dẫn quá 100 byte — đừng gỡ.
 - **Khay Linux chưa có**: `tray-icon` đòi GTK + libappindicator ⇒ không dùng; bê SNI tự viết của fastcast (nợ gd1_07).
-  Tới lúc đó Linux mở cửa sổ bằng cách chạy `mws` lần nữa.
+  Tới lúc đó Linux mở cửa sổ bằng cách chạy `ferry` lần nữa.
 - macOS: thử menu khay tự động bằng AppleScript không được (status item không lộ menu qua AX) ⇒ bấm bằng sự kiện chuột
-  `CGEvent` (vị trí icon: `position of menu bar item 1 of menu bar 1` của tiến trình `mws`).
+  `CGEvent` (vị trí icon: `position of menu bar item 1 of menu bar 1` của tiến trình `ferry`).
 - **Clippy chéo hỏng ở `libsqlite3-sys`** (`rusqlite` `bundled`, gd1_03): build script biên dịch C SQLite cho target
   kia ⇒ thiếu header (`stdlib.h` not found). Clippy chỉ soát mã Rust nên tắt biên dịch C bằng
   `LIBSQLITE3_SYS_USE_PKG_CONFIG=1 cargo clippy … --target …`. Không đặt biến này cho build thật.
 - **Hàng đợi** (`queue`, gd1_03): `<data_dir>/queue.sqlite3`, WAL. Đổi schema ⇒ thêm phần tử cuối vào `MIGRATIONS`
   của `queue/store.rs`, không sửa bản cũ; DB của bản mới hơn ⇒ `StoreError::NewerSchema`, không đụng.
 - **Dò mDNS** (`discovery`, gd1_05): test `--test discovery` C2 chạy mDNS thật trong tiến trình (cần interface ngoài
-  loopback, không có thì tự bỏ qua). Kiểm điện thoại thật: `cargo run -p mws-core --example discover`. Link-local cần
+  loopback, không có thì tự bỏ qua). Kiểm điện thoại thật: `cargo run -p ferry-core --example discover`. Link-local cần
   `scope_id` (index interface nhận bản ghi); config lưu dạng `[fe80::x%en0]:port` (tên, không index — index đổi sau khởi động).
-- RSS của `mws` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).
+- RSS của `ferry` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

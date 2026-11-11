@@ -1,4 +1,4 @@
-# media-wireless-sync — App PC "cầu nối" gửi video sang điện thoại qua WiFi
+# ferry — App PC "cầu nối" gửi video sang điện thoại qua WiFi
 
 > Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
 > thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1);

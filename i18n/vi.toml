@@ -2,7 +2,7 @@
 # Tên app chưa chốt (plan/_backlog.md): đổi ở `app.name` của cả hai tệp.
 
 [app]
-name = "Media Wireless Sync"
+name = "Ferry"
 
 [tray]
 open_window = "Mở cửa sổ"

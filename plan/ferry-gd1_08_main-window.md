@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_08 — main-window
+# ferry-gd1_08 — main-window
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | sonnet |
 | Cỡ | L — ~1100 dòng (thêm `PhoneBrowser`, W-4) |
 | Phụ thuộc | gd1_07 |

@@ -1,4 +1,4 @@
-# Workspace của media-wireless-sync: lõi `mws-core`, tiến trình nền `mws` (khay, IPC, không GPU) và cửa sổ `mws-ui`
+# Workspace của ferry: lõi `ferry-core`, tiến trình nền `ferry` (khay, IPC, không GPU) và cửa sổ `ferry-ui`
 # (GPUI + materiant). Bố cục + luật: `CLAUDE.md`; hợp đồng với điện thoại: `PROTOCOL.md` (W-1).
 [workspace]
 resolver = "3"
@@ -9,11 +9,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 # Mã đóng (D-2): không publish, cargo-deny bỏ qua crate nội bộ.
-license = "LicenseRef-media-wireless-sync-proprietary"
+license = "LicenseRef-ferry-proprietary"
 publish = false
 
 [workspace.dependencies]
-mws-core = { path = "crates/core" }
+ferry-core = { path = "crates/core" }
 # Repo anh em trong workspace xdesktop (clone cạnh repo này). Worktree ở `.claude/worktrees/` cần lối nối
 # `.claude/worktrees/materiant` → `materiant` (junction / symlink) để đường dẫn này trỏ đúng.
 materiant = { path = "../materiant" }

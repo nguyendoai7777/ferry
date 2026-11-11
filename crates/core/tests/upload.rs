@@ -10,12 +10,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fake_phone::{FakePhone, Family};
-use mws_core::client::PhoneClient;
-use mws_core::device::DeviceId;
-use mws_core::protocol::Secret;
-use mws_core::queue::state::{FailReason, PauseReason};
-use mws_core::queue::{BatchId, ItemId, QueueStore, UploadState, now_ms, plan_batch};
-use mws_core::transfer::{
+use ferry_core::client::PhoneClient;
+use ferry_core::device::DeviceId;
+use ferry_core::protocol::Secret;
+use ferry_core::queue::state::{FailReason, PauseReason};
+use ferry_core::queue::{BatchId, ItemId, QueueStore, UploadState, now_ms, plan_batch};
+use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
     UploadRunner, link_channel,
 };

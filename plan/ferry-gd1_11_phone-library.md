@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_11 — phone-library
+# ferry-gd1_11 — phone-library
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | sonnet |
 | Cỡ | S — ~350 dòng |
 | Phụ thuộc | gd1_08 (`PhoneBrowser`), gd1_10 |

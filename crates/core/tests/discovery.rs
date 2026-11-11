@@ -7,10 +7,10 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use fake_phone::FakePhone;
+use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices, LOST_AFTER};
+use ferry_core::discovery::mdns::{Browser, MdnsEvent, SERVICE_TYPE};
+use ferry_core::discovery::{self, ConnectError, address};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use mws_core::device::{DeviceEvent, DeviceId, DeviceState, Devices, LOST_AFTER};
-use mws_core::discovery::mdns::{Browser, MdnsEvent, SERVICE_TYPE};
-use mws_core::discovery::{self, ConnectError, address};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 
@@ -24,14 +24,15 @@ async fn mdns_announce_then_goodbye() {
         return;
     }
     let id = format!("{:016x}", rand_u64());
-    let instance = format!("mws test {}", &id[..6]);
+    let instance = format!("ferry test {}", &id[..6]);
     let browser = Browser::start().expect("browser");
 
     let publisher = ServiceDaemon::new().expect("publisher");
     let props = HashMap::from([("api".to_string(), "1".to_string()), ("id".to_string(), id.clone())]);
-    let service = ServiceInfo::new(SERVICE_TYPE, &instance, &format!("mws-test-{}.local.", &id[..6]), (), 18080, props)
-        .expect("service info")
-        .enable_addr_auto();
+    let service =
+        ServiceInfo::new(SERVICE_TYPE, &instance, &format!("ferry-test-{}.local.", &id[..6]), (), 18080, props)
+            .expect("service info")
+            .enable_addr_auto();
     let fullname = service.get_fullname().to_owned();
     publisher.register(service).expect("register");
 
@@ -110,8 +111,8 @@ async fn dead_v4_then_v6_only_phone_wins_fast() {
     drop(silent);
 
     // Client thắng dùng được tiếp, token đi kèm.
-    let token = phone.issue_token("mws-gd1-05");
-    let c = discovery::connect(&id, &[v6], Some(&mws_core::protocol::Secret::new(token))).await.unwrap();
+    let token = phone.issue_token("ferry-gd1-05");
+    let c = discovery::connect(&id, &[v6], Some(&ferry_core::protocol::Secret::new(token))).await.unwrap();
     assert!(c.info.paired);
     assert!(c.client.list().await.is_ok());
 }

@@ -5,7 +5,7 @@
 //! alpha, OS tự đổi theo thanh menu sáng / tối); Windows màu nhấn của app.
 
 #[cfg(not(target_os = "linux"))]
-use mws_core::i18n::I18n;
+use ferry_core::i18n::I18n;
 #[cfg(not(target_os = "linux"))]
 use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 #[cfg(not(target_os = "linux"))]

@@ -1,8 +1,8 @@
 //! Trạng thái của daemon trên luồng chính: mọi nguồn (khay, IPC, tiến trình UI) đổi thành [`Event`] rồi xử lý tuần tự ở
 //! [`Daemon::handle`] — không mutex chia sẻ với luồng khác. gd1_07 thêm runtime tokio + hàng đợi vào đây.
 
-use mws_core::i18n::I18n;
-use mws_core::ipc::{DaemonToUi, Sender};
+use ferry_core::i18n::I18n;
+use ferry_core::ipc::{DaemonToUi, Sender};
 
 use crate::platform::Waker;
 use crate::tray::{self, MenuAction};
@@ -15,7 +15,7 @@ pub enum Event {
     /// Chuột trái vào icon khay (Windows).
     #[cfg_attr(not(windows), allow(dead_code))]
     TrayLeftClick,
-    /// IPC `Focus`: lần chạy `mws` thứ hai, hoặc lệnh dòng lệnh.
+    /// IPC `Focus`: lần chạy `ferry` thứ hai, hoặc lệnh dòng lệnh.
     OpenWindow,
     UiConnected {
         id: u64,
@@ -70,7 +70,7 @@ impl Daemon {
         true
     }
 
-    /// Trước khi thoát. Cửa sổ `mws-ui` thấy IPC đóng (EOF) thì tự thoát theo.
+    /// Trước khi thoát. Cửa sổ `ferry-ui` thấy IPC đóng (EOF) thì tự thoát theo.
     pub fn shutdown(&mut self) {
         log::info!("daemon: shutting down");
     }

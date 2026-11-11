@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_13 — watch-folder
+# ferry-gd1_13 — watch-folder
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync |
+| Repo | ferry |
 | Model | opus |
 | Cỡ | S — ~300 dòng |
 | Phụ thuộc | gd1_04, gd1_12 |

@@ -2,36 +2,36 @@
 //!
 //! ```bash
 //! adb forward tcp:18080 tcp:8080
-//! MWS_TEST_PHONE=127.0.0.1:18080 MWS_TEST_PIN=<PIN trên màn Sync WiFi> \
-//!   cargo test -p mws-core --test real_phone -- --ignored --nocapture
+//! FERRY_TEST_PHONE=127.0.0.1:18080 FERRY_TEST_PIN=<PIN trên màn Sync WiFi> \
+//!   cargo test -p ferry-core --test real_phone -- --ignored --nocapture
 //! ```
 //!
-//! Ghép (rồi huỷ ghép ở cuối), gửi một tệp nhỏ vào thư mục `mws-gd1_02/Thử nghiệm` (để lại trên điện thoại), tải lại
+//! Ghép (rồi huỷ ghép ở cuối), gửi một tệp nhỏ vào thư mục `ferry-gd1_02/Thử nghiệm` (để lại trên điện thoại), tải lại
 //! bằng `Range`, tạo rồi huỷ một upload dở.
 
 use std::time::Duration;
 
-use mws_core::client::{ClientError, PatchOutcome, PhoneClient};
-use mws_core::protocol::{Secret, feature};
+use ferry_core::client::{ClientError, PatchOutcome, PhoneClient};
+use ferry_core::protocol::{Secret, feature};
 
 #[tokio::test]
-#[ignore = "cần điện thoại / emulator thật: MWS_TEST_PHONE, MWS_TEST_PIN"]
+#[ignore = "cần điện thoại / emulator thật: FERRY_TEST_PHONE, FERRY_TEST_PIN"]
 async fn real_phone_round_trip() {
-    let (Ok(addr), Ok(pin)) = (std::env::var("MWS_TEST_PHONE"), std::env::var("MWS_TEST_PIN")) else {
-        eprintln!("bỏ qua: thiếu MWS_TEST_PHONE / MWS_TEST_PIN");
+    let (Ok(addr), Ok(pin)) = (std::env::var("FERRY_TEST_PHONE"), std::env::var("FERRY_TEST_PIN")) else {
+        eprintln!("bỏ qua: thiếu FERRY_TEST_PHONE / FERRY_TEST_PIN");
         return;
     };
-    let addr = addr.parse().expect("MWS_TEST_PHONE = ip:port");
+    let addr = addr.parse().expect("FERRY_TEST_PHONE = ip:port");
     let probe = PhoneClient::new(addr, None, None).unwrap();
     let info = probe.info().await.unwrap();
     eprintln!("info: {info:?}");
     let mut c = PhoneClient::new(addr, Some(&info.id), None).unwrap();
 
     assert!(matches!(
-        c.pair(&Secret::new("999999"), "mws-gd1-02-test", "mws gd1_02").await,
+        c.pair(&Secret::new("999999"), "ferry-gd1-02-test", "ferry gd1_02").await,
         Err(ClientError::WrongPin)
     ));
-    let paired = c.pair(&Secret::new(pin), "mws-gd1-02-test", "Máy thử gd1_02").await.unwrap();
+    let paired = c.pair(&Secret::new(pin), "ferry-gd1-02-test", "Máy thử gd1_02").await.unwrap();
     assert_eq!(paired.id, info.id);
     c.set_token(Some(paired.token));
     assert!(c.info().await.unwrap().paired);
@@ -42,7 +42,7 @@ async fn real_phone_round_trip() {
     let data: Vec<u8> = (0..300_000u32).map(|i| (i * 7 % 251) as u8).collect();
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), &data).unwrap();
-    let dir = info.has_feature(feature::DIRS).then_some("mws-gd1_02/Thử nghiệm");
+    let dir = info.has_feature(feature::DIRS).then_some("ferry-gd1_02/Thử nghiệm");
     let up = c.upload_create("gd1_02 thử + nghiệm.mp4", data.len() as u64, dir).await.unwrap();
     eprintln!("created: {up:?}");
 
@@ -65,7 +65,7 @@ async fn real_phone_round_trip() {
     eprintln!("done: {item:?}");
     assert_eq!(item.size, 300_000);
     if dir.is_some() {
-        assert_eq!(item.dir.as_deref(), Some("mws-gd1_02/Thử nghiệm"));
+        assert_eq!(item.dir.as_deref(), Some("ferry-gd1_02/Thử nghiệm"));
     }
 
     let meta = c.file_head(&item.id).await.unwrap();
@@ -94,30 +94,30 @@ async fn real_phone_round_trip() {
     assert!(matches!(c.list().await, Err(ClientError::Unauthorized)));
 }
 
-/// gd1_06: ghép với app thật, token vào kho khoá **thật** của OS (dịch vụ `media-wireless-sync.dev` ở bản debug), rồi
+/// gd1_06: ghép với app thật, token vào kho khoá **thật** của OS (dịch vụ `ferry.dev` ở bản debug), rồi
 /// chờ người thử bấm "Quên mọi máy tính" trên điện thoại (tối đa 120 s) ⇒ PC thấy `NeedsRepair` ⇒ quên phía PC xoá token.
 ///
 /// ```bash
-/// MWS_TEST_PHONE=127.0.0.1:18080 MWS_TEST_PIN=<PIN> \
-///   cargo test -p mws-core --test real_phone real_phone_keyring -- --ignored --nocapture
+/// FERRY_TEST_PHONE=127.0.0.1:18080 FERRY_TEST_PIN=<PIN> \
+///   cargo test -p ferry-core --test real_phone real_phone_keyring -- --ignored --nocapture
 /// ```
 #[tokio::test]
-#[ignore = "cần điện thoại / emulator thật + kho khoá OS: MWS_TEST_PHONE, MWS_TEST_PIN"]
+#[ignore = "cần điện thoại / emulator thật + kho khoá OS: FERRY_TEST_PHONE, FERRY_TEST_PIN"]
 async fn real_phone_keyring() {
     use std::time::Instant;
 
-    use mws_core::config::{Config, PairedDevice};
-    use mws_core::device::{DeviceState, Devices};
-    use mws_core::pairing::{self, OsKeyring, TokenStore, Tokens};
+    use ferry_core::config::{Config, PairedDevice};
+    use ferry_core::device::{DeviceState, Devices};
+    use ferry_core::pairing::{self, OsKeyring, TokenStore, Tokens};
 
-    let (Ok(addr), Ok(pin)) = (std::env::var("MWS_TEST_PHONE"), std::env::var("MWS_TEST_PIN")) else {
-        eprintln!("bỏ qua: thiếu MWS_TEST_PHONE / MWS_TEST_PIN");
+    let (Ok(addr), Ok(pin)) = (std::env::var("FERRY_TEST_PHONE"), std::env::var("FERRY_TEST_PIN")) else {
+        eprintln!("bỏ qua: thiếu FERRY_TEST_PHONE / FERRY_TEST_PIN");
         return;
     };
-    let addr: std::net::SocketAddr = addr.parse().expect("MWS_TEST_PHONE = ip:port");
+    let addr: std::net::SocketAddr = addr.parse().expect("FERRY_TEST_PHONE = ip:port");
     let info = PhoneClient::new(addr, None, None).unwrap().info().await.unwrap();
     let cfg =
-        Config { client_id: "mws-gd1-06-test".into(), client_name: "Máy thử gd1_06".into(), ..Config::default() };
+        Config { client_id: "ferry-gd1-06-test".into(), client_name: "Máy thử gd1_06".into(), ..Config::default() };
     let tokens = Tokens::os();
 
     let mut c = PhoneClient::new(addr, Some(&info.id), None).unwrap();

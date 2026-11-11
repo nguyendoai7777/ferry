@@ -1,12 +1,12 @@
-//! Nối daemon `mws` qua IPC. Một luồng chặn ở `recv` rồi chuyển thông điệp vào vòng GPUI qua kênh async — không chia sẻ
+//! Nối daemon `ferry` qua IPC. Một luồng chặn ở `recv` rồi chuyển thông điệp vào vòng GPUI qua kênh async — không chia sẻ
 //! mutex với vòng vẽ. Daemon đóng kết nối (thoát từ khay) ⇒ cửa sổ thoát theo.
 //!
-//! Không có daemon (chạy `mws-ui` thẳng khi dev) ⇒ vẫn mở cửa sổ, chỉ log cảnh báo.
+//! Không có daemon (chạy `ferry-ui` thẳng khi dev) ⇒ vẫn mở cửa sổ, chỉ log cảnh báo.
 
+use ferry_core::ipc::{ClientConnection, DaemonToUi, Role};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use materiant::gpui_kit::{AnyWindowHandle, App, AppContext};
-use mws_core::ipc::{ClientConnection, DaemonToUi, Role};
 
 pub fn connect() -> Option<ClientConnection> {
     match ClientConnection::open(Role::Ui) {

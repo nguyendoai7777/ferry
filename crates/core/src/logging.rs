@@ -14,9 +14,9 @@ use log::{Level, Log, Metadata, Record};
 
 pub const ROTATE_BYTES: u64 = 1 << 20;
 /// Mức log: `debug | info | warn | error`, mặc định `info`.
-pub const LEVEL_VAR: &str = "MWS_LOG";
+pub const LEVEL_VAR: &str = "FERRY_LOG";
 /// Bản release ghi cả stderr (test tích hợp đọc log của exe con qua ống).
-pub const STDERR_VAR: &str = "MWS_LOG_STDERR";
+pub const STDERR_VAR: &str = "FERRY_LOG_STDERR";
 
 struct FileLogger {
     file: Option<Mutex<File>>,
@@ -163,7 +163,7 @@ mod tests {
     fn empty_target_logs_short_file_and_line() {
         let file = r"C:\Users\someone\.cargo\registry\gpui-pre-0.3.10\src/window.rs";
         assert_eq!(origin("", Some(file), Some(2074)), "gpui-pre-0.3.10/src/window.rs:2074");
-        assert_eq!(origin("mws::tray", Some(file), Some(1)), "mws::tray");
+        assert_eq!(origin("ferry::tray", Some(file), Some(1)), "ferry::tray");
     }
 
     #[test]

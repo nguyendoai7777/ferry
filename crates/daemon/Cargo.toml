@@ -1,6 +1,6 @@
 [package]
-name = "mws-daemon"
-description = "Tiến trình nền `mws`: khay, IPC, bật cửa sổ `mws-ui`, chạy hàng đợi — không GPU, không framework UI"
+name = "ferry-daemon"
+description = "Tiến trình nền `ferry`: khay, IPC, bật cửa sổ `ferry-ui`, chạy hàng đợi — không GPU, không framework UI"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,11 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "mws"
+name = "ferry"
 path = "src/main.rs"
 
 [dependencies]
-mws-core.workspace = true
+ferry-core.workspace = true
 interprocess.workspace = true
 log.workspace = true
 

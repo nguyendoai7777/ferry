@@ -25,8 +25,7 @@ use crate::protocol::Secret;
 
 /// Tên dịch vụ trong kho khoá. Bản debug (`start.sh`, dữ liệu dev riêng) dùng tên khác để không đè token của bản
 /// đã cài (hai bản có `clientId` khác nhau ⇒ hai token khác nhau trên cùng một điện thoại).
-pub const KEYRING_SERVICE: &str =
-    if cfg!(debug_assertions) { "media-wireless-sync.dev" } else { "media-wireless-sync" };
+pub const KEYRING_SERVICE: &str = if cfg!(debug_assertions) { "ferry.dev" } else { "ferry" };
 
 /// Chờ `DELETE /pair` khi quên điện thoại tối đa chừng này rồi quên phía PC luôn.
 pub const UNPAIR_TIMEOUT: Duration = Duration::from_secs(5);
@@ -363,6 +362,6 @@ mod tests {
     #[test]
     #[cfg(debug_assertions)]
     fn dev_build_uses_its_own_service() {
-        assert_eq!(KEYRING_SERVICE, "media-wireless-sync.dev");
+        assert_eq!(KEYRING_SERVICE, "ferry.dev");
     }
 }

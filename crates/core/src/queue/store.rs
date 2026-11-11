@@ -962,7 +962,7 @@ mod tests {
     /// C3 — tiến trình con ghi liên tục, bị giết giữa chừng ⇒ DB không hỏng, mở lại được, mục đã commit còn đủ.
     #[test]
     fn killed_writer_leaves_db_intact() {
-        const CHILD_VAR: &str = "MWS_QUEUE_CRASH_CHILD";
+        const CHILD_VAR: &str = "FERRY_QUEUE_CRASH_CHILD";
         if let Some(path) = std::env::var_os(CHILD_VAR) {
             // Vai tiến trình con: ghi tới khi bị giết.
             let mut store = QueueStore::open(Path::new(&path), NOW).unwrap();

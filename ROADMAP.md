@@ -1,7 +1,7 @@
-# media-wireless-sync — lộ trình
+# ferry — lộ trình
 
 App PC (Windows · macOS · Linux, D-3) gửi video sang app điện thoại `video-player` qua WiFi nhà, theo hợp đồng
-`PROTOCOL.md` (W-1). Khởi tạo 11/11/2026. Task: `plan/media-wireless-sync-gd<N>_*.md`, trạng thái ở từng tệp task (một nguồn sự thật).
+`PROTOCOL.md` (W-1). Khởi tạo 11/11/2026. Task: `plan/ferry-gd<N>_*.md`, trạng thái ở từng tệp task (một nguồn sự thật).
 
 ## GĐ1 — bản dùng được hằng ngày (v1 của PROTOCOL)
 
@@ -16,7 +16,7 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_04` `upload-runner` | chạy hàng đợi gửi: Checking → Creating → Sending nối tiếp, mọi nhánh lỗi §5, giới hạn băng thông | 02, 03 | opus |
 | `gd1_05` `discovery-devices` | mDNS `_vpsync._tcp` + địa chỉ tay, máy trạng thái thiết bị, chọn IPv4 cùng subnet | 02 | opus |
 | `gd1_06` `pairing-keyring` | ghép bằng PIN, token vào kho khoá OS, client id, quên điện thoại, `NeedsRepair` | 02, 05 | opus |
-| `gd1_07` `daemon-runtime` | runtime tokio trong `mws`, snapshot + lệnh qua IPC, khay 3 trạng thái + menu, thông báo cả lô xong | 04, 05, 06 | opus |
+| `gd1_07` `daemon-runtime` | runtime tokio trong `ferry`, snapshot + lệnh qua IPC, khay 3 trạng thái + menu, thông báo cả lô xong | 04, 05, 06 | opus |
 | `gd1_08` `main-window` | cửa sổ chính: thiết bị, vùng thả + "Chọn tệp…" / "Chọn thư mục…", khay chờ, trình duyệt điện thoại kiểu Explorer (W-4), hàng đợi + "Đã gửi" | 07 | sonnet |
 | `gd1_09` `add-phone` | màn thêm điện thoại 3 bước (hướng dẫn, danh sách dò thấy, PIN) | 07 | sonnet |
 | `gd1_10` `download-runner` | tải về nối tiếp `Range` + `If-Range` / `ETag`, `.part`, thư mục lưu | 03, 07 | opus |

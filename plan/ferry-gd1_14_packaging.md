@@ -1,9 +1,9 @@
-# media-wireless-sync-gd1_14 — packaging
+# ferry-gd1_14 — packaging
 
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | ☐ |
-| Repo | media-wireless-sync (+ gốc: `build.*`, `tag.*`) |
+| Repo | ferry (+ gốc: `build.*`, `tag.*`) |
 | Model | opus |
 | Cỡ | M |
 | Phụ thuộc | gd1_08 … gd1_13 |
@@ -13,7 +13,7 @@
 
 ## 1. Làm gì
 - Bản cài theo khuôn tên gốc: Windows NSIS, macOS `.app` + `.dmg`, Linux `.deb` (học `groove/build.*`, `groove/packaging`).
-- Hai exe (`mws`, `mws-ui`) trong một gói; autostart trỏ `mws`.
+- Hai exe (`ferry`, `ferry-ui`) trong một gói; autostart trỏ `ferry`.
 - Windows: luật tường lửa cho mDNS (UDP 5353 vào) lúc cài — không có thì dò không chạy trên mạng "Public".
 - macOS: `NSLocalNetworkUsageDescription` + `NSBonjourServices` (`_vpsync._tcp`) trong `Info.plist` (macOS 15 chặn mạng LAN nếu thiếu).
 - Trang giấy phép bên thứ ba; thông tin phát hành D-21; release note D-22; nối radio của `build.*` / `tag.*` gốc.

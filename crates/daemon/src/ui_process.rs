@@ -1,11 +1,11 @@
-//! Bật / theo dõi tiến trình cửa sổ `mws-ui` (exe nằm cạnh `mws`). Đóng cửa sổ ⇒ `mws-ui` thoát, nhả GPU / RAM; truyền
-//! vẫn chạy ở `mws` (`CLAUDE.md` mục Bố cục). Mỗi lúc tối đa một `mws-ui` do daemon bật.
+//! Bật / theo dõi tiến trình cửa sổ `ferry-ui` (exe nằm cạnh `ferry`). Đóng cửa sổ ⇒ `ferry-ui` thoát, nhả GPU / RAM; truyền
+//! vẫn chạy ở `ferry` (`CLAUDE.md` mục Bố cục). Mỗi lúc tối đa một `ferry-ui` do daemon bật.
 
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
-use mws_core::ipc::{DaemonToUi, Sender};
+use ferry_core::ipc::{DaemonToUi, Sender};
 
 use crate::daemon::Event;
 use crate::platform::Waker;
@@ -39,7 +39,7 @@ impl UiProcess {
                 log::info!("ui: started pid {pid}");
                 self.running = Some(pid);
             }
-            Err(e) => log::error!("ui: cannot start mws-ui: {e}"),
+            Err(e) => log::error!("ui: cannot start ferry-ui: {e}"),
         }
     }
 
@@ -60,12 +60,12 @@ impl UiProcess {
     }
 }
 
-/// Đường dẫn `mws-ui` cạnh exe đang chạy.
+/// Đường dẫn `ferry-ui` cạnh exe đang chạy.
 fn ui_exe() -> io::Result<PathBuf> {
-    Ok(std::env::current_exe()?.with_file_name(format!("mws-ui{}", std::env::consts::EXE_SUFFIX)))
+    Ok(std::env::current_exe()?.with_file_name(format!("ferry-ui{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// Bật `mws-ui`; một luồng chờ nó thoát (gặt tiến trình, không để zombie) rồi báo [`Event::UiExited`].
+/// Bật `ferry-ui`; một luồng chờ nó thoát (gặt tiến trình, không để zombie) rồi báo [`Event::UiExited`].
 fn spawn(waker: Waker) -> io::Result<u32> {
     let mut child = Command::new(ui_exe()?).spawn()?;
     let pid = child.id();

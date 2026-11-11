@@ -1,12 +1,12 @@
 //! Server IPC của daemon: một luồng nhận kết nối, mỗi kết nối một luồng đọc (`ipc` đồng bộ, kết nối ít và sống lâu — chỉ
-//! `mws-ui` và lần chạy `mws` thứ hai). Luồng đọc không xử lý gì: đổi thông điệp thành [`Event`] rồi đẩy về luồng chính.
+//! `ferry-ui` và lần chạy `ferry` thứ hai). Luồng đọc không xử lý gì: đổi thông điệp thành [`Event`] rồi đẩy về luồng chính.
 
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ferry_core::ipc::{DaemonToUi, Role, ServerConnection, UiToDaemon};
 use interprocess::local_socket::Listener;
 use interprocess::local_socket::prelude::*;
-use mws_core::ipc::{DaemonToUi, Role, ServerConnection, UiToDaemon};
 
 use crate::daemon::Event;
 use crate::platform::Waker;
