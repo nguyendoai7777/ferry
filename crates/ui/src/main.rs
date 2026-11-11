@@ -58,6 +58,8 @@ fn main() {
             // Exe trần (bản dev) không có `Info.plist`: nói rõ là app thường (Dock + thanh menu), rồi dựng thanh menu — không
             // có menu chính thì thanh menu giữ tên + menu của app trước đó.
             cx.set_activation_policy(ActivationPolicy::Regular);
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            platform::macos::set_dev_dock_icon();
             app_menu::bind_keys(cx);
             app_menu::install(&i18n, cx);
         }

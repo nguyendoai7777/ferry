@@ -1,14 +1,16 @@
 //! Mã riêng macOS của cửa sổ chính (bê cách làm từ cửa sổ Cài đặt của fastcast, `fastcast/crates/ui/src/platform/macos.rs`):
-//! cỡ đèn giao thông của hệ thống để căn chúng giữa thanh trên, và bảng "Giới thiệu" chuẩn của AppKit.
+//! cỡ đèn giao thông của hệ thống để căn chúng giữa thanh trên, bảng "Giới thiệu" chuẩn của AppKit, và icon Dock của bản dev.
 
+#[cfg(debug_assertions)]
+use objc2::AllocAnyThread;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{
     NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionVersion, NSApplication,
-    NSWindow, NSWindowButton, NSWindowStyleMask,
+    NSImage, NSWindow, NSWindowButton, NSWindowStyleMask,
 };
-use objc2_foundation::{NSDictionary, NSString};
+use objc2_foundation::{NSData, NSDictionary, NSString};
 
 /// Cạnh nút đèn giao thông, điểm logic: macOS 26 là 14, bản trước 12 ⇒ hỏi AppKit lúc chạy.
 pub fn caption_button_size() -> f32 {
@@ -38,4 +40,20 @@ pub fn about_panel(name: &str, version: &str) {
     }
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
+}
+
+/// Icon Dock cho exe trần (bản dev, ngoài `Ferry.app`): không có bundle nên AppKit không đọc được `CFBundleIconFile` và
+/// Dock hiện icon "exec". Bản release chạy trong `Ferry.app` lấy `ferry.icns` từ `Resources/` ⇒ chỉ nhúng ở bản debug.
+#[cfg(debug_assertions)]
+pub fn set_dev_dock_icon() {
+    static ICNS: &[u8] = include_bytes!("../../../../packaging/macos/ferry.icns");
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let data = NSData::with_bytes(ICNS);
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        log::warn!("ferry.icns: NSImage cannot decode the embedded icon");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: gọi trên luồng chính (có `MainThreadMarker`), ảnh là `NSImage` hợp lệ.
+    unsafe { app.setApplicationIconImage(Some(&image)) };
 }
