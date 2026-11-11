@@ -58,6 +58,12 @@ pub fn listen(mut conn: ClientConnection, window: AnyWindowHandle, cx: &mut App)
                 }
                 Incoming::Message(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
                 Incoming::Message(DaemonToUi::Ok) => {}
+                // Kho trạng thái của cửa sổ dựng ở gd1_08 (hàng đợi, thiết bị); tới lúc đó chỉ ghi log.
+                Incoming::Message(DaemonToUi::Snapshot(s)) => {
+                    log::debug!("ipc: snapshot ({} devices, {} uploads)", s.devices.len(), s.uploads.len());
+                }
+                Incoming::Message(DaemonToUi::Progress(p)) => log::trace!("ipc: progress of {} item(s)", p.items.len()),
+                Incoming::Message(DaemonToUi::Reply { req, outcome }) => log::debug!("ipc: reply {req}: {outcome:?}"),
                 Incoming::Closed => {
                     log::info!("ipc: daemon is gone, quitting");
                     cx.update(|cx| cx.quit());

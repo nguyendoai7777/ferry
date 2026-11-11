@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Row, Transaction, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::batch::{self, BatchPlan};
 use super::state::{
@@ -108,7 +108,7 @@ impl From<io::Error> for StoreError {
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 /// Một mục upload như store giữ (cũng là dữ liệu cho ảnh chụp trạng thái gửi UI).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadItem {
     pub id: ItemId,
@@ -143,7 +143,7 @@ pub struct NewDownload {
     pub dest: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadItem {
     pub id: ItemId,
@@ -166,7 +166,7 @@ impl DownloadItem {
 }
 
 /// Dòng gộp của một lô.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchInfo {
     pub id: BatchId,
@@ -178,7 +178,7 @@ pub struct BatchInfo {
 }
 
 /// Tổng tiến độ một lô (`PROTOCOL.md` 5: dòng gộp "N tệp", tổng tiến độ).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchProgress {
     pub files: u64,

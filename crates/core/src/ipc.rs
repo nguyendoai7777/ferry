@@ -5,17 +5,32 @@
 //! Daemon là server duy nhất. Client mở đầu bằng [`UiToDaemon::Hello`] (vai + phiên bản), daemon trả `Ok`. Thông điệp lạ
 //! (bản mới hơn) ⇒ `InvalidData`, bên nhận log rồi đọc tiếp, không cắt kết nối.
 //!
-//! Luật (`CLAUDE.md`): token không bao giờ đi qua IPC; UI không gọi mạng — mọi lệnh đi đây, daemon đẩy ảnh chụp trạng
-//! thái (task gd1_07 thêm biến thể; tối đa 4 biến thể mới mỗi task).
+//! Luật (`CLAUDE.md`): token không bao giờ đi qua IPC (PIN chỉ đi một chiều UI → daemon, kiểu [`Pin`] che khi log); UI
+//! không gọi mạng — mọi lệnh đi đây.
+//!
+//! Hợp đồng gd1_07 (task 08 / 09 / 10 / 12 dùng; thêm biến thể ⇒ tối đa 4 mỗi task, ghi mục 9 của task):
+//! - UI ⇒ daemon: `Queue` / `Phone` / `Library`, mỗi lệnh mang `req` (số UI tự tăng); daemon trả đúng một
+//!   [`DaemonToUi::Reply`] cùng `req` với [`Outcome`] (`failed` + [`CommandError`] khi không làm được). Lệnh chạy nền
+//!   (thêm tệp, ghép, đọc thư viện) trả lời khi xong, không chặn lệnh khác.
+//! - Daemon ⇒ UI (role `ui` sau `Hello`): [`DaemonToUi::Snapshot`] đầy đủ ngay khi nối, rồi mỗi khi đổi; chỉ tiến độ
+//!   trong khúc đổi ⇒ [`DaemonToUi::Progress`]. Gộp tối đa [`MAX_PUSH_PER_SEC`] lần / s. UI thay toàn bộ trạng thái bằng
+//!   `Snapshot`, cộng `Progress` lên trên (`sent` mới hơn `offset` của mục).
+//! - `Cli` (lần chạy `ferry` thứ hai) không nhận đẩy.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{ListenerOptions, Name, Stream};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::device::{DeviceId, DeviceState};
+use crate::protocol::LibraryItem;
+use crate::queue::store::{BatchInfo, BatchProgress, UploadItem};
+use crate::queue::{BatchId, ItemId};
 
 /// Một dòng JSON tối đa — chặn client hỏng / độc gửi dòng vô tận làm daemon phình RAM. Tệp không đi qua IPC (chỉ đường
 /// dẫn), 1 MiB là dư.
@@ -32,6 +47,78 @@ pub enum UiToDaemon {
     Hello { role: Role, pid: u32, protocol: u32 },
     /// Đưa cửa sổ chính lên trước (chưa mở thì daemon bật `ferry-ui`). Lần chạy `ferry` thứ hai gửi cái này rồi thoát.
     Focus,
+    /// Lệnh hàng đợi (gd1_07). Mọi lệnh có `req` (client tự đánh số, tăng dần theo kết nối): daemon trả đúng một
+    /// [`DaemonToUi::Reply`] cùng `req`, xen giữa các ảnh chụp trạng thái.
+    Queue { req: u64, op: QueueOp },
+    /// Lệnh điện thoại: ghép, quên, nhập địa chỉ tay (gd1_07).
+    Phone { req: u64, op: PhoneOp },
+    /// Thư viện điện thoại (gd1_07: `List`; gd1_10 / gd1_11 thêm `Download`).
+    Library { req: u64, op: LibraryOp },
+}
+
+/// Thao tác người dùng trên mục / lô (nút ở hàng đợi). Ánh xạ sang `transfer::ItemAction` ở daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    Pause,
+    Resume,
+    Cancel,
+    Retry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum QueueOp {
+    /// Thả / dán / chọn tệp + thư mục (W-3, W-4) ⇒ một lô. Daemon lọc đuôi (§6.6), duyệt thư mục đệ quy. Trả
+    /// [`Outcome::Added`]. `destDir` rỗng = gốc nơi lưu; có `..` ⇒ `InvalidInput`.
+    AddFiles {
+        device: DeviceId,
+        paths: Vec<PathBuf>,
+        dest_dir: String,
+    },
+    Item {
+        id: ItemId,
+        action: Action,
+    },
+    Batch {
+        batch: BatchId,
+        action: Action,
+    },
+    /// "Tạm dừng tất cả" / "Tiếp tục tất cả" (khay, cửa sổ). Chỉ nhận `pause` / `resume`.
+    All {
+        action: Action,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum PhoneOp {
+    /// Ghép thiết bị đang thấy (`Discovered`) hoặc ghép lại (`NeedsRepair`) bằng PIN 6 số đọc trên điện thoại. Trả
+    /// [`Outcome::Paired`]; sai ⇒ `WrongPin` / `RateLimited`.
+    Pair { device: DeviceId, pin: Pin },
+    /// Quên trên PC: báo điện thoại (nếu Online), xoá token, **xoá hàng đợi của máy đó**. Trả `Done`.
+    Forget { device: DeviceId },
+    /// Địa chỉ nhập tay (mọi dạng của `discovery::address::parse_address`) ⇒ hỏi `info` ⇒ thiết bị vào danh sách. Trả
+    /// [`Outcome::Found`].
+    AddAddress { address: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum LibraryOp {
+    /// `GET /list` của điện thoại đang Online. Trả [`Outcome::Library`]; Offline ⇒ `Offline`.
+    List { device: DeviceId },
+}
+
+/// PIN ghép: chỉ đi UI → daemon, không bao giờ vào snapshot / log (`Debug` che). Daemon bọc ngay `protocol::Secret`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Pin(pub String);
+
+impl std::fmt::Debug for Pin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Pin(***)")
+    }
 }
 
 /// Daemon → client.
@@ -45,6 +132,149 @@ pub enum DaemonToUi {
     },
     /// Daemon → UI: đưa cửa sổ lên trước (người dùng chọn "Mở cửa sổ" khi UI đang chạy).
     Focus,
+    /// Ảnh chụp đầy đủ (gd1_07): ngay sau `Hello` của vai `Ui`, rồi mỗi khi thiết bị / mục / lô đổi — gộp tối đa
+    /// [`MAX_PUSH_PER_SEC`] lần / s. UI thay toàn bộ trạng thái bằng bản này.
+    Snapshot(Snapshot),
+    /// Tiến độ giữa hai ảnh chụp (chỉ mục đang gửi), cùng nhịp gộp. UI áp lên bản đầy đủ gần nhất.
+    Progress(ProgressDelta),
+    /// Trả lời đúng một lần cho lệnh có `req`.
+    Reply {
+        req: u64,
+        outcome: Outcome,
+    },
+}
+
+/// Trần nhịp đẩy `Snapshot` + `Progress` cho mỗi client.
+pub const MAX_PUSH_PER_SEC: u32 = 10;
+
+/// Số mục đã kết thúc (Đã gửi / Bỏ qua / Huỷ / Lỗi) tối đa trong một ảnh chụp — mới nhất trước; phần còn lại chỉ đếm
+/// ([`Snapshot::finished_omitted`]). Giữ dòng JSON xa [`MAX_LINE`].
+pub const FINISHED_IN_SNAPSHOT: usize = 300;
+
+/// Số mục chưa kết thúc tối đa trong một ảnh chụp — đầu hàng đợi (gửi trước) trước; lô rất lớn (thả cả ổ) thì phần
+/// sau chỉ hiện qua tổng của [`BatchView`] ([`Snapshot::queued_omitted`]). Cùng [`FINISHED_IN_SNAPSHOT`] giữ dòng JSON
+/// dưới [`MAX_LINE`] (~1 300 mục × vài trăm byte).
+pub const QUEUED_IN_SNAPSHOT: usize = 1000;
+
+/// Trạng thái daemon cho cửa sổ (PROTOCOL 4.2, 4.4, 4.5). Không token, không PIN.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    /// Mọi thiết bị trong sổ: đã ghép (mọi trạng thái) + đang thấy chưa ghép (`Discovered`, màn "Thêm điện thoại").
+    pub devices: Vec<DeviceView>,
+    /// Lô còn mục trong `uploads` (dòng gộp "N tệp" / tên thư mục, tổng tiến độ).
+    pub batches: Vec<BatchView>,
+    /// Mục chưa kết thúc (≤ [`QUEUED_IN_SNAPSHOT`], đầu hàng đợi) và mục đã kết thúc mới nhất
+    /// (≤ [`FINISHED_IN_SNAPSHOT`]), xếp theo `id` (thứ tự thêm).
+    pub uploads: Vec<UploadItem>,
+    /// Tiến độ trong khúc của mục đang gửi (byte đã đi trong khúc hiện tại cộng dồn — số mới hơn `offset` của store).
+    pub progress: Vec<ItemProgress>,
+    /// Mục đã kết thúc không đưa vào `uploads` (cũ hơn).
+    pub finished_omitted: u64,
+    /// Mục chưa kết thúc không có trong `uploads` (sau [`QUEUED_IN_SNAPSHOT`]).
+    pub queued_omitted: u64,
+    /// Có mục đang chạy ⇒ khay / nút hiện "Tạm dừng tất cả"; không mà có mục tạm dừng ⇒ "Tiếp tục tất cả".
+    pub can_pause_all: bool,
+    pub can_resume_all: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceView {
+    pub id: DeviceId,
+    pub name: String,
+    pub state: DeviceState,
+    /// Đang thấy qua mDNS (chấm xanh khi cùng `Online`).
+    pub visible: bool,
+    /// `api` điện thoại mới hơn bản PC ⇒ "Cập nhật app trên máy tính" (gd1_09).
+    pub newer_api: bool,
+    /// `info.features` lần cuối; thiếu `dirs` ⇒ gửi phẳng, "Cập nhật app trên điện thoại để giữ thư mục".
+    pub features: Vec<String>,
+    /// Địa chỉ đang dùng (`ip:port`, `[v6]:port`, `[fe80::x%iface]:port`) — chỉ để hiện ở cài đặt nâng cao.
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchView {
+    pub info: BatchInfo,
+    pub progress: BatchProgress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemProgress {
+    pub id: ItemId,
+    /// Byte điện thoại đã nhận (gồm phần đang bay của khúc hiện tại).
+    pub sent: u64,
+    pub size: u64,
+    /// Trung bình trượt 5 s.
+    pub bytes_per_sec: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressDelta {
+    pub items: Vec<ItemProgress>,
+}
+
+/// Kết quả một lệnh.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum Outcome {
+    Done,
+    /// `AddFiles`: `batch = None` khi không có tệp nào gửi được (toàn tệp không phải video / không đọc được).
+    Added {
+        batch: Option<BatchId>,
+        files: u64,
+        skipped_non_video: u64,
+        unreadable: u64,
+    },
+    Paired {
+        device: DeviceId,
+        name: String,
+    },
+    Found {
+        device: DeviceId,
+        name: String,
+    },
+    Library {
+        items: Vec<LibraryItem>,
+    },
+    Failed {
+        error: CommandError,
+    },
+}
+
+/// Vì sao lệnh không xong — UI đổi thành chữ nói việc cần làm (§2.6), không hiện mã HTTP.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum CommandError {
+    /// Không có thiết bị này trong sổ.
+    UnknownDevice,
+    /// Thiết bị chưa ghép / cần ghép lại.
+    NotPaired,
+    /// Điện thoại không Online ("Bật Sync WiFi trên điện thoại").
+    Offline,
+    /// Tham số sai (đích có `..`, hành động không hợp lệ, địa chỉ không đọc được, PIN không phải 6 số).
+    InvalidInput,
+    /// Địa chỉ link-local ghi card mạng không có trên máy (`[fe80::5%en9]`).
+    UnknownInterface {
+        name: String,
+    },
+    WrongPin,
+    /// Sai PIN quá nhiều: UI đếm ngược rồi mới cho nhập lại.
+    RateLimited {
+        retry_after_secs: u64,
+    },
+    /// Địa chỉ giờ là một điện thoại khác.
+    OtherPhone,
+    /// Không mở được kho khoá của hệ thống.
+    Keyring,
+    /// Không nối được điện thoại.
+    Unreachable,
+    /// Lỗi trong daemon (đĩa, SQLite) — chi tiết ở log.
+    Internal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -475,6 +705,97 @@ mod tests {
         assert_eq!(serde_json::to_string(&UiToDaemon::Focus).unwrap(), r#"{"type":"focus"}"#);
         assert_eq!(serde_json::to_string(&DaemonToUi::Focus).unwrap(), r#"{"type":"focus"}"#);
         assert_eq!(serde_json::to_string(&DaemonToUi::Ok).unwrap(), r#"{"type":"ok"}"#);
+    }
+
+    /// Mẫu dây của các lệnh / trả lời gd1_07 — cửa sổ (gd1_08) và điện thoại giả của test đọc đúng dạng này.
+    #[test]
+    fn command_and_reply_wire_format() {
+        let dev = DeviceId("3f9a".into());
+        let cases: Vec<(UiToDaemon, &str)> = vec![
+            (
+                UiToDaemon::Queue {
+                    req: 1,
+                    op: QueueOp::AddFiles {
+                        device: dev.clone(),
+                        paths: vec!["/v/a.mp4".into()],
+                        dest_dir: "Trips".into(),
+                    },
+                },
+                r#"{"type":"queue","req":1,"op":{"op":"add_files","device":"3f9a","paths":["/v/a.mp4"],"destDir":"Trips"}}"#,
+            ),
+            (
+                UiToDaemon::Queue { req: 2, op: QueueOp::Item { id: 5, action: Action::Retry } },
+                r#"{"type":"queue","req":2,"op":{"op":"item","id":5,"action":"retry"}}"#,
+            ),
+            (
+                UiToDaemon::Queue { req: 3, op: QueueOp::All { action: Action::Pause } },
+                r#"{"type":"queue","req":3,"op":{"op":"all","action":"pause"}}"#,
+            ),
+            (
+                UiToDaemon::Phone { req: 4, op: PhoneOp::Pair { device: dev.clone(), pin: Pin("123456".into()) } },
+                r#"{"type":"phone","req":4,"op":{"op":"pair","device":"3f9a","pin":"123456"}}"#,
+            ),
+            (
+                UiToDaemon::Phone { req: 5, op: PhoneOp::AddAddress { address: "[fe80::1%en0]:8080".into() } },
+                r#"{"type":"phone","req":5,"op":{"op":"add_address","address":"[fe80::1%en0]:8080"}}"#,
+            ),
+            (
+                UiToDaemon::Library { req: 6, op: LibraryOp::List { device: dev.clone() } },
+                r#"{"type":"library","req":6,"op":{"op":"list","device":"3f9a"}}"#,
+            ),
+        ];
+        for (msg, wire) in cases {
+            assert_eq!(serde_json::to_string(&msg).unwrap(), wire);
+            assert_eq!(serde_json::from_str::<UiToDaemon>(wire).unwrap(), msg);
+        }
+        let replies: Vec<(DaemonToUi, &str)> = vec![
+            (
+                DaemonToUi::Reply { req: 1, outcome: Outcome::Done },
+                r#"{"type":"reply","req":1,"outcome":{"kind":"done"}}"#,
+            ),
+            (
+                DaemonToUi::Reply {
+                    req: 4,
+                    outcome: Outcome::Failed { error: CommandError::RateLimited { retry_after_secs: 30 } },
+                },
+                r#"{"type":"reply","req":4,"outcome":{"kind":"failed","error":{"code":"rate_limited","retryAfterSecs":30}}}"#,
+            ),
+            (
+                DaemonToUi::Progress(ProgressDelta {
+                    items: vec![ItemProgress { id: 5, sent: 10, size: 20, bytes_per_sec: 3 }],
+                }),
+                r#"{"type":"progress","items":[{"id":5,"sent":10,"size":20,"bytesPerSec":3}]}"#,
+            ),
+        ];
+        for (msg, wire) in replies {
+            assert_eq!(serde_json::to_string(&msg).unwrap(), wire);
+            assert_eq!(serde_json::from_str::<DaemonToUi>(wire).unwrap(), msg);
+        }
+        assert_eq!(format!("{:?}", Pin("123456".into())), "Pin(***)", "PIN never reaches the log");
+    }
+
+    #[test]
+    fn snapshot_round_trips() {
+        let snap = Snapshot {
+            devices: vec![DeviceView {
+                id: DeviceId("3f9a".into()),
+                name: "Pixel".into(),
+                state: DeviceState::Online,
+                visible: true,
+                newer_api: false,
+                features: vec!["dirs".into()],
+                address: Some("192.168.1.5:8080".into()),
+            }],
+            can_pause_all: true,
+            ..Snapshot::default()
+        };
+        let wire = serde_json::to_string(&DaemonToUi::Snapshot(snap.clone())).unwrap();
+        assert!(
+            wire.starts_with(r#"{"type":"snapshot","devices":[{"id":"3f9a","name":"Pixel","state":"online""#),
+            "{wire}"
+        );
+        assert!(wire.contains(r#""canPauseAll":true"#) && wire.contains(r#""finishedOmitted":0"#), "{wire}");
+        assert_eq!(serde_json::from_str::<DaemonToUi>(&wire).unwrap(), DaemonToUi::Snapshot(snap));
     }
 
     #[test]

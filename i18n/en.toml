@@ -6,7 +6,30 @@ name = "Ferry"
 
 [tray]
 open_window = "Open window"
+pause_all = "Pause all"
+resume_all = "Resume all"
 quit = "Quit"
+sending = "Sending {count} files — {percent}%"
+sending_one = "Sending {count} file — {percent}%"
+waiting_offline = "Turn on Sync WiFi on your phone to send {count} files"
+waiting_offline_one = "Turn on Sync WiFi on your phone to send {count} file"
+paused = "{count} files paused"
+paused_one = "{count} file paused"
+needs_repair = "Pair {phone} again to keep sending"
+no_space = "{phone} is out of space — free some up, then resume"
+
+[notice]
+batch_done = "Sent {count} files to {phone}"
+batch_done_one = "Sent {count} file to {phone}"
+already_there = "{count} files were already on the phone"
+already_there_one = "{count} file was already on the phone"
+failed = "{count} files could not be sent — open Ferry to see why"
+failed_one = "{count} file could not be sent — open Ferry to see why"
+needs_repair_title = "Pair {phone} again"
+needs_repair_body = "The phone forgot this computer. Open Ferry and enter the new PIN."
+no_space_title = "{phone} is out of space"
+no_space_body = "Free up space on the phone, then resume."
+no_space_body_by = "Free up {size} on the phone, then resume."
 
 [window]
 placeholder = "Drop videos here to send them to your phone"

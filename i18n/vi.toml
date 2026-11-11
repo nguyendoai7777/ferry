@@ -6,7 +6,30 @@ name = "Ferry"
 
 [tray]
 open_window = "Mở cửa sổ"
+pause_all = "Tạm dừng tất cả"
+resume_all = "Tiếp tục tất cả"
 quit = "Thoát"
+sending = "Đang gửi {count} tệp — {percent} %"
+sending_one = "Đang gửi {count} tệp — {percent} %"
+waiting_offline = "Bật Sync WiFi trên điện thoại để gửi {count} tệp"
+waiting_offline_one = "Bật Sync WiFi trên điện thoại để gửi {count} tệp"
+paused = "Đã tạm dừng {count} tệp"
+paused_one = "Đã tạm dừng {count} tệp"
+needs_repair = "Ghép lại {phone} để gửi tiếp"
+no_space = "{phone} hết chỗ — giải phóng bộ nhớ rồi bấm Tiếp tục"
+
+[notice]
+batch_done = "Đã gửi {count} tệp sang {phone}"
+batch_done_one = "Đã gửi {count} tệp sang {phone}"
+already_there = "{count} tệp đã có sẵn trên điện thoại"
+already_there_one = "{count} tệp đã có sẵn trên điện thoại"
+failed = "{count} tệp không gửi được — mở Ferry để xem"
+failed_one = "{count} tệp không gửi được — mở Ferry để xem"
+needs_repair_title = "Cần ghép lại {phone}"
+needs_repair_body = "Điện thoại đã quên máy tính này. Mở Ferry và nhập PIN mới."
+no_space_title = "{phone} hết chỗ"
+no_space_body = "Giải phóng bộ nhớ trên điện thoại rồi bấm Tiếp tục."
+no_space_body_by = "Cần thêm {size} trên điện thoại, giải phóng rồi bấm Tiếp tục."
 
 [window]
 placeholder = "Thả video vào đây để gửi sang điện thoại"

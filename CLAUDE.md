@@ -62,8 +62,15 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
 
 - **Socket Unix ≤ 104 byte** (macOS; Linux 108): `FERRY_DATA_DIR` sâu làm `bind` hỏng ("exceeds capacity of sun_path").
   `ipc::Endpoint::daemon` tự rơi về `<tmp>/ferry-<băm>/daemon.sock` khi đường dẫn quá 100 byte — đừng gỡ.
-- **Khay Linux chưa có**: `tray-icon` đòi GTK + libappindicator ⇒ không dùng; bê SNI tự viết của fastcast (nợ gd1_07).
-  Tới lúc đó Linux mở cửa sổ bằng cách chạy `ferry` lần nữa.
+- **Khay Linux là SNI tự viết** (`platform/linux/sni.rs`, bê từ fastcast, gd1_07): `zbus` chạy trên runtime engine,
+  không GTK / `tray-icon`. GNOME cần extension AppIndicator (`ubuntu-appindicators`); thiếu host thì chỉ log, mở cửa sổ
+  bằng cách chạy `ferry` lần nữa. Icon Linux gần trắng vì thanh GNOME tối.
+- **Engine một task** (`daemon/src/engine.rs`, gd1_07): mọi trạng thái (thiết bị, runner, UI nghe) xử lý tuần tự trong một
+  `select!`; việc chậm (ghép, `plan_batch`, dọn sau quên) chạy task con / `spawn_blocking` rồi trả `Internal` — đừng
+  `await` mạng trong vòng chính. Đẩy ra UI chỉ qua `Outbox::push`; `Snapshot` có trần mục (`QUEUED_IN_SNAPSHOT`,
+  `FINISHED_IN_SNAPSHOT`) để dòng JSON < `MAX_LINE` 1 MiB — thêm trường mảng thì giữ trần.
+- **Clippy chéo macOS không chạy từ Linux**: `notify-rust` kéo `mac-notification-sys` biên dịch Objective-C. Soát macOS trên
+  máy Mac; Windows chéo vẫn chạy được.
 - macOS: thử menu khay tự động bằng AppleScript không được (status item không lộ menu qua AX) ⇒ bấm bằng sự kiện chuột
   `CGEvent` (vị trí icon: `position of menu bar item 1 of menu bar 1` của tiến trình `ferry`).
 - **Clippy chéo hỏng ở `libsqlite3-sys`** (`rusqlite` `bundled`, gd1_03): build script biên dịch C SQLite cho target

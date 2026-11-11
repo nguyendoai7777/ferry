@@ -153,8 +153,12 @@ mod tests {
                         "{lang} `{k}`: all-caps word `{word}` (D-13)"
                     );
                 }
-                let first = v.chars().find(|c| c.is_alphabetic());
-                assert!(first.is_none_or(char::is_uppercase), "{lang} `{k}`: must start with a capital letter (D-13)");
+                // Mở đầu bằng tham số (`{count} files paused`, `{phone} hết chỗ`): số / tên điện thoại đứng đầu.
+                let first = v.chars().find(|c| c.is_alphabetic() || *c == '{');
+                assert!(
+                    first.is_none_or(|c| c == '{' || c.is_uppercase()),
+                    "{lang} `{k}`: must start with a capital letter (D-13)"
+                );
             }
         }
     }

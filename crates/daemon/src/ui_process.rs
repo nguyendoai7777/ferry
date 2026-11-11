@@ -5,9 +5,10 @@ use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
-use ferry_core::ipc::{DaemonToUi, Sender};
+use ferry_core::ipc::DaemonToUi;
 
 use crate::daemon::Event;
+use crate::ipc_server::Outbox;
 use crate::platform::Waker;
 
 #[derive(Default)]
@@ -15,20 +16,18 @@ pub struct UiProcess {
     /// Đã bật mà chưa thoát (kể cả lúc chưa kịp nối IPC).
     running: Option<u32>,
     /// Kết nối IPC của UI đang mở: `(id kết nối, đầu ghi)`.
-    conn: Option<(u64, Sender<DaemonToUi>)>,
+    conn: Option<(u64, Outbox)>,
 }
 
 impl UiProcess {
     /// "Mở cửa sổ": UI đang nối ⇒ bảo nó lên trước; đang bật dở ⇒ chờ; chưa có ⇒ bật.
     pub fn open(&mut self, waker: &Waker) {
-        if let Some((id, sender)) = &self.conn {
-            match sender.send(&DaemonToUi::Focus) {
-                Ok(()) => return,
-                Err(e) => {
-                    log::warn!("ui: #{id} focus failed: {e}");
-                    self.conn = None;
-                }
+        if let Some((id, outbox)) = &self.conn {
+            if outbox.push(DaemonToUi::Focus) {
+                return;
             }
+            log::warn!("ui: #{id} focus failed: connection closed");
+            self.conn = None;
         }
         if let Some(pid) = self.running {
             log::info!("ui: pid {pid} is still starting");
@@ -43,8 +42,8 @@ impl UiProcess {
         }
     }
 
-    pub fn connected(&mut self, id: u64, sender: Sender<DaemonToUi>) {
-        self.conn = Some((id, sender));
+    pub fn connected(&mut self, id: u64, outbox: Outbox) {
+        self.conn = Some((id, outbox));
     }
 
     pub fn disconnected(&mut self, id: u64) {

@@ -11,7 +11,7 @@ pub use windows::{Waker, run_event_loop};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{Waker, run_event_loop};
+pub use linux::{Tray, Waker, run_event_loop};
 
 #[cfg(target_os = "macos")]
 mod macos;

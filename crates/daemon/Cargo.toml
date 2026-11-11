@@ -15,8 +15,18 @@ path = "src/main.rs"
 ferry-core.workspace = true
 interprocess.workspace = true
 log.workspace = true
+futures.workspace = true
+# Thông báo hệ thống khi cả lô xong / cần làm gì (PROTOCOL 2.6). Linux nói D-Bus qua `zbus` thuần Rust (feature `z`
+# mặc định, không `libdbus`), Windows toast WinRT, macOS `mac-notification-sys`. MIT/Apache, soát `cargo deny` (gd1_07).
+notify-rust = "4"
+# Runtime của engine: 2 luồng (discovery + runner mỗi điện thoại), hẹn giờ, kênh.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
-# Linux không dùng `tray-icon` (đòi GTK + libappindicator): khay SNI tự viết như fastcast — chưa có, xem `platform/linux.rs`.
+# Linux không dùng `tray-icon` (đòi GTK + libappindicator): khay StatusNotifierItem tự viết như fastcast, `platform/linux/sni.rs`.
+[target.'cfg(target_os = "linux")'.dependencies]
+# `async-io`, không `tokio`: cùng bản đã có trong cây qua `keyring` (Secret Service).
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.26", default-features = false }
 
@@ -30,7 +40,12 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
 
 [dev-dependencies]
+# Điện thoại giả `ferry-core/tests/fake_phone` (gộp bằng `#[path]` vào test của engine) cần hai crate này.
+percent-encoding = "2"
+serde_json.workspace = true
 tempfile = "3"
+uuid = { version = "1", default-features = false, features = ["std", "v4"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util"] }
 
 [lints]
 workspace = true
