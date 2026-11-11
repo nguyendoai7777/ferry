@@ -17,10 +17,10 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_05` `discovery-devices` | mDNS `_vpsync._tcp` + địa chỉ tay, máy trạng thái thiết bị, chọn IPv4 cùng subnet | 02 | opus |
 | `gd1_06` `pairing-keyring` | ghép bằng PIN, token vào kho khoá OS, client id, quên điện thoại, `NeedsRepair` | 02, 05 | opus |
 | `gd1_07` `daemon-runtime` | runtime tokio trong `mws`, snapshot + lệnh qua IPC, khay 3 trạng thái + menu, thông báo cả lô xong | 04, 05, 06 | opus |
-| `gd1_08` `main-window` | cửa sổ chính: thiết bị đang chọn, vùng thả / "Chọn video…", hàng đợi + "Đã gửi" | 07 | sonnet |
+| `gd1_08` `main-window` | cửa sổ chính: thiết bị, vùng thả + "Chọn tệp…" / "Chọn thư mục…", khay chờ, trình duyệt điện thoại kiểu Explorer (W-4), hàng đợi + "Đã gửi" | 07 | sonnet |
 | `gd1_09` `add-phone` | màn thêm điện thoại 3 bước (hướng dẫn, danh sách dò thấy, PIN) | 07 | sonnet |
 | `gd1_10` `download-runner` | tải về nối tiếp `Range` + `If-Range` / `ETag`, `.part`, thư mục lưu | 03, 07 | opus |
-| `gd1_11` `phone-library` | tab thư viện điện thoại + "Tải về…" | 10 | sonnet |
+| `gd1_11` `phone-library` | tab thư viện điện thoại (dùng lại `PhoneBrowser`) + "Tải về…" | 08, 10 | sonnet |
 | `gd1_12` `settings` | cài đặt: thiết bị đã ghép, thư mục lưu / theo dõi, giới hạn băng thông, khởi động cùng máy, địa chỉ tay | 07 | sonnet |
 | `gd1_13` `watch-folder` | thư mục "Gửi sang điện thoại": tệp mới ổn định ⇒ vào hàng đợi | 04, 12 | opus |
 | `gd1_14` `packaging` | `build.sh` / `build.ps1`, bản cài ba OS, trang giấy phép bên thứ ba, nối `build.*` / `tag.*` gốc | 08–13 | opus |

@@ -67,18 +67,33 @@ pc-app/
    tạm dừng tất cả, thoát.
 2. **Cửa sổ chính** = một vùng thả lớn + hàng đợi bên dưới.
    - Đầu cửa sổ: thiết bị đang chọn (tên điện thoại, chấm xanh/xám online). Nhiều điện thoại thì là menu chọn.
-   - Thả / dán (Ctrl+V · Cmd+V sau khi Copy trong Explorer / Finder) tệp **và thư mục** vào, hoặc nút "Chọn…": đẩy y như
-     copy/paste giữa hai ổ — thư mục giữ nguyên cây con trên điện thoại (§6.9). Chỉ tệp video được gửi (§6.6); tệp khác bỏ
+   - Hai nút **"Chọn tệp…"** (hộp chọn tệp của hệ điều hành, chọn **nhiều** tệp) và **"Chọn thư mục…"** (hộp chọn thư
+     mục, nhiều thư mục nếu OS cho), cạnh vùng thả. Thả / dán (Ctrl+V · Cmd+V sau khi Copy trong Explorer / Finder) cũng
+     được. Tệp / thư mục đã chọn vào **khay chờ gửi** (danh sách ngắn, bỏ được từng mục) — chưa gửi ngay.
+   - Bấm **"Gửi sang điện thoại…"** ⇒ mở **trình duyệt điện thoại kiểu Explorer** (mục 4.6) để chọn thư mục đích ⇒ "Gửi
+     vào đây" ⇒ cả khay thành một lô. Đẩy y như copy/paste giữa hai ổ — thư mục giữ nguyên cây con trên điện thoại (§6.9). Chỉ tệp video được gửi (§6.6); tệp khác bỏ
      qua, báo gộp một dòng "Bỏ qua N tệp không phải video".
    - Hàng đợi: mỗi dòng = tên, cỡ, thanh tiến độ, tốc độ, trạng thái; nút tạm dừng / huỷ / thử lại. Mục xong gom vào
      "Đã gửi" (gập được), giữ 7 ngày rồi tự dọn.
-3. **Thư viện điện thoại** (tab phụ): cây thư mục dựng từ `dir` của `GET /api/v1/list` (§6.4) — tên, cỡ, ngày. Chọn một
-   thư mục rồi thả / dán vào ⇒ gửi vào đúng thư mục đó (§6.9). Chọn video → "Tải về…" (vào hàng đợi chiều ngược lại, tải
-   tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
+3. **Thư viện điện thoại** (tab phụ): trình duyệt kiểu Explorer (mục 4.6) ở chế độ thư viện. Chọn video → "Tải về máy"
+   (vào hàng đợi chiều ngược lại, tải tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
    điện thoại dò thấy (chưa ghép). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
    thông, khởi động cùng hệ thống, địa chỉ tay (nâng cao).
+
+6. **Trình duyệt điện thoại kiểu Explorer** (một component, dùng ở hộp chọn đích khi gửi và ở tab thư viện điện thoại):
+   - Thanh trên: nút Lùi / Tiến / Lên, **thanh địa chỉ dạng breadcrumb** (`Pixel 8 › Chuyến đi › Ngày 1`, bấm từng đoạn
+     để nhảy), nút làm mới, ô tìm theo tên trong thư mục đang mở.
+   - Trái: **cây thư mục** (gốc = nơi lưu của điện thoại; nhóm "Khác" cho video có `dir = null`, chỉ xem / tải, không
+     làm đích). Phải: **bảng chi tiết** — cột Tên (icon thư mục / video), Ngày sửa, Loại, Cỡ; thư mục trước, bấm tiêu đề
+     cột để sắp; nhấp đúp thư mục để vào; chọn nhiều bằng Ctrl/Cmd + click, Shift + click.
+   - Dựng hoàn toàn từ `GET /api/v1/list` (§6.4): thư mục = các tiền tố của `dir`. Thư mục rỗng không tồn tại trên điện
+     thoại ⇒ nút **"Thư mục mới"** tạo thư mục ảo phía PC (in nghiêng) cho tới khi có tệp đầu tiên gửi vào.
+   - Chế độ **chọn đích** (khi gửi): thanh dưới "Gửi N tệp (x GB) vào: Chuyến đi/Ngày 1" + nút "Gửi vào đây" / "Huỷ";
+     mặc định mở ở thư mục đích lần trước của điện thoại đó. Chế độ **thư viện** (tab 3): nút "Tải về máy" cho mục đã
+     chọn; thả / dán từ máy tính vào thư mục đang mở ⇒ gửi vào đó (không hỏi lại).
+   - Điện thoại offline ⇒ hiện danh sách lần cuối, mờ đi, không cho "Gửi vào đây".
 
 Văn bản: tiếng Việt + tiếng Anh theo ngôn ngữ hệ thống. Dùng chữ "Gửi sang điện thoại" / "Tải về máy", tránh chữ
 "upload/sync" với người dùng.
