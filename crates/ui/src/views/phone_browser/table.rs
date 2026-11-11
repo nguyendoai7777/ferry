@@ -114,6 +114,8 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                 "browser.loading"
             } else if this.items.is_empty() && this.offline {
                 "browser.offline_empty"
+            } else if this.query.is_empty() && this.is_library() {
+                "browser.empty_library"
             } else if this.query.is_empty() {
                 "browser.empty"
             } else {

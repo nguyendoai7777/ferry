@@ -258,6 +258,23 @@ impl Devices {
         self.devices.get(id)
     }
 
+    /// `new` vừa ghép mà trùng một máy đã ghép khác: cùng tên điện thoại, chung ít nhất một địa chỉ, máy cũ không Online
+    /// (địa chỉ đó giờ trả lời bằng mã của `new`). Đó là cùng điện thoại đã cài lại app / xoá dữ liệu (đổi `id`) — người
+    /// gọi thay máy cũ bằng `new` thay vì để hai dòng. Hai điện thoại thật cùng tên cùng IP không thể Online cùng lúc.
+    pub fn superseded_by(&self, new: &DeviceId) -> Option<DeviceId> {
+        let n = self.devices.get(new)?;
+        self.devices
+            .values()
+            .find(|d| {
+                d.id != *new
+                    && d.state.has_token()
+                    && d.state != DeviceState::Online
+                    && d.name == n.name
+                    && d.known.iter().any(|a| n.known.contains(a))
+            })
+            .map(|d| d.id.clone())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Device> {
         self.devices.values()
     }
@@ -577,6 +594,26 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Điện thoại cài lại app (mã mới) được ghép như máy mới ⇒ nhận ra bản ghi cũ cùng tên, cùng địa chỉ, không Online.
+    #[test]
+    fn new_pairing_supersedes_reinstalled_phone() {
+        let t0 = Instant::now();
+        let old = PairedDevice {
+            id: DeviceId("old".into()),
+            name: "Pixel 8".into(),
+            addresses: vec!["192.168.1.23:8080".into()],
+            alias: None,
+        };
+        let other = PairedDevice { id: DeviceId("other".into()), name: "Galaxy".into(), ..old.clone() };
+        let mut devs = Devices::from_config(&[old, other], locals(), t0);
+        devs.info_ok(&info("new", false), sa("192.168.1.23:8080"), t0);
+        devs.paired(&DeviceId("new".into()), t0);
+        assert_eq!(devs.superseded_by(&DeviceId("new".into())), Some(DeviceId("old".into())));
+        // Máy cũ đang Online (trả lời đúng mã của nó) ⇒ là hai máy khác nhau.
+        devs.info_ok(&info("old", true), sa("192.168.1.23:8080"), t0);
+        assert_eq!(devs.superseded_by(&DeviceId("new".into())), None);
     }
 
     #[test]

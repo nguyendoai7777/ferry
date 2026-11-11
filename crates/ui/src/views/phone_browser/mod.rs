@@ -182,6 +182,10 @@ impl PhoneBrowser {
         }
     }
 
+    pub(crate) fn is_library(&self) -> bool {
+        self.mode == BrowserMode::Library
+    }
+
     pub(crate) fn dim(&self) -> bool {
         self.offline && !self.items.is_empty()
     }

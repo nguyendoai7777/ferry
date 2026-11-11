@@ -79,6 +79,8 @@ pub fn tree_view(
         .w(px(210.))
         .flex_none()
         .h_full()
+        // Dòng gốc không dính sát đầu bảng / thanh công cụ.
+        .pt(px(6.))
         .border_r_1()
         .border_color(cx.theme().colors().border)
         .child(

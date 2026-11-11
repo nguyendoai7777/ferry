@@ -513,7 +513,8 @@ impl Engine {
                 if let Some(r) = &runner {
                     r.handle.send(Command::Stop);
                 }
-                self.config.forget_device(&device);
+                // Không `config.forget_device` trước: `save_config` thấy config đã khớp sổ thì không ghi tệp ⇒ máy đã quên
+                // sống lại ở lần chạy sau (gặp 11/11/2026). Bỏ khỏi sổ rồi để `save_config` tính và ghi.
                 let ev = self.devices.forget(&device);
                 self.on_device_events(ev);
                 self.save_config();
@@ -1054,8 +1055,11 @@ impl Engine {
                     let ev = self.devices.paired(&p.id, now);
                     self.on_device_events(ev);
                     self.ensure_runner(&p.id);
-                    if let Some(rp) = replaced {
-                        self.replace_device(&rp.old, &p.id);
+                    // Ghép lại máy cũ (`replaced`), hoặc ghép "máy mới" mà thật ra là máy cũ đã cài lại app.
+                    let old = replaced.map(|rp| rp.old).or_else(|| self.devices.superseded_by(&p.id));
+                    if let Some(old) = old {
+                        log::info!("engine: {old} is superseded by {}", p.id);
+                        self.replace_device(&old, &p.id);
                     }
                     // Ghép lại sau 401: runner chờ `Link` mới — probe ngay đưa nó về Online.
                     self.save_config();
@@ -1413,7 +1417,7 @@ impl Engine {
             r.handle.send(Command::Stop);
         }
         let alias = self.config.devices.iter().find(|d| d.id == *old).and_then(|d| d.alias.clone());
-        self.config.forget_device(old);
+        // Bản ghi config của `old` do `save_config` (người gọi) bỏ và ghi tệp — xem `PhoneOp::Forget`.
         let ev = self.devices.forget(old);
         self.on_device_events(ev);
         if let Some(alias) = alias {
