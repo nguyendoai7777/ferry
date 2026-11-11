@@ -644,10 +644,21 @@ impl SettingsPage {
                         .on_change(cx.listener(|page, on: &bool, window, cx| page.set_watch_enabled(*on, window, cx))),
                 ),
         );
+        // Bật mà daemon không theo dõi được (thư mục mất, không quyền, hết inotify watch) — gd1_13.
+        let watch_error = data.watch_error.as_ref().filter(|_| data.watch_folder.enabled).map(|error| {
+            let text = self.i18n.t_args("settings.files.watch_folder_error", &[("error", error)]);
+            let theme = cx.theme();
+            div()
+                .py_2()
+                .text_size(theme.caption_size())
+                .text_color(theme.colors().danger)
+                .child(SharedString::from(text))
+        });
         Card::new("settings-files")
             .title(self.t("settings.files.title"))
             .child(download)
             .child(watch)
+            .children(watch_error)
             .children(self.error_line(Section::Files, cx))
     }
 

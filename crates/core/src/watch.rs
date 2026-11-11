@@ -233,18 +233,32 @@ pub struct FolderWatcher {
 }
 
 impl FolderWatcher {
-    /// Bắt đầu theo dõi `root` trên luồng mới; trả về ngay. Lỗi (thư mục mất, hết inotify watch) chỉ log — thư mục theo
-    /// dõi là tuỳ chọn, không làm hỏng daemon.
-    pub fn start(root: PathBuf, generation: u64, stable_for: Duration, out: mpsc::UnboundedSender<Ready>) -> FolderWatcher {
+    /// Đăng ký theo dõi `root` (đệ quy — Linux: một inotify watch mỗi thư mục con, cây lớn mất thời gian ⇒ **chặn**, gọi
+    /// trong `spawn_blocking`) rồi chạy vòng sự kiện trên luồng mới. `Err` = chữ lỗi của OS (thư mục mất, không quyền,
+    /// hết inotify watch) — màn cài đặt hiện kèm cách gỡ.
+    pub fn start(
+        root: PathBuf,
+        generation: u64,
+        stable_for: Duration,
+        out: mpsc::UnboundedSender<Ready>,
+    ) -> Result<FolderWatcher, String> {
+        let remote_root = remote_root(&root);
+        // `notify` trả đường dẫn thật (macOS: `/private/var/…`) ⇒ so cây theo bản canonical.
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         let (tx, rx) = std_mpsc::channel();
         let events = tx.clone();
-        let spawned = std::thread::Builder::new().name("ferry-watch".into()).spawn(move || {
-            run(root, generation, stable_for, events, rx, out);
-        });
-        if let Err(e) = spawned {
-            log::warn!("watch: cannot start thread: {e}");
-        }
-        FolderWatcher { tx }
+        let mut watcher = notify::recommended_watcher(move |res| {
+            let _ = events.send(Msg::Event(res));
+        })
+        .map_err(|e| e.to_string())?;
+        watcher.watch(&root, RecursiveMode::Recursive).map_err(|e| e.to_string())?;
+        log::info!("watch: watching {} (gen {generation})", root.display());
+        let ctx = Loop { root, remote_root, generation, stable_for };
+        std::thread::Builder::new()
+            .name("ferry-watch".into())
+            .spawn(move || ctx.run(watcher, rx, out))
+            .map_err(|e| e.to_string())?;
+        Ok(FolderWatcher { tx })
     }
 }
 
@@ -254,76 +268,63 @@ impl Drop for FolderWatcher {
     }
 }
 
-fn run(
+struct Loop {
     root: PathBuf,
+    remote_root: String,
     generation: u64,
     stable_for: Duration,
-    events: std_mpsc::Sender<Msg>,
-    rx: std_mpsc::Receiver<Msg>,
-    out: mpsc::UnboundedSender<Ready>,
-) {
-    let remote_root = remote_root(&root);
-    // `notify` trả đường dẫn thật (macOS: `/private/var/…`) ⇒ so cây theo bản canonical.
-    let root = fs::canonicalize(&root).unwrap_or(root);
-    let mut watcher = match notify::recommended_watcher(move |res| {
-        let _ = events.send(Msg::Event(res));
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            log::warn!("watch: backend unavailable: {e}");
-            return;
-        }
-    };
-    if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
-        log::warn!("watch: cannot watch {}: {e}", root.display());
-        return;
-    }
-    log::info!("watch: watching {} (gen {generation})", root.display());
-    let mut tracker = Stability::new(stable_for);
-    let mut last_from = None;
-    // Tệp đã ổn định giữ lại tới khi không còn tệp nào chờ (hoặc giữ quá `stable_for`) ⇒ chép một loạt tệp ra một lô,
-    // không phải mỗi tệp một lô.
-    let mut held: Vec<PathBuf> = Vec::new();
-    let mut held_since = Instant::now();
-    loop {
-        let flush_at = (!held.is_empty()).then(|| held_since + stable_for);
-        let msg = match tracker.next_deadline().into_iter().chain(flush_at).min() {
-            None => rx.recv().ok(),
-            Some(at) => match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
-                Ok(m) => Some(m),
-                Err(std_mpsc::RecvTimeoutError::Timeout) => {
-                    let now = Instant::now();
-                    let files = tracker.poll(now, |p| probe(p).map(|pr| (pr, openable(p))));
-                    if held.is_empty() {
-                        held_since = now;
-                    }
-                    held.extend(files);
-                    if !held.is_empty() && (tracker.is_empty() || now >= held_since + stable_for) {
-                        let mut files = std::mem::take(&mut held);
-                        files.sort();
-                        files.dedup();
-                        log::info!("watch: {} new file(s) settled", files.len());
-                        let ready = Ready { generation, root: root.clone(), remote_root: remote_root.clone(), files };
-                        if out.send(ready).is_err() {
-                            break;
+}
+
+impl Loop {
+    fn run(self, watcher: notify::RecommendedWatcher, rx: std_mpsc::Receiver<Msg>, out: mpsc::UnboundedSender<Ready>) {
+        let Loop { root, remote_root, generation, stable_for } = self;
+        let mut tracker = Stability::new(stable_for);
+        let mut last_from = None;
+        // Tệp đã ổn định giữ lại tới khi không còn tệp nào chờ (hoặc giữ quá `stable_for`) ⇒ chép một loạt tệp ra một lô,
+        // không phải mỗi tệp một lô.
+        let mut held: Vec<PathBuf> = Vec::new();
+        let mut held_since = Instant::now();
+        loop {
+            let flush_at = (!held.is_empty()).then(|| held_since + stable_for);
+            let msg = match tracker.next_deadline().into_iter().chain(flush_at).min() {
+                None => rx.recv().ok(),
+                Some(at) => match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                    Ok(m) => Some(m),
+                    Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                        let now = Instant::now();
+                        let files = tracker.poll(now, |p| probe(p).map(|pr| (pr, openable(p))));
+                        if held.is_empty() {
+                            held_since = now;
                         }
+                        held.extend(files);
+                        if !held.is_empty() && (tracker.is_empty() || now >= held_since + stable_for) {
+                            let mut files = std::mem::take(&mut held);
+                            files.sort();
+                            files.dedup();
+                            log::info!("watch: {} new file(s) settled", files.len());
+                            let ready =
+                                Ready { generation, root: root.clone(), remote_root: remote_root.clone(), files };
+                            if out.send(ready).is_err() {
+                                break;
+                            }
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                Err(std_mpsc::RecvTimeoutError::Disconnected) => None,
-            },
-        };
-        match msg {
-            None | Some(Msg::Stop) => break,
-            Some(Msg::Event(Ok(ev))) => on_event(&root, &mut tracker, &mut last_from, ev),
-            Some(Msg::Event(Err(e))) => log::warn!("watch: {e}"),
+                    Err(std_mpsc::RecvTimeoutError::Disconnected) => None,
+                },
+            };
+            match msg {
+                None | Some(Msg::Stop) => break,
+                Some(Msg::Event(Ok(ev))) => on_event(&root, &mut tracker, &mut last_from, ev),
+                Some(Msg::Event(Err(e))) => log::warn!("watch: {e}"),
+            }
+            if out.is_closed() {
+                break;
+            }
         }
-        if out.is_closed() {
-            break;
-        }
+        drop(watcher);
+        log::info!("watch: stopped {} (gen {generation})", root.display());
     }
-    drop(watcher);
-    log::info!("watch: stopped {} (gen {generation})", root.display());
 }
 
 /// Một sự kiện `notify` ⇒ cập nhật danh sách chờ. `last_from` = đường của sự kiện `Name(From)` gần nhất + nó có đang chờ
@@ -556,7 +557,12 @@ mod tests {
         for f in [&a, &b, &c, &d] {
             fs::write(f, b"data").unwrap();
         }
-        let ready = Ready { generation: 1, root: root.clone(), remote_root: "Gửi".into(), files: vec![a.clone(), b, c, d.clone()] };
+        let ready = Ready {
+            generation: 1,
+            root: root.clone(),
+            remote_root: "Gửi".into(),
+            files: vec![a.clone(), b, c, d.clone()],
+        };
         let dl = DownloadItem {
             id: 2,
             device_id: DeviceId("p".into()),
@@ -600,7 +606,8 @@ mod tests {
         fs::write(root.join("old.mp4"), b"old").unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let stable = Duration::from_millis(400);
-        let w = FolderWatcher::start(root.clone(), 7, stable, tx);
+        let w = FolderWatcher::start(root.clone(), 7, stable, tx).unwrap();
+        assert!(FolderWatcher::start(dir.path().join("missing"), 8, stable, mpsc::unbounded_channel().0).is_err());
         std::thread::sleep(Duration::from_millis(300)); // đăng ký watch xong
 
         // Chép từng khúc, mỗi khúc cách 150 ms (< ngưỡng) ⇒ không ra giữa chừng.

@@ -177,6 +177,9 @@ pub struct SettingsView {
     /// Lần áp vào OS gần nhất hỏng (chữ của OS, đã log) — hiện dưới công tắc kèm cách gỡ.
     pub autostart_error: Option<String>,
     pub watch_folder: WatchFolder,
+    /// Bật mà không theo dõi được thư mục (chữ của OS, đã log: thư mục mất, không quyền, hết inotify watch) — gd1_13.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_error: Option<String>,
     pub manual_addresses: Vec<String>,
     /// Điện thoại đã ghép, thứ tự ghép.
     pub devices: Vec<DeviceSetting>,
@@ -899,6 +902,7 @@ mod tests {
             autostart: true,
             autostart_error: None,
             watch_folder: WatchFolder::default(),
+            watch_error: None,
             manual_addresses: vec![],
             devices: vec![DeviceSetting {
                 id: dev.clone(),

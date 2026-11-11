@@ -20,9 +20,9 @@ use ferry_core::discovery::mdns::{Browser, MdnsEvent};
 use ferry_core::discovery::{self, ConnectError, Connected};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
-    Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView, FINISHED_IN_SNAPSHOT,
-    ItemProgress, LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta, QUEUED_IN_SNAPSHOT, QueueOp, SettingsOp,
-    SettingsView, Snapshot,
+    Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView,
+    FINISHED_IN_SNAPSHOT, ItemProgress, LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta,
+    QUEUED_IN_SNAPSHOT, QueueOp, SettingsOp, SettingsView, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
 use ferry_core::protocol::{Info, Secret};
@@ -30,11 +30,11 @@ use ferry_core::queue::state::PauseReason;
 use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
 use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
 use ferry_core::transfer::download;
-use ferry_core::watch::{self, FolderWatcher, Ready};
 use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
     UploadRunner, link_channel,
 };
+use ferry_core::watch::{self, FolderWatcher, Ready};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -187,6 +187,12 @@ enum Internal {
         outbox: Outbox,
         req: u64,
     },
+    /// Đăng ký theo dõi thư mục xong (`FolderWatcher::start` trong `spawn_blocking`). `reply` ⇒ lệnh cài đặt đang chờ kết quả.
+    WatchStarted {
+        generation: u64,
+        result: Result<FolderWatcher, String>,
+        reply: Option<(Outbox, u64)>,
+    },
     /// Thư mục theo dõi: đã thêm `files` tệp vào hàng đợi của `device` (`add_watched`).
     Watched {
         device: DeviceId,
@@ -244,6 +250,8 @@ struct Engine {
     watch_gen: u64,
     watch_tx: mpsc::UnboundedSender<Ready>,
     watch_stable_for: Duration,
+    /// Lần bật bộ theo dõi gần nhất hỏng (chữ của OS) — `SettingsView::watch_error`.
+    watch_error: Option<String>,
 }
 
 struct Subscriber {
@@ -300,13 +308,14 @@ impl Engine {
             watch_gen: 0,
             watch_tx,
             watch_stable_for: cfg.watch_stable_for,
+            watch_error: None,
         };
         let paired: Vec<DeviceId> = engine.config.devices.iter().map(|d| d.id.clone()).collect();
         for id in paired {
             engine.ensure_runner(&id);
         }
         engine.probe_manual_addresses();
-        engine.restart_watch();
+        engine.restart_watch(None);
         (engine, Receivers { transfer, internal, browser, watch })
     }
 
@@ -650,10 +659,7 @@ impl Engine {
             }
             Settled::WatchFolder(folder, check) => {
                 check?;
-                if self.config.watch_folder != folder {
-                    self.config.watch_folder = folder;
-                    self.restart_watch();
-                }
+                self.config.watch_folder = folder;
             }
             Settled::Autostart(enabled, result) => {
                 self.config.autostart = enabled;
@@ -674,6 +680,7 @@ impl Engine {
             autostart: c.autostart,
             autostart_error: self.autostart_error.clone(),
             watch_folder: c.watch_folder.clone(),
+            watch_error: self.watch_error.clone(),
             manual_addresses: c.manual_addresses.clone(),
             devices: c
                 .devices
@@ -716,16 +723,25 @@ impl Engine {
 
     // ---- thư mục theo dõi (gd1_13) ----
 
-    /// Dừng bộ theo dõi cũ (nếu có), bật bộ mới theo `config.watch_folder`. Trả về ngay: đăng ký theo dõi chạy trên luồng
-    /// của `FolderWatcher`.
-    fn restart_watch(&mut self) {
+    /// Dừng bộ theo dõi cũ (nếu có), bật bộ mới theo `config.watch_folder`. Đăng ký theo dõi chặn (cây lớn) ⇒ chạy trong
+    /// `spawn_blocking`, kết quả về `Internal::WatchStarted`; `reply` = lệnh cài đặt trả lời sau khi biết bật được không.
+    fn restart_watch(&mut self, reply: Option<(Outbox, u64)>) {
         self.watcher = None;
+        self.watch_error = None;
         self.watch_gen += 1;
         let wf = &self.config.watch_folder;
-        if let (true, Some(path)) = (wf.enabled, wf.path.clone()) {
-            self.watcher =
-                Some(FolderWatcher::start(path, self.watch_gen, self.watch_stable_for, self.watch_tx.clone()));
-        }
+        let (true, Some(path)) = (wf.enabled, wf.path.clone()) else {
+            if let Some((outbox, req)) = reply {
+                reply_to(&outbox, req, Ok(Outcome::Settings(self.settings_view())));
+            }
+            return;
+        };
+        let (generation, stable_for, out, tx) =
+            (self.watch_gen, self.watch_stable_for, self.watch_tx.clone(), self.internal_tx.clone());
+        tokio::task::spawn_blocking(move || {
+            let result = FolderWatcher::start(path, generation, stable_for, out);
+            let _ = tx.send(Internal::WatchStarted { generation, result, reply });
+        });
     }
 
     /// Lô tệp mới đã ổn định ⇒ hàng đợi của điện thoại mặc định (điện thoại ghép đầu tiên). Chống trùng + ghi store
@@ -985,8 +1001,29 @@ impl Engine {
                 }
             }
             Internal::Settled { outbox, req, change } => {
+                let restart = matches!(&change, Settled::WatchFolder(f, Ok(())) if *f != self.config.watch_folder);
                 let r = self.on_settled(change);
-                reply_to(&outbox, req, r);
+                if restart {
+                    // Trả lời sau khi biết bật theo dõi được không (`watch_error` trong `SettingsView`).
+                    self.restart_watch(Some((outbox, req)));
+                } else {
+                    reply_to(&outbox, req, r);
+                }
+            }
+            Internal::WatchStarted { generation, result, reply } => {
+                // Bộ của thế hệ cũ (đổi thư mục lần nữa trong lúc đăng ký) ⇒ thả.
+                if generation == self.watch_gen {
+                    match result {
+                        Ok(w) => self.watcher = Some(w),
+                        Err(e) => {
+                            log::warn!("engine: watch folder: {e}");
+                            self.watch_error = Some(e);
+                        }
+                    }
+                }
+                if let Some((outbox, req)) = reply {
+                    reply_to(&outbox, req, Ok(Outcome::Settings(self.settings_view())));
+                }
             }
             Internal::Added { outbox, req, device, outcome } => {
                 let wake = matches!(outcome, Outcome::Added { batch: Some(_), .. })
@@ -1806,10 +1843,26 @@ mod tests {
         assert_eq!(uploads().len(), 1, "C2: rename is not a new file; old file never sent");
 
         let off = WatchFolder { enabled: false, path: Some(root.clone()) };
-        view(ask(e, SettingsOp::SetWatchFolder { folder: off }).await);
+        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: off }).await).watch_error, None);
         std::fs::write(root.join("sau.mp4"), b"later").unwrap();
         tokio::time::sleep(Duration::from_millis(1200)).await;
         assert_eq!(uploads().len(), 1, "disabled watch adds nothing");
+
+        // Thư mục không đọc được ⇒ lệnh vẫn lưu, màn cài đặt nhận lỗi để hiện (bỏ qua khi chạy bằng root).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = tmp.path().join("khoá");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::read_dir(&locked).is_err() {
+                let bad = WatchFolder { enabled: true, path: Some(locked.clone()) };
+                let v = view(ask(e, SettingsOp::SetWatchFolder { folder: bad.clone() }).await);
+                assert_eq!(v.watch_folder, bad);
+                assert!(v.watch_error.is_some(), "watch error reaches the settings screen");
+            }
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     /// C1 (gd1_12, mức engine): đổi từng mục qua IPC ⇒ `config.json` đúng khoá camelCase, đọc lại còn; lỗi nói rõ.
