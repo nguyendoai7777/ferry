@@ -139,7 +139,7 @@ mod tests {
     }
 
     /// Từ viết tắt được phép toàn chữ hoa.
-    const ACRONYMS: [&str; 6] = ["PC", "PIN", "IP", "ID", "USB", "OK"];
+    const ACRONYMS: [&str; 7] = ["PC", "PIN", "IP", "ID", "USB", "OK", "MB"];
 
     /// C2 — không chữ toàn hoa (D-13): mỗi từ từ hai chữ cái trở lên (trừ [`ACRONYMS`]) phải có chữ thường.
     #[test]

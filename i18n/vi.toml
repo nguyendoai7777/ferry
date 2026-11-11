@@ -198,3 +198,80 @@ missing_one = "{count} video không còn trên điện thoại."
 failed = "Không tải về được. Kiểm tra điện thoại rồi thử lại."
 drop_hint = "Thả hoặc dán tệp để gửi vào thư mục đang mở."
 drop_other = "Không gửi vào nhóm Khác được — mở một thư mục."
+
+[settings]
+window_title = "Cài đặt — Ferry"
+loading = "Đang tải cài đặt…"
+retry = "Thử lại"
+no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
+load_failed = "Không đọc được cài đặt — thử lại sau ít phút"
+
+[settings.devices]
+title = "Điện thoại đã ghép"
+description = "Đổi tên hiển thị hoặc quên điện thoại khỏi máy tính này."
+empty = "Chưa ghép điện thoại nào."
+rename = "Đổi tên"
+forget = "Quên"
+phone_name = "Tên trên điện thoại: {name}"
+state_online = "Đang kết nối"
+state_offline = "Chưa kết nối"
+state_needs_repair = "Cần ghép lại"
+state_paired = "Đã ghép"
+
+[settings.rename]
+title = "Đổi tên điện thoại"
+label = "Tên hiển thị"
+hint = "Để trống để dùng tên điện thoại báo."
+save = "Lưu"
+cancel = "Huỷ"
+
+[settings.forget]
+title = "Quên {name}?"
+body = "Các tệp đang chờ gửi sang máy này sẽ bị xoá khỏi hàng đợi. Muốn gửi lại, bạn phải ghép lại điện thoại."
+confirm = "Quên điện thoại"
+cancel = "Huỷ"
+
+[settings.files]
+title = "Tệp"
+download_dir = "Thư mục tải về"
+choose = "Chọn…"
+reset = "Mặc định"
+watch_folder = "Theo dõi thư mục"
+watch_folder_hint = "Tệp mới trong thư mục này tự gửi sang điện thoại."
+watch_folder_none = "Chưa chọn thư mục"
+
+[settings.network]
+title = "Mạng"
+speed_limit = "Giới hạn tốc độ"
+speed_limit_hint = "Áp dụng cho mọi tệp đang gửi."
+speed_unit = "MB/s"
+
+[settings.system]
+title = "Hệ thống"
+autostart = "Khởi động cùng hệ thống"
+autostart_error = "Không bật được: {error}. Kiểm tra quyền của hệ điều hành rồi thử lại."
+language = "Ngôn ngữ"
+language_system = "Theo hệ thống"
+language_vi = "Tiếng Việt"
+language_en = "English"
+
+[settings.advanced]
+title = "Nâng cao"
+addresses = "Địa chỉ tay"
+addresses_hint = "Dùng khi mạng chặn tự tìm điện thoại. Nhập dạng địa chỉ:cổng."
+add = "Thêm"
+remove = "Xoá"
+empty = "Chưa có địa chỉ nào."
+
+[settings.error]
+no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
+unknown_device = "Không thấy điện thoại này trong danh sách — đóng cửa sổ rồi mở lại"
+offline = "Điện thoại chưa kết nối — bật Sync WiFi trên điện thoại rồi thử lại"
+invalid_path = "Thư mục không dùng được — chọn một thư mục khác"
+invalid_address = "Địa chỉ không đúng dạng — nhập như 192.168.1.9:8080"
+invalid_speed = "Nhập số MB/s từ 1 đến {max}"
+invalid_name = "Tên không dùng được — nhập tên khác"
+not_writable = "Không ghi được vào thư mục này — chọn thư mục khác hoặc cấp quyền ghi"
+unreachable = "Không nối được địa chỉ này — kiểm tra điện thoại đã bật Sync WiFi và cùng mạng"
+unknown_interface = "Máy này không có card mạng {name} — kiểm tra lại địa chỉ"
+internal = "Ferry gặp lỗi khi lưu — thử lại, nếu vẫn lỗi hãy khởi động lại Ferry"
