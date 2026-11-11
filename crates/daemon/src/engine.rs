@@ -265,8 +265,6 @@ struct Engine {
     mdns_since: Option<Instant>,
     /// Đã thấy ít nhất một điện thoại qua mDNS ⇒ tường lửa không chặn.
     mdns_found: bool,
-    /// Đang gợi ý "Cho phép" (`Snapshot::mdns_firewall`).
-    fw_hint: bool,
     /// Hộp `pkexec` đang mở.
     fw_allowing: bool,
     /// Vòng chính dựng lại `Browser` ở lượt kế (sau khi mở tường lửa).
@@ -331,17 +329,13 @@ impl Engine {
             firewall: firewall::Detected::NONE,
             mdns_since: browser.as_ref().map(|_| Instant::now()),
             mdns_found: false,
-            fw_hint: false,
             fw_allowing: false,
             restart_mdns: false,
         };
         if browser.is_some() {
             engine.firewall = firewall::detect(&engine.firewall_marker());
             if engine.firewall.may_block {
-                log::info!(
-                    "engine: ufw is enabled, mDNS may be blocked (hint after {:?} without phones)",
-                    firewall::HINT_AFTER
-                );
+                log::info!("engine: ufw is enabled and mDNS not allowed yet, asking on the Add phone screen");
             }
         }
         let paired: Vec<DeviceId> = engine.config.devices.iter().map(|d| d.id.clone()).collect();
@@ -360,7 +354,6 @@ impl Engine {
         loop {
             let deadline = self.devices.next_deadline().map(tokio::time::Instant::from_std);
             let push_at = self.push_due().map(tokio::time::Instant::from_std);
-            let hint_at = self.firewall_hint_at().map(tokio::time::Instant::from_std);
             tokio::select! {
                 input = inputs.recv() => match input {
                     Some(Input::Shutdown { done }) => {
@@ -379,8 +372,7 @@ impl Engine {
                 Some(ready) = rx.watch.recv() => self.on_watch_ready(ready),
                 ev = next_mdns(rx.browser.as_ref()) => match ev {
                     Some(MdnsEvent::Announced(ann)) => {
-                        self.mdns_found = true;
-                        if std::mem::take(&mut self.fw_hint) {
+                        if !std::mem::replace(&mut self.mdns_found, true) && self.firewall.may_block {
                             self.dirty = true;
                         }
                         let ev = self.devices.announce(ann, Instant::now());
@@ -394,7 +386,6 @@ impl Engine {
                 },
                 () = sleep_until(deadline) => self.on_deadline(),
                 () = sleep_until(push_at) => self.push(false),
-                () = sleep_until(hint_at) => self.on_firewall_deadline(),
                 _ = purge.tick() => self.purge(),
             }
             if std::mem::take(&mut self.restart_mdns) {
@@ -1116,7 +1107,6 @@ impl Engine {
                         log::warn!("engine: write {}: {e}", marker.display());
                     }
                     self.firewall.may_block = false;
-                    self.fw_hint = false;
                     self.dirty = true;
                     self.restart_mdns = self.mdns_since.is_some();
                     log::info!("engine: mDNS allowed in the firewall, browsing again");
@@ -1344,32 +1334,15 @@ impl Engine {
     fn snapshot_from(&self, uploads: Vec<UploadItem>) -> Snapshot {
         let mut snapshot =
             snapshot_parts(&self.store, &self.devices, &self.locals, &self.summary, &self.progress, uploads);
-        snapshot.mdns_firewall = self.fw_hint.then(|| self.firewall.hint());
+        snapshot.mdns_firewall =
+            firewall::hint_needed(self.firewall.may_block, self.mdns_since.is_some(), self.mdns_found)
+                .then(|| self.firewall.hint());
         snapshot
     }
 
     /// Dấu "người dùng đã cho phép mDNS" (W-6), cạnh `config.json`.
     fn firewall_marker(&self) -> PathBuf {
         self.config_path.with_file_name(firewall::USER_MARKER)
-    }
-
-    /// Lúc bật gợi ý tường lửa (W-6); `None` ⇒ không cần hẹn.
-    fn firewall_hint_at(&self) -> Option<Instant> {
-        if self.fw_hint || self.mdns_found || !self.firewall.may_block {
-            return None;
-        }
-        self.mdns_since.map(|t| t + firewall::HINT_AFTER)
-    }
-
-    fn on_firewall_deadline(&mut self) {
-        if firewall::hint_due(self.firewall.may_block, self.mdns_since, self.mdns_found, Instant::now()) {
-            log::info!(
-                "engine: no phone over mDNS for {:?} with ufw enabled, suggesting to allow it",
-                firewall::HINT_AFTER
-            );
-            self.fw_hint = true;
-            self.dirty = true;
-        }
     }
 
     // ---- việc nền ----

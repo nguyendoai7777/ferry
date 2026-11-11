@@ -6,7 +6,6 @@
 //! Hàm thuần (đọc `ufw.conf`, dựng câu lệnh, đổi mã thoát, tiêu chí gợi ý) có test; [`allow_with_prompt`] chạy `pkexec` thật.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,9 +15,6 @@ pub const MDNS_PORT: u16 = 5353;
 pub const MDNS_GROUPS: [&str; 2] = ["224.0.0.251", "ff02::fb"];
 /// Comment của luật `ufw` — postrm của `.deb` tìm theo chuỗi này (giữ khớp `packaging/linux/build-deb.sh`).
 pub const RULE_COMMENT: &str = "ferry mDNS";
-/// Bật dò mà chừng này chưa thấy điện thoại nào qua mDNS ⇒ gợi ý cho phép (điện thoại có thể chỉ chưa bật Sync WiFi, nên
-/// lời gợi ý nói "có thể").
-pub const HINT_AFTER: Duration = Duration::from_secs(20);
 /// Cấu hình `ufw` (đọc được không cần root, `-rw-r--r--`).
 pub const UFW_CONF: &str = "/etc/ufw/ufw.conf";
 /// Postinst của `.deb` ghi tệp này khi đã thêm luật; postrm xoá.
@@ -101,10 +97,10 @@ pub fn result_from_exit(code: Option<i32>) -> AllowResult {
     }
 }
 
-/// Tới lúc gợi ý chưa: tường lửa có thể chặn, đang dò từ `browsing_since`, chưa thấy điện thoại nào qua mDNS, đã quá
-/// [`HINT_AFTER`].
-pub fn hint_due(may_block: bool, browsing_since: Option<Instant>, found_any: bool, now: Instant) -> bool {
-    may_block && !found_any && browsing_since.is_some_and(|t| now.saturating_duration_since(t) >= HINT_AFTER)
+/// Có xin quyền không (chủ dự án 11/11/2026: vào màn Thêm điện thoại là kiểm ngay, chưa có quyền thì hỏi luôn): tường lửa có
+/// thể chặn, đang dò mDNS, và chưa thấy điện thoại nào qua mDNS (đã thấy ⇒ mDNS qua được, không cần hỏi).
+pub fn hint_needed(may_block: bool, browsing: bool, found_any: bool) -> bool {
+    may_block && browsing && !found_any
 }
 
 /// Tường lửa của máy, đoán không cần root.
@@ -218,13 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn hint_after_quiet_period_only() {
-        let t0 = Instant::now();
-        let later = t0 + HINT_AFTER;
-        assert!(hint_due(true, Some(t0), false, later));
-        assert!(!hint_due(true, Some(t0), false, t0 + HINT_AFTER - Duration::from_millis(1)));
-        assert!(!hint_due(true, Some(t0), true, later), "đã thấy điện thoại qua mDNS ⇒ không chặn");
-        assert!(!hint_due(false, Some(t0), false, later), "tường lửa không chặn");
-        assert!(!hint_due(true, None, false, later), "không dò mDNS");
+    fn asks_right_away_unless_mdns_already_works() {
+        assert!(hint_needed(true, true, false));
+        assert!(!hint_needed(true, true, true), "đã thấy điện thoại qua mDNS ⇒ không chặn");
+        assert!(!hint_needed(false, true, false), "tường lửa không chặn / đã cho phép");
+        assert!(!hint_needed(true, false, false), "không dò mDNS");
     }
 }

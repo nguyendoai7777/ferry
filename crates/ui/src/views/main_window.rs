@@ -150,7 +150,7 @@ impl MainWindow {
                     let firewall = self.model.read(cx).snapshot.mdns_firewall.clone();
                     view.update(cx, |v, cx| {
                         v.set_devices(devices, cx);
-                        v.set_firewall(firewall, cx);
+                        v.set_firewall(firewall, window, cx);
                     });
                 }
                 cx.notify();
@@ -233,7 +233,7 @@ impl MainWindow {
         let firewall = self.model.read(cx).snapshot.mdns_firewall.clone();
         let view = cx.new(|cx| {
             let mut v = AddPhoneView::new(i18n, send, devices, repair, window, cx);
-            v.set_firewall(firewall, cx);
+            v.set_firewall(firewall, window, cx);
             v
         });
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &AddPhoneEvent, window, cx| {

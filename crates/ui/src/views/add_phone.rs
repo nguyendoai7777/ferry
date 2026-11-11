@@ -4,9 +4,10 @@
 //! View không tự nối IPC: chủ (cửa sổ chính) đưa vào `send` (gửi `PhoneOp`, trả `req`), gọi [`AddPhoneView::set_devices`]
 //! mỗi khi có `Snapshot` mới và [`AddPhoneView::on_reply`] với mỗi `Reply`. PIN không giữ lại sau khi gửi (xoá ô ngay).
 //!
-//! W-6: `Snapshot::mdns_firewall` có ⇒ (qua [`AddPhoneView::set_firewall`]) bước đầu hiện khối "tường lửa có thể chặn" +
-//! nút "Cho phép" (`PhoneOp::AllowMdnsFirewall`, hệ thống hỏi mật khẩu); không hỏi được thì hiện câu lệnh để chép. Đường nhập
-//! địa chỉ tay vẫn ở dưới.
+//! W-6: vào màn mà `Snapshot::mdns_firewall` có (tường lửa bật, chưa cho phép — daemon biết ngay lúc khởi động) ⇒ mở luôn hộp
+//! thoại xin quyền (qua [`AddPhoneView::set_firewall`], một lần mỗi lần mở màn); "Cho phép" ⇒ `PhoneOp::AllowMdnsFirewall`,
+//! hệ thống hỏi mật khẩu; không hỏi được thì hộp hiện câu lệnh để chép. "Để sau" ⇒ còn nút mở lại ở bước đầu; đường nhập
+//! địa chỉ tay vẫn ở đó.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -26,9 +27,11 @@ use materiant::gpui_kit::{
     SharedString, Subscription, WeakEntity, Window, div, px, svg,
 };
 use materiant::icon::IconName;
+use materiant::overlay::dialog::{Dialog, DialogHandle};
 use materiant::progress::ProgressCircular;
 use materiant::style::Accent;
 use materiant::theme::ActiveTheme;
+use materiant::toast::{Toast, ToastKind, ToastSpec};
 
 /// Dò chừng này chưa thấy điện thoại nào ⇒ chỉ sang đường nhập địa chỉ tay (WiFi công ty / AP isolation hay lọc mDNS: chờ
 /// thêm cũng không thấy, kể cả sau khi đã mở tường lửa).
@@ -108,8 +111,10 @@ pub struct AddPhoneView {
     firewall_command: Option<String>,
     /// Mở màn lúc này — dò quá [`SLOW_SEARCH`] mà danh sách trống ⇒ gợi ý nhập tay.
     opened_at: Instant,
-    /// Lúc người dùng cho phép ở tường lửa (W-6).
-    allowed_at: Option<Instant>,
+    /// Hộp thoại xin quyền tường lửa (W-6).
+    firewall_dialog: DialogHandle,
+    /// Đã tự mở hộp một lần trong lần mở màn này.
+    firewall_asked: bool,
     focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -228,7 +233,8 @@ impl AddPhoneView {
             firewall_status: FirewallStatus::Idle,
             firewall_command: None,
             opened_at: Instant::now(),
-            allowed_at: None,
+            firewall_dialog: DialogHandle::new(cx),
+            firewall_asked: false,
             focus: cx.focus_handle(),
             _subs: subs,
         };
@@ -248,15 +254,20 @@ impl AddPhoneView {
         }
     }
 
-    /// Snapshot mới: gợi ý tường lửa (W-6).
-    pub fn set_firewall(&mut self, hint: Option<MdnsFirewallHint>, cx: &mut Context<Self>) {
-        if self.firewall != hint {
-            if let Some(h) = &hint {
-                self.firewall_command = Some(h.command.clone());
-            }
-            self.firewall = hint;
-            cx.notify();
+    /// Snapshot mới: tường lửa cần cho phép (W-6). Lần đầu thấy trong lần mở màn này ⇒ mở hộp thoại xin quyền ngay.
+    pub fn set_firewall(&mut self, hint: Option<MdnsFirewallHint>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.firewall == hint {
+            return;
         }
+        if let Some(h) = &hint {
+            self.firewall_command = Some(h.command.clone());
+            if !std::mem::replace(&mut self.firewall_asked, true) {
+                // Hộp cần cây phần tử của view: mở sau lượt dựng hiện tại.
+                cx.defer_in(window, |this, window, cx| this.firewall_dialog.open(window, cx));
+            }
+        }
+        self.firewall = hint;
+        cx.notify();
     }
 
     fn allow_firewall(&mut self, cx: &mut Context<Self>) {
@@ -276,8 +287,9 @@ impl AddPhoneView {
             self.firewall_status = match outcome {
                 Outcome::Firewall { result } => {
                     if *result == AllowResult::Allowed {
-                        self.allowed_at = Some(Instant::now());
-                        self.redraw_after(SLOW_SEARCH, cx);
+                        self.firewall_dialog.close(window, cx);
+                        let text = self.i18n.t("add_phone.firewall_allowed").to_owned();
+                        Toast::push(window, cx, ToastSpec::new(ToastKind::Success, text));
                     }
                     FirewallStatus::Done(*result)
                 }
@@ -429,36 +441,24 @@ impl AddPhoneView {
 
     // ---- Vẽ ----
 
-    /// Khối W-6: hiện khi daemon gợi ý, hoặc khi người dùng vừa bấm (giữ kết quả sau khi gợi ý tắt).
-    fn render_firewall(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.firewall.is_none() && self.firewall_status == FirewallStatus::Idle {
-            return None;
-        }
+    /// Hộp thoại xin quyền W-6 (luôn trong cây, đóng thì không vẽ gì).
+    fn render_firewall_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
         let c = cx.theme().colors().clone();
         let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
         let status = self.firewall_status;
         let waiting = matches!(status, FirewallStatus::Waiting(_));
-        let allowed = status == FirewallStatus::Done(AllowResult::Allowed);
         let can_prompt = self.firewall.as_ref().is_none_or(|h| h.can_prompt);
         let show_command =
             !can_prompt || matches!(status, FirewallStatus::Done(AllowResult::NoPrompt | AllowResult::Failed));
-        let still_none =
-            self.allowed_at.is_some_and(|t| search_slow(t, Instant::now())) && pairable(&self.devices).is_empty();
-        let status_key = if allowed && still_none {
-            Some("add_phone.firewall_allowed_still_none")
-        } else {
-            firewall_status_key(status)
-        };
-        let status_line = status_key.map(|k| {
+        let status_line = firewall_status_key(status).filter(|_| can_prompt).map(|k| {
             let color = match status {
-                FirewallStatus::Done(AllowResult::Allowed) if !still_none => c.success,
-                FirewallStatus::Done(AllowResult::Allowed) => c.warning,
+                FirewallStatus::Done(AllowResult::Allowed) => c.success,
                 FirewallStatus::Done(AllowResult::Failed | AllowResult::NoPrompt) => c.danger,
                 _ => c.muted,
             };
             div().text_color(color).child(t(k))
         });
-        let command = self.firewall_command.clone().filter(|_| show_command && !allowed).map(|cmd| {
+        let command = self.firewall_command.clone().filter(|_| show_command).map(|cmd| {
             let copy = cmd.clone();
             div()
                 .flex()
@@ -491,27 +491,41 @@ impl AddPhoneView {
                         ),
                 )
         });
-        let button = (can_prompt && !allowed).then(|| {
-            div().flex().child(
-                Button::new("add-phone-firewall-allow", t("add_phone.firewall_allow"))
-                    .icon(IconName::Check)
-                    .loading(waiting)
-                    .disabled(waiting)
-                    .on_click(cx.listener(|this, _, _, cx| this.allow_firewall(cx))),
-            )
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().child(t("add_phone.firewall_body")))
+            .children(status_line)
+            .children(command);
+        let close = {
+            let h = self.firewall_dialog.clone();
+            let label = if can_prompt { t("add_phone.firewall_later") } else { t("add_phone.firewall_close") };
+            Button::new("add-phone-firewall-later", label)
+                .text()
+                .base()
+                .on_click(move |_, window, cx| h.close(window, cx))
+                .into_any_element()
+        };
+        let allow = can_prompt.then(|| {
+            Button::new("add-phone-firewall-allow", t("add_phone.firewall_allow"))
+                .loading(waiting)
+                .disabled(waiting)
+                .on_click(cx.listener(|this, _, _, cx| this.allow_firewall(cx)))
+                .into_any_element()
         });
-        let card = Card::new("add-phone-firewall")
+        Dialog::new("add-phone-firewall", &self.firewall_dialog)
             .title(t("add_phone.firewall_title"))
-            .description(t("add_phone.firewall_body"))
-            .child(div().flex().flex_col().gap_3().children(button).children(status_line).children(command));
-        Some(card.into_any_element())
+            .max_width(px(480.))
+            .child(body)
+            .actions(std::iter::once(close).chain(allow))
+            .into_any_element()
     }
 
     fn render_pick(&self, cx: &mut Context<Self>) -> AnyElement {
         let c = cx.theme().colors().clone();
         let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
         let list = pairable(&self.devices);
-        let firewall = self.render_firewall(cx);
         let body = if list.is_empty() {
             let searching = div()
                 .flex()
@@ -559,15 +573,28 @@ impl AddPhoneView {
                     .title(t("add_phone.found"))
                     .child(div().flex().flex_col().gap_3().child(self.render_step_enable(cx)).child(body)),
             )
-            .children(firewall)
             .child(
-                div().flex().child(
-                    Button::new("add-phone-manual", t("add_phone.manual_link"))
-                        .text()
-                        .base()
-                        .size(Size::Sm)
-                        .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
-                ),
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        Button::new("add-phone-manual", t("add_phone.manual_link"))
+                            .text()
+                            .base()
+                            .size(Size::Sm)
+                            .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
+                    )
+                    .when(self.firewall.is_some(), |row| {
+                        let h = self.firewall_dialog.clone();
+                        row.child(
+                            Button::new("add-phone-firewall-open", t("add_phone.firewall_open"))
+                                .text()
+                                .base()
+                                .size(Size::Sm)
+                                .on_click(move |_, window, cx| h.open(window, cx)),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -680,6 +707,7 @@ impl Render for AddPhoneView {
             )
             .child(content)
             .children(error)
+            .child(self.render_firewall_dialog(cx))
     }
 }
 
@@ -761,7 +789,9 @@ mod tests {
                 "add_phone.firewall_allow",
                 "add_phone.firewall_command_hint",
                 "add_phone.firewall_copy",
-                "add_phone.firewall_allowed_still_none",
+                "add_phone.firewall_later",
+                "add_phone.firewall_close",
+                "add_phone.firewall_open",
                 "add_phone.slow_hint",
             ]);
             for k in keys {
