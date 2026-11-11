@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ferry_core::client::PhoneClient;
 use ferry_core::config::{self, Config, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
@@ -144,6 +145,14 @@ struct Runner {
 }
 
 /// Kết quả task con trả về vòng chính.
+/// Ghép lại một điện thoại mà địa chỉ của nó giờ trả lời bằng mã khác (app cài lại): `info` + địa chỉ của mã mới.
+#[derive(Debug)]
+struct Replaced {
+    old: DeviceId,
+    info: Info,
+    addr: SocketAddr,
+}
+
 enum Internal {
     /// Nối thiết bị có token xong (`probe_device`).
     Connected {
@@ -161,7 +170,11 @@ enum Internal {
     Paired {
         outbox: Outbox,
         req: u64,
-        result: Result<pairing::Paired, CommandError>,
+        result: Result<(pairing::Paired, Option<Replaced>), CommandError>,
+    },
+    /// Hàng đợi của mã cũ đã chuyển sang máy cài lại (`Replaced`) ⇒ đánh thức runner mã mới.
+    Moved {
+        device: DeviceId,
     },
     /// `info` của địa chỉ nhập tay. `outbox = None` ⇒ địa chỉ đã lưu, hỏi lúc khởi động (không ai chờ trả lời).
     /// `remember` ⇒ lệnh cài đặt `AddAddress`: trả lời được thì lưu chuỗi này vào `manualAddresses`.
@@ -469,12 +482,21 @@ impl Engine {
                 let (client_id, client_name) = (self.config.client_id.clone(), self.config.client_name.clone());
                 tokio::spawn(async move {
                     let result = async {
-                        let mut c =
-                            discovery::connect(&device, &addrs, None).await.map_err(|_| CommandError::Unreachable)?;
                         let me = Identity { client_id: &client_id, client_name: &client_name };
-                        pairing::pair(&mut c.client, Some(&device), &Secret::new(pin), me, &tokens)
-                            .await
-                            .map_err(pair_error)
+                        let pin = Secret::new(pin);
+                        if let Ok(mut c) = discovery::connect(&device, &addrs, None).await {
+                            let p = pairing::pair(&mut c.client, Some(&device), &pin, me, &tokens).await;
+                            return p.map(|p| (p, None)).map_err(pair_error);
+                        }
+                        // Địa chỉ cũ trả lời bằng mã khác: app điện thoại cài lại. PIN đọc trên máy đó đúng ⇒ nhận mã mới.
+                        let (addr, info) =
+                            discovery::find_replacement(&device, &addrs).await.ok_or(CommandError::Unreachable)?;
+                        let mut client =
+                            PhoneClient::new(addr, Some(&info.id), None).map_err(|_| CommandError::Unreachable)?;
+                        let p =
+                            pairing::pair(&mut client, Some(&info.id), &pin, me, &tokens).await.map_err(pair_error)?;
+                        log::info!("engine: {device} was reinstalled as {} at {addr}, moving its queue", p.id);
+                        Ok((p, Some(Replaced { old: device, info, addr })))
                     }
                     .await;
                     let _ = tx.send(Internal::Paired { outbox, req, result });
@@ -897,7 +919,7 @@ impl Engine {
         }
     }
 
-    fn online_client(&self, device: &DeviceId) -> Result<Arc<ferry_core::client::PhoneClient>, CommandError> {
+    fn online_client(&self, device: &DeviceId) -> Result<Arc<PhoneClient>, CommandError> {
         self.require_paired(device)?;
         let runner = &self.runners[device];
         runner.link.borrow().as_ref().map(|l| l.client.clone()).ok_or(CommandError::Offline)
@@ -1023,10 +1045,18 @@ impl Engine {
                 self.on_device_events(ev);
             }
             Internal::Paired { outbox, req, result } => {
-                let r = result.map(|p| {
+                let r = result.map(|(p, replaced)| {
+                    if let Some(rp) = &replaced {
+                        // Mã mới chưa có trong sổ (mDNS có thể bị chặn) ⇒ ghi từ `info` trước khi đánh dấu đã ghép.
+                        let ev = self.devices.info_ok(&rp.info, rp.addr, now);
+                        self.on_device_events(ev);
+                    }
                     let ev = self.devices.paired(&p.id, now);
                     self.on_device_events(ev);
                     self.ensure_runner(&p.id);
+                    if let Some(rp) = replaced {
+                        self.replace_device(&rp.old, &p.id);
+                    }
                     // Ghép lại sau 401: runner chờ `Link` mới — probe ngay đưa nó về Online.
                     self.save_config();
                     self.on_deadline();
@@ -1112,6 +1142,12 @@ impl Engine {
                     log::info!("engine: mDNS allowed in the firewall, browsing again");
                 }
                 reply_to(&outbox, req, Ok(Outcome::Firewall { result }));
+            }
+            Internal::Moved { device } => {
+                if let Some(r) = self.runners.get(&device) {
+                    r.handle.send(Command::Wake);
+                }
+                self.dirty = true;
             }
             Internal::Forgot { outbox, req } => {
                 self.dirty = true;
@@ -1369,6 +1405,41 @@ impl Engine {
     }
 
     /// Ghi config khi danh sách điện thoại đã ghép (tên, địa chỉ) đổi.
+    /// `old` là bản cài trước của `new` (ghép lại bằng PIN, `Replaced`): bỏ `old` khỏi sổ, config, kho khoá như "Quên",
+    /// nhưng chuyển hàng đợi của nó sang `new` thay vì xoá. Tên đặt trên PC đi theo.
+    fn replace_device(&mut self, old: &DeviceId, new: &DeviceId) {
+        let runner = self.runners.remove(old);
+        if let Some(r) = &runner {
+            r.handle.send(Command::Stop);
+        }
+        let alias = self.config.devices.iter().find(|d| d.id == *old).and_then(|d| d.alias.clone());
+        self.config.forget_device(old);
+        let ev = self.devices.forget(old);
+        self.on_device_events(ev);
+        if let Some(alias) = alias {
+            self.devices.set_alias(new, Some(alias));
+        }
+        self.told_repair.remove(old);
+        self.told_no_space.remove(old);
+        let (tokens, store, tx) = (self.tokens.clone(), self.store.clone(), self.internal_tx.clone());
+        let (old, new) = (old.clone(), new.clone());
+        tokio::spawn(async move {
+            if let Some(r) = runner {
+                let _ = tokio::time::timeout(STOP_TIMEOUT, r.task).await;
+            }
+            if let Err(e) = tokens.delete(&old).await {
+                log::warn!("engine: delete token of replaced {old}: {e}");
+            }
+            let to = new.clone();
+            match tokio::task::spawn_blocking(move || lock(&store).move_device(&old, &to)).await {
+                Ok(Ok(n)) => log::info!("engine: moved {n} queued item(s) to {new}"),
+                Ok(Err(e)) => log::warn!("engine: move queue to {new}: {e}"),
+                Err(e) => log::warn!("engine: move queue task: {e}"),
+            }
+            let _ = tx.send(Internal::Moved { device: new });
+        });
+    }
+
     fn save_config(&mut self) {
         let devices = self.devices.to_config();
         if devices == self.config.devices {

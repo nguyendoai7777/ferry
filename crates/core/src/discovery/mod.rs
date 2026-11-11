@@ -154,6 +154,20 @@ pub async fn connect(id: &DeviceId, addrs: &[SocketAddr], token: Option<&Secret>
     }
 }
 
+/// Không địa chỉ nào trả lời đúng `id`: hỏi `info` không token lần lượt trên các địa chỉ đó, trả máy *khác* đầu tiên
+/// trả lời — app điện thoại cài lại (hoặc xoá dữ liệu) đổi `id` nhưng giữ IP. Chỉ dùng khi người dùng đang ghép lại bằng
+/// PIN đọc trên chính máy đó: PIN đúng mới là bằng chứng, `name` trùng thì không.
+pub async fn find_replacement(id: &DeviceId, addrs: &[SocketAddr]) -> Option<(SocketAddr, Info)> {
+    for &addr in addrs {
+        match probe(addr).await {
+            Ok(info) if info.id != *id => return Some((addr, info)),
+            Ok(_) => {}
+            Err(e) => log::debug!("discovery: {addr} for replacement of {id}: {e}"),
+        }
+    }
+    None
+}
+
 /// Địa chỉ nhập tay, chưa biết `id`: `GET /info` không token (`PROTOCOL.md` 6.2) ⇒ `id`, tên, các địa chỉ khác ⇒
 /// `Devices::info_ok`.
 pub async fn probe(addr: SocketAddr) -> Result<Info, ClientError> {

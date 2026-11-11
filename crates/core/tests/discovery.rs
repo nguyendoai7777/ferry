@@ -160,3 +160,16 @@ fn rand_u64() -> u64 {
     let u = uuid::Uuid::new_v4();
     u64::from_le_bytes(u.as_bytes()[..8].try_into().unwrap())
 }
+
+/// App điện thoại cài lại: địa chỉ cũ trả lời bằng `id` khác ⇒ `connect` theo mã cũ thất bại, `find_replacement` trả
+/// máy mới; địa chỉ vẫn là mã cũ ⇒ không có máy thay.
+#[tokio::test]
+async fn reinstalled_phone_is_found_as_replacement() {
+    let phone = FakePhone::start().await;
+    let addr = phone.addr(fake_phone::Family::V4).expect("v4");
+    let old = DeviceId("0123456789abcdef".into());
+    assert!(discovery::connect(&old, &[addr], None).await.is_err());
+    let (at, info) = discovery::find_replacement(&old, &[addr]).await.expect("replacement");
+    assert_eq!((at, info.id.0.as_str()), (addr, fake_phone::ID));
+    assert!(discovery::find_replacement(&DeviceId(fake_phone::ID.into()), &[addr]).await.is_none());
+}

@@ -552,6 +552,17 @@ impl QueueStore {
         tx.commit()?;
         Ok(n)
     }
+
+    /// Điện thoại cài lại app (mã `id` mới, người dùng ghép lại bằng PIN): chuyển mọi mục + lô của mã cũ sang mã mới.
+    /// Gọi sau khi dừng runner của mã cũ. Phiên upload dở trên app cũ đã mất ⇒ điện thoại trả `404`, runner tạo lại.
+    /// Trả số mục đã chuyển.
+    pub fn move_device(&mut self, from: &DeviceId, to: &DeviceId) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let n = tx.execute("UPDATE items SET device_id = ?2 WHERE device_id = ?1", [&from.0, &to.0])?;
+        tx.execute("UPDATE batches SET device_id = ?2 WHERE device_id = ?1", [&from.0, &to.0])?;
+        tx.commit()?;
+        Ok(n)
+    }
 }
 
 // ---------------------------------------------------------------- hàng ↔ kiểu
@@ -972,6 +983,19 @@ mod tests {
         assert_eq!(store.uploads().unwrap().len(), 2);
         assert!(store.batches().unwrap().iter().all(|b| b.device_id == dev("p2")), "batches of p1 are gone");
         assert!(store.next_upload(&dev("p1"), NOW).unwrap().is_none());
+    }
+
+    #[test]
+    fn move_device_hands_queue_to_new_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = open(&tmp, NOW);
+        store.add_batch(&dev("old"), &plan(3, "a"), NOW).unwrap();
+        store.add_batch(&dev("p2"), &plan(2, "b"), NOW).unwrap();
+        assert_eq!(store.move_device(&dev("old"), &dev("new")).unwrap(), 3);
+        assert!(store.next_upload(&dev("old"), NOW).unwrap().is_none());
+        assert!(store.next_upload(&dev("new"), NOW).unwrap().is_some());
+        assert_eq!(store.batches().unwrap().iter().filter(|b| b.device_id == dev("new")).count(), 1);
+        assert_eq!(store.uploads().unwrap().iter().filter(|u| u.device_id == dev("p2")).count(), 2);
     }
 
     /// C3 — tiến trình con ghi liên tục, bị giết giữa chừng ⇒ DB không hỏng, mở lại được, mục đã commit còn đủ.
