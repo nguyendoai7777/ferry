@@ -1,0 +1,33 @@
+# Cấu hình `cargo about` (ferry-gd1_14). Chạy qua `gen-licenses.mjs`, không chạy tay.
+# `targets` + `accepted` phải khớp `deny.toml` (script soát `targets`; thêm giấy phép ⇒ sửa cả hai + danh sách D-2).
+
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "Apache-2.0 WITH LLVM-exception",
+    "CC0-1.0",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "OFL-1.1",
+]
+
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+# Dev-dependencies không vào bản cài; build-dependencies giữ: có crate sinh mã vào exe.
+ignore-dev-dependencies = true
+# Crate `publish = false` là mã đóng của ta.
+private = { ignore = true }

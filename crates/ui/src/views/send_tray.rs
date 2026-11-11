@@ -36,7 +36,11 @@ pub fn add_paths(tray: &mut Vec<TrayEntry>, paths: &[PathBuf]) -> usize {
             log::warn!("tray: cannot stat {p:?}");
             continue;
         };
-        tray.push(TrayEntry { path: p.clone(), is_dir: meta.is_dir(), size: if meta.is_dir() { 0 } else { meta.len() } });
+        tray.push(TrayEntry {
+            path: p.clone(),
+            is_dir: meta.is_dir(),
+            size: if meta.is_dir() { 0 } else { meta.len() },
+        });
         added += 1;
     }
     added
@@ -79,7 +83,8 @@ pub fn send_tray(
     }
     let rows = tray.iter().take(SHOWN).enumerate().map(|(ix, e)| {
         let remove = on_remove.clone();
-        let name = e.path.file_name().map_or_else(|| e.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name =
+            e.path.file_name().map_or_else(|| e.path.display().to_string(), |n| n.to_string_lossy().into_owned());
         div()
             .h(px(28.))
             .flex()
@@ -87,7 +92,9 @@ pub fn send_tray(
             .gap_2()
             .child(Icon::new(if e.is_dir { assets::folder() } else { assets::video() }).size(px(16.)).color(c.muted))
             .child(div().flex_1().min_w_0().truncate().text_sm().child(SharedString::from(name)))
-            .when(!e.is_dir, |d| d.child(div().text_xs().text_color(c.muted).child(SharedString::from(fmt::size(e.size, lang)))))
+            .when(!e.is_dir, |d| {
+                d.child(div().text_xs().text_color(c.muted).child(SharedString::from(fmt::size(e.size, lang))))
+            })
             .child(
                 IconButton::new(ElementId::Name(format!("tray-x-{ix}").into()), IconName::CloseThin)
                     .size(Size::Sm)

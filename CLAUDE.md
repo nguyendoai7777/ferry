@@ -9,7 +9,7 @@ nối tiếp từ byte cuối, xong thì im lặng; kéo video từ điện tho�
 thái (5), giao thức HTTP v1 (6). Mã lõi trỏ về mục của nó (`// PROTOCOL 6.5`). Đổi giao thức ⇒ sửa `PROTOCOL.md` trước,
 rồi sửa cả hai phía; không tự thêm route, header, mã trạng thái ở phía PC.
 
-**GĐ1 đang làm** (từ 11/11/2026): gd1_01 dựng workspace 3 crate + khay + cửa sổ trống; các task sau theo `ROADMAP.md`.
+**GĐ1 xong mã** (11/11/2026, gd1_01 → gd1_14; chờ chủ dự án kiểm tay rồi `close-phase`): `ROADMAP.md`.
 
 ## Bố cục (cargo workspace)
 
@@ -45,7 +45,17 @@ chỉ mở vài lần.
 ```bash
 bash start.sh                      # bản debug: build ferry + ferry-ui, chạy ferry (khay); theo dõi mã, --no-watch chạy một lần
 bash ../start.sh ferry   # cùng việc, gọi từ gốc workspace
+bash build.sh [-f] [--draft]       # = bash ../build.sh --project ferry: bản cài máy đang chạy vào ../release/ferry (Windows: pwsh build.ps1 [-Package setup,portable]; macOS: --arch arm64|x64)
+node packaging/icons/gen-icons.mjs # vẽ lại icon app (png hicolor, .ico, .icns — kết quả đã commit)
 ```
+
+- **Đóng gói** (`packaging/`, gd1_14): `linux/build-deb.sh` (`/usr/bin/{ferry,ferry-ui}`, `ferry.desktop` khớp `app_id`
+  `ferry`), `macos/build-macos.sh` (`Ferry.app` hai exe, `Info.plist` khai `NSBonjourServices` `_vpsync._tcp` +
+  `NSLocalNetworkUsageDescription`, ký ad-hoc), `windows/ferry.nsi` (cài cả máy, cần admin vì luật tường lửa mDNS UDP 5353 vào
+  cho `ferry.exe`; gỡ cài xoá luật + tác vụ tự chạy `ferry-<user>`). Trang giấy phép `licenses/gen-licenses.mjs` (Node, cả ba
+  OS; `cargo deny` đỏ thì dừng; thêm tay SQLite, Lucide, Mona Sans). Test `crates/core/tests/packaging.rs` giữ tệp đóng gói
+  khớp mã (tên exe, `app_id`, dịch vụ mDNS, tên tác vụ). Release note theo tag: `release-notes/v<version>.md` (D-22,
+  khuôn `release-notes/TEMPLATE.md`).
 
 - Build: `CARGO_TARGET_DIR=<gốc>/ferry/target/w<N>` trong worktree (D-18); `start.sh` tự đặt.
 - Dữ liệu dev riêng (`start.sh`): `FERRY_DATA_DIR` (log, khoá một-instance, socket), `FERRY_CONFIG_FILE` — trỏ vào

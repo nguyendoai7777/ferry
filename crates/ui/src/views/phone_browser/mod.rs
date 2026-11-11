@@ -23,7 +23,9 @@ use ferry_core::protocol::LibraryItem;
 use materiant::button::{Button, Size};
 use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
-use materiant::gpui_kit::{Context, Focusable, Entity, EventEmitter, IntoElement, Render, SharedString, Subscription, Window, div, px};
+use materiant::gpui_kit::{
+    Context, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString, Subscription, Window, div, px,
+};
 use materiant::icon::IconName;
 use materiant::list::VirtualListHandle;
 use materiant::theme::ActiveTheme;
@@ -42,7 +44,9 @@ pub enum BrowserMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserEvent {
     /// "Gửi vào đây": `dest_dir` rỗng = gốc nơi lưu.
-    Send { dest_dir: String },
+    Send {
+        dest_dir: String,
+    },
     Cancel,
 }
 
@@ -90,7 +94,10 @@ impl PhoneBrowser {
     ) -> Self {
         let search_hint = i18n.t("browser.search").to_owned();
         let search = cx.new(|cx| {
-            TextField::new("br-search", window, cx).placeholder(search_hint).leading_icon(IconName::Search).clearable(true)
+            TextField::new("br-search", window, cx)
+                .placeholder(search_hint)
+                .leading_icon(IconName::Search)
+                .clearable(true)
         });
         let folder_hint = i18n.t("browser.new_folder_name").to_owned();
         let folder_field = cx.new(|cx| TextField::new("br-folder", window, cx).placeholder(folder_hint));
@@ -159,7 +166,12 @@ impl PhoneBrowser {
 
     /// Mục thư viện đang chọn (cho gd1_11 "Tải về máy").
     pub fn selected_items(&self) -> Vec<&LibraryItem> {
-        self.selected.iter().filter_map(|&i| self.entries.get(i)).filter_map(|e| e.item).filter_map(|i| self.items.get(i)).collect()
+        self.selected
+            .iter()
+            .filter_map(|&i| self.entries.get(i))
+            .filter_map(|e| e.item)
+            .filter_map(|i| self.items.get(i))
+            .collect()
     }
 
     /// Thư mục đang mở nếu là đích hợp lệ.
@@ -183,7 +195,9 @@ impl PhoneBrowser {
         let tree = browse::build_tree(&self.items, &self.virtual_dirs);
         let exists = browse::breadcrumb(dir).iter().all(|(_, full)| {
             fn find(nodes: &[browse::DirNode], full: &str) -> bool {
-                nodes.iter().any(|n| n.path == full || (full.starts_with(&format!("{}/", n.path)) && find(&n.children, full)))
+                nodes
+                    .iter()
+                    .any(|n| n.path == full || (full.starts_with(&format!("{}/", n.path)) && find(&n.children, full)))
             }
             find(&tree.roots, full)
         });
@@ -430,11 +444,13 @@ impl Render for PhoneBrowser {
                         .border_t_1()
                         .border_color(c.border)
                         .child(left)
-                        .child(
-                            div().flex_1().min_w_0().truncate().text_sm().text_color(c.muted).child(SharedString::from(
-                                if in_other { self.i18n.t("browser.no_dest_here").to_owned() } else { summary },
-                            )),
-                        )
+                        .child(div().flex_1().min_w_0().truncate().text_sm().text_color(c.muted).child(
+                            SharedString::from(if in_other {
+                                self.i18n.t("browser.no_dest_here").to_owned()
+                            } else {
+                                summary
+                            }),
+                        ))
                         .child(
                             Button::new("br-cancel", self.i18n.t("browser.cancel"))
                                 .size(Size::Sm)
@@ -442,14 +458,15 @@ impl Render for PhoneBrowser {
                                 .on_click(cx.listener(|_, _, _, cx| cx.emit(BrowserEvent::Cancel))),
                         )
                         .child(
-                            Button::new("br-send", self.i18n.t("browser.send_here")).size(Size::Sm).disabled(!can_send).on_click(
-                                cx.listener(|this, _, _, cx| {
+                            Button::new("br-send", self.i18n.t("browser.send_here"))
+                                .size(Size::Sm)
+                                .disabled(!can_send)
+                                .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(dest) = this.destination() {
                                         let dest_dir = dest.to_owned();
                                         cx.emit(BrowserEvent::Send { dest_dir });
                                     }
-                                }),
-                            ),
+                                })),
                         ),
                 )
             }

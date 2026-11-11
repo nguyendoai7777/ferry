@@ -33,7 +33,8 @@ impl Log for FileLogger {
         if !self.enabled(r.metadata()) {
             return;
         }
-        let level = if is_gpui_teardown(r) { Level::Debug } else { r.level() };
+        let level =
+            if is_gpui_teardown(r) || is_chatty_dependency(r.target(), r.level()) { Level::Debug } else { r.level() };
         if level > self.level {
             return;
         }
@@ -69,6 +70,12 @@ fn is_gpui_teardown(r: &Record) -> bool {
         && r.target().is_empty()
         && r.file().is_some_and(|file| file.contains("gpui-pre"))
         && is_teardown_message(&r.args().to_string())
+}
+
+/// `zbus` (qua `tracing` → `log`) ghi `INFO` cho mỗi lời gọi D-Bus — khay SNI bị GNOME hỏi mỗi lần đổi icon / mở menu ⇒
+/// log bản phát hành phình cả ngày (gd1_14, đo trên bản `.deb`). Hạ `INFO` của chúng xuống `DEBUG`; `WARN` trở lên giữ.
+fn is_chatty_dependency(target: &str, level: Level) -> bool {
+    level == Level::Info && ["zbus", "tracing"].iter().any(|p| target == *p || target.starts_with(&format!("{p}::")))
 }
 
 fn is_teardown_message(message: &str) -> bool {
@@ -157,6 +164,15 @@ mod tests {
         assert!(is_teardown_message("window not found"));
         assert!(is_teardown_message("Invalid window handle. (0x80070578)"));
         assert!(!is_teardown_message("RefCell already borrowed"));
+    }
+
+    #[test]
+    fn zbus_info_is_demoted_but_warnings_stay() {
+        assert!(is_chatty_dependency("zbus::object_server", Level::Info));
+        assert!(is_chatty_dependency("tracing::span", Level::Info));
+        assert!(!is_chatty_dependency("zbus::connection", Level::Warn));
+        assert!(!is_chatty_dependency("ferry::platform::linux::sni", Level::Info));
+        assert!(!is_chatty_dependency("zbusx", Level::Info));
     }
 
     #[test]

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Ferry.app (ferry-gd1_14). `build-macos.sh` thay version. Hai exe trong Contents/MacOS: `ferry` (khay, CFBundleExecutable)
+     và `ferry-ui` (cửa sổ). LSUIElement: không icon Dock cho daemon ngay từ lúc mở (daemon cũng tự đặt Accessory); cửa sổ
+     `ferry-ui` GPUI tự xin Regular. NSBonjourServices + NSLocalNetworkUsageDescription: macOS 15 chặn mạng LAN (mDNS
+     `_vpsync._tcp` — PROTOCOL 6.2 — và HTTP tới điện thoại) nếu thiếu. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Ferry</string>
+  <key>CFBundleExecutable</key>
+  <string>ferry</string>
+  <key>CFBundleIconFile</key>
+  <string>ferry</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.sandtechs.desktop.ferry</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>vi</string>
+  </array>
+  <key>CFBundleName</key>
+  <string>Ferry</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.0.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_vpsync._tcp</string>
+  </array>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Ferry finds your phone on the home WiFi and sends files to it.</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 Sandtechs</string>
+</dict>
+</plist>

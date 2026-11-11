@@ -98,106 +98,118 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
         .child(div().flex_1().min_w_0().child(header_cell(this, SortKey::Name, "browser.col_name", cx)))
         .child(div().w(px(MODIFIED_W)).child(header_cell(this, SortKey::Modified, "browser.col_modified", cx)))
         .child(div().w(px(KIND_W)).child(header_cell(this, SortKey::Kind, "browser.col_kind", cx)))
-        .child(div().w(px(SIZE_W)).flex().justify_end().child(header_cell(this, SortKey::Size, "browser.col_size", cx)));
+        .child(div().w(px(SIZE_W)).flex().justify_end().child(header_cell(
+            this,
+            SortKey::Size,
+            "browser.col_size",
+            cx,
+        )));
 
-    let body = if count == 0 {
-        let msg = if this.loading {
-            "browser.loading"
-        } else if this.items.is_empty() && this.offline {
-            "browser.offline_empty"
-        } else if this.query.is_empty() {
-            "browser.empty"
+    let body =
+        if count == 0 {
+            let msg = if this.loading {
+                "browser.loading"
+            } else if this.items.is_empty() && this.offline {
+                "browser.offline_empty"
+            } else if this.query.is_empty() {
+                "browser.empty"
+            } else {
+                "browser.no_match"
+            };
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .px_6()
+                .text_center()
+                .text_sm()
+                .text_color(c.muted)
+                .child(SharedString::from(i18n.t(msg).to_owned()))
+                .into_any_element()
         } else {
-            "browser.no_match"
-        };
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .px_6()
-            .text_center()
-            .text_sm()
-            .text_color(c.muted)
-            .child(SharedString::from(i18n.t(msg).to_owned()))
-            .into_any_element()
-    } else {
-        let sel_rows = selected.clone();
-        let entries_for_rows = entries.clone();
-        let entries_for_activate = entries.clone();
-        div()
-            .flex_1()
-            .min_h(px(0.))
-            .opacity(if dim { 0.6 } else { 1. })
-            .child(
-                VirtualList::new("br-table", count, px(ROW_HEIGHT), move |ix, _, cx| {
-                    let e = &entries_for_rows[ix];
-                    let c = cx.theme().colors().clone();
-                    let is_sel = sel_rows.contains(&ix);
-                    let click = weak.clone();
-                    div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
-                        .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
-                            let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
-                            let _ = click.update(cx, |this, cx| this.click_row(ix, ctrl, shift, cx));
-                        })
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    Icon::new(if e.kind == EntryKind::Folder { assets::folder() } else { assets::video() })
+            let sel_rows = selected.clone();
+            let entries_for_rows = entries.clone();
+            let entries_for_activate = entries.clone();
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .opacity(if dim { 0.6 } else { 1. })
+                .child(
+                    VirtualList::new("br-table", count, px(ROW_HEIGHT), move |ix, _, cx| {
+                        let e = &entries_for_rows[ix];
+                        let c = cx.theme().colors().clone();
+                        let is_sel = sel_rows.contains(&ix);
+                        let click = weak.clone();
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
+                            .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
+                                let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
+                                let _ = click.update(cx, |this, cx| this.click_row(ix, ctrl, shift, cx));
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(if e.kind == EntryKind::Folder {
+                                            assets::folder()
+                                        } else {
+                                            assets::video()
+                                        })
                                         .size(px(16.))
                                         .color(c.muted),
-                                )
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_sm()
-                                        .when(e.is_virtual, |d| d.italic())
-                                        .child(SharedString::from(e.name.clone())),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_sm()
+                                            .when(e.is_virtual, |d| d.italic())
+                                            .child(SharedString::from(e.name.clone())),
+                                    ),
+                            )
+                            .child(
+                                div().w(px(MODIFIED_W)).truncate().text_xs().text_color(c.muted).child(
+                                    SharedString::from(e.modified.map(|m| fmt::date(m, now)).unwrap_or_default()),
                                 ),
-                        )
-                        .child(
-                            div().w(px(MODIFIED_W)).truncate().text_xs().text_color(c.muted).child(SharedString::from(
-                                e.modified.map(|m| fmt::date(m, now)).unwrap_or_default(),
-                            )),
-                        )
-                        .child(
-                            div()
-                                .w(px(KIND_W))
-                                .truncate()
-                                .text_xs()
-                                .text_color(c.muted)
-                                .child(SharedString::from(kind_text(&i18n, e))),
-                        )
-                        .child(
-                            div().w(px(SIZE_W)).flex().justify_end().text_xs().text_color(c.muted).child(SharedString::from(
-                                if e.kind == EntryKind::Video { fmt::size(e.size, lang) } else { String::new() },
-                            )),
-                        )
-                })
-                .track(&this.list)
-                .selected(this.anchor)
-                .padding_x(px(16.))
-                .on_select(cx.listener(|this, ix: &usize, _, cx| this.key_select(*ix, cx)))
-                .on_activate(cx.listener(move |this, ix: &usize, _, cx| {
-                    if let Some(e) = entries_for_activate.get(*ix) {
-                        this.activate(e.clone(), cx);
-                    }
-                }))
-                .size_full(),
-            )
-            .into_any_element()
-    };
+                            )
+                            .child(
+                                div()
+                                    .w(px(KIND_W))
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(c.muted)
+                                    .child(SharedString::from(kind_text(&i18n, e))),
+                            )
+                            .child(div().w(px(SIZE_W)).flex().justify_end().text_xs().text_color(c.muted).child(
+                                SharedString::from(if e.kind == EntryKind::Video {
+                                    fmt::size(e.size, lang)
+                                } else {
+                                    String::new()
+                                }),
+                            ))
+                    })
+                    .track(&this.list)
+                    .selected(this.anchor)
+                    .padding_x(px(16.))
+                    .on_select(cx.listener(|this, ix: &usize, _, cx| this.key_select(*ix, cx)))
+                    .on_activate(cx.listener(move |this, ix: &usize, _, cx| {
+                        if let Some(e) = entries_for_activate.get(*ix) {
+                            this.activate(e.clone(), cx);
+                        }
+                    }))
+                    .size_full(),
+                )
+                .into_any_element()
+        };
     let _ = weak_select;
     div()
         .flex_1()

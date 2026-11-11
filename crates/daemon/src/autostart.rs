@@ -172,13 +172,21 @@ mod xdg {
 
     use std::path::{Path, PathBuf};
 
-    /// Tệp `.desktop` theo chuẩn XDG Autostart.
+    /// Tệp `.desktop` theo chuẩn XDG Autostart. `TryExec` (gd1_14): gỡ gói `.deb` thì exe mất, GNOME bỏ qua mục này
+    /// thay vì báo lỗi lúc đăng nhập (gói không xoá được tệp trong thư mục nhà của từng người dùng).
     pub fn desktop_entry(exe: &Path) -> String {
+        let exe = exe.display().to_string();
         format!(
             "[Desktop Entry]\nType=Application\nName=Ferry\nComment=Send files to your phone over WiFi\n\
-             Exec={} --autostart\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
-            desktop_exec_quote(&exe.display().to_string())
+             TryExec={}\nExec={} --autostart\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
+            desktop_string(&exe),
+            desktop_exec_quote(&exe)
         )
+    }
+
+    /// Giá trị kiểu chuỗi của Desktop Entry Spec (`TryExec`): thoát `\\`, xuống dòng, tab.
+    pub fn desktop_string(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('\n', "\\n").replace('\t', "\\t").replace('\r', "\\r")
     }
 
     /// Trích dẫn đối số `Exec=` theo Desktop Entry Spec: bọc `"…"`, thoát `"` `` ` `` `$` `\`, `%` thành `%%`.
@@ -458,6 +466,8 @@ mod tests {
         assert!(entry.starts_with("[Desktop Entry]\n"));
         assert!(entry.contains("Exec=\"/opt/my apps/\\$x/fer\\\"ry%%\" --autostart\n"));
         assert!(entry.contains("Name=Ferry\n"));
+        assert!(entry.contains("TryExec=/opt/my apps/$x/fer\"ry%\n"));
+        assert_eq!(xdg::desktop_string("C:\\a\nb"), "C:\\\\a\\nb");
         let file = entry_file(Path::new("/home/u/.config"));
         assert_eq!(file, Path::new("/home/u/.config/autostart").join(format!("{BASE_NAME}.desktop")));
     }

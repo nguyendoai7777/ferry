@@ -22,3 +22,7 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_07 C4 trên macOS** — đo `footprint -p <pid>` lúc rảnh (mốc gd1_01 ≈ 10 MB); Linux đã đo: RssAnon 1,9 MB, 0 CPU.
 - **gd1_12 C2 `[owner-qa]` — bật "Khởi động cùng hệ thống" rồi đăng nhập lại ⇒ có khay** — lý do: cần đăng xuất / đăng
   nhập máy thật (Windows / macOS / GNOME). Bản debug ghi mục `ferry.dev`; bản cài ghi `ferry`. Tắt lại ⇒ mục bị gỡ.
+- **gd1_14 `[owner-qa]` — bản cài Windows / macOS** — lý do: cần máy Windows (`pwsh ./build.ps1 -Package setup,portable`,
+  cài, xem luật tường lửa "Ferry (mDNS)" trên mạng Public, gỡ cài) và Mac (`bash build.sh`, `Ferry.app` hỏi quyền mạng
+  LAN, cửa sổ `ferry-ui` có lấy focus khi `LSUIElement`). Cả ba OS: cài trên máy sạch ⇒ dò điện thoại, gửi 1 tệp (gd1_14 C1).
+- **Icon nhúng trong exe Windows** (gd1_14 mục 10) — lý do: cần máy Windows kiểm resource; shortcut đã dùng `ferry.ico`.

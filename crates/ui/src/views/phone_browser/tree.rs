@@ -66,7 +66,11 @@ pub fn flatten(tree: &Tree, open: &HashSet<String>, root_label: &str, other_labe
     out
 }
 
-pub fn tree_view(this: &PhoneBrowser, rows: Vec<TreeRow>, cx: &mut Context<PhoneBrowser>) -> materiant::gpui_kit::AnyElement {
+pub fn tree_view(
+    this: &PhoneBrowser,
+    rows: Vec<TreeRow>,
+    cx: &mut Context<PhoneBrowser>,
+) -> materiant::gpui_kit::AnyElement {
     let selected = rows.iter().position(|r| r.loc == this.at);
     let weak = cx.weak_entity();
     let click_rows = rows.clone();
@@ -137,7 +141,14 @@ mod tests {
     use super::*;
 
     fn item(dir: Option<&str>) -> LibraryItem {
-        LibraryItem { id: "i".into(), name: "a.mp4".into(), size: 1, modified: 1, mime: String::new(), dir: dir.map(Into::into) }
+        LibraryItem {
+            id: "i".into(),
+            name: "a.mp4".into(),
+            size: 1,
+            modified: 1,
+            mime: String::new(),
+            dir: dir.map(Into::into),
+        }
     }
 
     #[test]

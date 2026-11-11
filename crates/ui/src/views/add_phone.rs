@@ -121,7 +121,9 @@ pub fn error_message(i18n: &I18n, error: &CommandError, address_step: bool, now_
             key("add_phone.err_unreachable")
         }
         // `NotWritable` chỉ từ lệnh cài đặt (gd1_12), không tới màn này.
-        CommandError::InvalidInput | CommandError::NotWritable | CommandError::Internal => key("add_phone.err_internal"),
+        CommandError::InvalidInput | CommandError::NotWritable | CommandError::Internal => {
+            key("add_phone.err_internal")
+        }
     }
 }
 

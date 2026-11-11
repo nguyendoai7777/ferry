@@ -28,6 +28,10 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 **Bổ sung W-3 (11/11/2026)**: IPv4 + IPv6 (PROTOCOL 6.8) và đẩy thư mục như copy/paste (6.9) — gộp vào 02, 03, 04, 05,
 08, 11, 13 (mục "Bổ sung W-3" trong từng task). Phía Android: `video-player` task_10 (IPv6) + task_11 (thư mục).
 
+**GĐ1 xong mã 11/11/2026** (gd1_14 cuối): bản cài `bash build.sh` / `pwsh ./build.ps1` ⇒ `<gốc>/release/ferry/`
+(.deb Linux đã dựng + chạy thử: 13 MB, RSS rảnh 12 MB). Còn kiểm tay `[owner-qa]` ở `plan/_backlog.md` (bản cài Windows / macOS,
+C1 máy sạch, ghép + khởi động lại, tự chạy, icon khay) rồi `close-phase`. Bàn giao từng task ở mục 9 của tệp task.
+
 Làn song song sau 01: {02 → 04, 05 → 06} và 03 chạy song song (khác tệp); 08, 09, 12 song song sau 07.
 
 ## Ngoài GĐ1

@@ -33,9 +33,9 @@ impl UiState {
 
     pub fn save(&self) {
         let Some(path) = file() else { return };
-        let result = serde_json::to_vec_pretty(self)
-            .map_err(std::io::Error::other)
-            .and_then(|bytes| std::fs::create_dir_all(path.parent().unwrap_or(&path)).and_then(|()| std::fs::write(&path, bytes)));
+        let result = serde_json::to_vec_pretty(self).map_err(std::io::Error::other).and_then(|bytes| {
+            std::fs::create_dir_all(path.parent().unwrap_or(&path)).and_then(|()| std::fs::write(&path, bytes))
+        });
         if let Err(e) = result {
             log::warn!("ui-state: cannot save: {e}");
         }

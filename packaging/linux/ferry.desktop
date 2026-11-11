@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Ferry
+GenericName=Send to phone
+GenericName[vi]=Gửi sang điện thoại
+Comment=Send files and folders to your phone over WiFi
+Comment[vi]=Gửi tệp và thư mục sang điện thoại qua WiFi
+Exec=ferry
+TryExec=ferry
+Icon=ferry
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=phone;wifi;transfer;video;android;điện thoại;gửi;
+StartupNotify=false
+StartupWMClass=ferry
+Actions=settings;
+
+[Desktop Action settings]
+Name=Settings
+Name[vi]=Cài đặt
+Exec=ferry-ui --settings

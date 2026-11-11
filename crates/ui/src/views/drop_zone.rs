@@ -41,12 +41,18 @@ pub fn drop_zone(
             d.drag_over::<ExternalPaths>(move |style, _, _, _| style.border_color(accent).bg(accent.opacity(0.08)))
                 .on_drop(move |paths: &ExternalPaths, window, cx| on_drop(paths, window, cx))
         })
-        .child(div().font_weight(cx.theme().title_weight()).text_color(c.text).child(SharedString::from(
-            i18n.t("main.drop_title").to_owned(),
-        )))
-        .child(div().text_xs().text_color(c.muted).child(SharedString::from(
-            i18n.t_args("main.drop_hint", &[("keys", paste_keys())]),
-        )))
+        .child(
+            div()
+                .font_weight(cx.theme().title_weight())
+                .text_color(c.text)
+                .child(SharedString::from(i18n.t("main.drop_title").to_owned())),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(c.muted)
+                .child(SharedString::from(i18n.t_args("main.drop_hint", &[("keys", paste_keys())]))),
+        )
         .child(
             div()
                 .flex()

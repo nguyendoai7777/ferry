@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream (ferry-gd1_14, bê groove): App Center / GNOME Software lấy tên, nhà phát hành, giấy phép của app đã cài từ đây.
+     Nhà phát hành, trang chủ theo D-21. `build-deb.sh` thay @VERSION@, @DATE@. -->
+<component type="desktop-application">
+  <id>com.sandtechs.desktop.ferry</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Ferry</name>
+  <summary>Send files and folders to your phone over WiFi</summary>
+  <summary xml:lang="vi">Gửi tệp và thư mục sang điện thoại qua WiFi</summary>
+  <developer id="com.sandtechs">
+    <name>z0 team, sandtechs jsc.</name>
+  </developer>
+  <description>
+    <p>Ferry sits in the tray and sends files and folders from your computer to your phone over your home WiFi. Drop them in and they flow to the phone; if the connection drops, sending continues from where it stopped.</p>
+    <p>You can also browse the phone and download videos back to the computer.</p>
+    <p xml:lang="vi">Ferry nằm ở khay hệ thống, gửi tệp và thư mục từ máy tính sang điện thoại qua WiFi nhà. Thả vào là chảy sang điện thoại; mất kết nối thì gửi tiếp từ chỗ đã dừng.</p>
+    <p xml:lang="vi">Bạn cũng xem được thư viện trên điện thoại và tải video về máy.</p>
+  </description>
+  <url type="homepage">https://sandtechs.com</url>
+  <launchable type="desktop-id">ferry.desktop</launchable>
+  <icon type="stock">ferry</icon>
+  <pkgname>ferry</pkgname>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+  <provides>
+    <binary>ferry</binary>
+    <binary>ferry-ui</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

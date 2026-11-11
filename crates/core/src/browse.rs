@@ -160,7 +160,9 @@ pub struct Entry {
 
 /// Đuôi tệp viết hoa (`clip.mp4` ⇒ `MP4`).
 pub fn file_ext(name: &str) -> String {
-    name.rsplit_once('.').filter(|(stem, ext)| !stem.is_empty() && !ext.is_empty()).map_or_else(String::new, |(_, e)| e.to_uppercase())
+    name.rsplit_once('.')
+        .filter(|(stem, ext)| !stem.is_empty() && !ext.is_empty())
+        .map_or_else(String::new, |(_, e)| e.to_uppercase())
 }
 
 /// Nội dung trực tiếp của một nơi: thư mục con + video. `query` lọc theo tên (không phân biệt hoa thường).
@@ -337,7 +339,8 @@ mod tests {
         assert_eq!(e[0].kind, EntryKind::Folder);
         assert_eq!(e[0].name, "Phim");
         // Ngày sửa của thư mục = mới nhất bên trong.
-        let trip = list_entries(&items, &[], &Location::root(), "").into_iter().find(|x| x.name == "Chuyến đi").unwrap();
+        let trip =
+            list_entries(&items, &[], &Location::root(), "").into_iter().find(|x| x.name == "Chuyến đi").unwrap();
         assert_eq!(trip.modified, Some(50));
     }
 
