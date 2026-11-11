@@ -11,6 +11,16 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/core/src/transfer/download.rs`, `crates/core/tests/download.rs`; SỬA `crates/core/src/config.rs` (`downloadDir`) |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_04 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_04 -->
+
+- "Tuần tự với upload" trên cùng thiết bị: `transfer::UploadRunner` hiện chỉ chạy upload (`QueueStore::pending_upload`).
+  Gắn tải về vào **cùng vòng** (mở rộng runner, vd chọn đầu hàng chung theo `id` của `items`), đừng chạy runner tải về song
+  song cho cùng điện thoại. Mẫu dùng lại: `Link` / `LinkWatch` (địa chỉ đổi giữa hai `Range`), `Command`, `TransferEvent`
+  (thêm biến thể cho download), `Throttle` + `SpeedMeter` (`transfer/throttle.rs`), map lỗi theo pha (`Exec::map_error`).
+- **Soát lại**: `cargo test -p mws-core --test upload` vẫn xanh sau khi sửa vòng.
+
 ## 0. Bàn giao từ gd1_03 (11/11/2026)
 
 <!-- handoff: media-wireless-sync-gd1_03 -->

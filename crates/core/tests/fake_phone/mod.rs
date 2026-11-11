@@ -274,6 +274,37 @@ impl FakePhone {
     }
 }
 
+/// Listener phụ dùng chung trạng thái điện thoại (gd1_04 C7: "đổi cổng / IP giữa chừng"). Bỏ ⇒ ngừng nghe.
+pub struct ExtraListener {
+    pub addr: SocketAddr,
+    task: JoinHandle<()>,
+}
+
+impl Drop for ExtraListener {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl FakePhone {
+    /// Nghe thêm ở một cổng mới (cùng phiên upload, token, thư viện). Kết hợp [`FakePhone::stop`] để địa chỉ cũ chết.
+    pub async fn listen_extra(&self, family: Family) -> Option<ExtraListener> {
+        let ip: IpAddr = match family {
+            Family::V4 => Ipv4Addr::LOCALHOST.into(),
+            Family::V6 => Ipv6Addr::LOCALHOST.into(),
+        };
+        let l = TcpListener::bind((ip, 0)).await.ok()?;
+        let addr = l.local_addr().ok()?;
+        let task = tokio::spawn(accept_loop(l, self.state.clone(), self.connections.clone()));
+        Some(ExtraListener { addr, task })
+    }
+
+    /// Phiên upload đang mở: `(uid, offset)` — kiểm "không tạo phiên mới" khi đổi địa chỉ.
+    pub fn uploads_in_progress(&self) -> Vec<(String, u64)> {
+        self.st().sessions.iter().map(|(k, v)| (k.clone(), v.offset)).collect()
+    }
+}
+
 async fn bind_pair() -> (TcpListener, Option<TcpListener>) {
     for _ in 0..20 {
         let l4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

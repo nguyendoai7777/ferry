@@ -11,6 +11,24 @@
 | Phụ thuộc mới | thông báo hệ thống (`notify-rust` MIT/Apache hoặc API OS trực tiếp — soát Linux không kéo `libdbus`) |
 | File đụng tới | MỚI `crates/daemon/src/{engine,tray_state,notify}.rs`; SỬA `crates/core/src/ipc.rs`, `crates/daemon/src/main.rs` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_04 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_04 -->
+
+- **Đã có sẵn** (`mws-core::transfer`): `UploadRunner::new(device, store: SharedStore, link: LinkWatch, Throttle, events,
+  RunnerConfig::default()) -> (runner, RunnerHandle)`, chạy `tokio::spawn(runner.run())` — một runner mỗi thiết bị.
+  `SharedStore = Arc<Mutex<QueueStore>>` dùng chung với lệnh `AddFiles` (sau `add_batch` gửi `Command::Wake`).
+- **Địa chỉ**: giữ `LinkSender` (`link_channel()`) cho mỗi thiết bị; Online / đổi địa chỉ ⇒ `send_replace(Some(Link::new(client,
+  &info)))`, Offline ⇒ `None`. `TransferEvent::ConnectionLost{addr}` ⇒ cho discovery chọn lại địa chỉ (§6.8).
+- **Lệnh UI**: `ItemAction{id, pause|resume|cancel|retry}` ⇒ `handle.send(Command::Item{..})`; theo lô `Command::Batch`;
+  "Tạm dừng tất cả" = `Batch`/`Item` cho mọi mục hoặc ngừng gửi `Link` (runner ngủ). Tắt app ⇒ `Command::Stop`.
+- **Sự kiện → snapshot / khay**: `ItemChanged{id, state}` (đã ghi store), `Progress{id, sent, size, bytesPerSec}` mỗi
+  500 ms khi đang gửi (gộp ≤ 10 / s là việc ở đây), `BatchFinished{batch, sent, skipped, failed}` ⇒ một thông báo,
+  `DeviceNeedsRepair` ⇒ thiết bị `NeedsRepair` + báo một lần (gửi `Link` mới sau ghép lại ⇒ runner tự chạy tiếp mục
+  `NeedsPairing`), `PhoneNeedsUpdate` ⇒ "Cập nhật app trên điện thoại để giữ thư mục".
+- Giới hạn băng thông: một `Throttle` (`Arc`) chung cho mọi runner, `set_rate` khi cài đặt đổi (gd1_12).
+- **Soát lại**: `cargo test -p mws-core --test upload`; mục 9 của `plan/media-wireless-sync-gd1_04_upload-runner.md`.
+
 ## 1. Làm gì
 - `mws` chạy runtime tokio đa luồng nhỏ (2 luồng) cho discovery + một `Runner` mỗi thiết bị; vòng sự kiện khay ở luồng chính.
 - `Snapshot` (thiết bị + trạng thái, hàng đợi từng thiết bị, tiến độ, "Đã gửi") gửi qua IPC khi đổi, gộp tối đa 10 lần / s; UI mới nối nhận ngay bản đầy đủ.

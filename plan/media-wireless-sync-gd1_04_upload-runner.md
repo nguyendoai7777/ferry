@@ -2,14 +2,14 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Trạng thái | ☐ |
+| Trạng thái | ✅ 11/11/2026 |
 | Repo | media-wireless-sync |
 | Model | opus |
 | Cỡ | M — ~600 dòng |
 | Phụ thuộc | gd1_02, gd1_03 |
 | Quyết định áp dụng | W-1, W-3 |
 | Phụ thuộc mới | — |
-| File đụng tới | MỚI `crates/core/src/transfer/{mod,upload,throttle}.rs`, `crates/core/tests/upload.rs` |
+| File đụng tới | MỚI `crates/core/src/transfer/{mod,upload,throttle}.rs`, `crates/core/tests/upload.rs`; SỬA `queue/store.rs` (`pending_upload`), `tests/fake_phone/mod.rs` (thêm `listen_extra`) |
 
 ## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
 
@@ -68,4 +68,66 @@
 - C-W3b. Đổi địa chỉ (v4 → v6) giữa hai khúc ⇒ vẫn xong, không tạo phiên mới. `[opus-unit]`
 
 ## 9. Bàn giao thực tế
+
+**Đã làm (11/11/2026, Opus)** — nhánh `claude/gd1_04-upload-runner`, worktree `media-wireless-sync-w1`, build `target/w1`.
+- `transfer/mod.rs` — chỗ cắm cho 05 / 07: `Link { client: Arc<PhoneClient>, dirs }` (`Link::new(client, &info)`),
+  `link_channel() -> (LinkSender, LinkWatch)` (`tokio::sync::watch<Option<Link>>`: `Some` = Online ở địa chỉ đã chọn,
+  `None` = Offline), `SharedStore = Arc<Mutex<QueueStore>>`, `Command::{Wake, Item{id, action}, Batch{batch, action},
+  Stop}`, `ItemAction::{Pause, Resume, Cancel, Retry}`, `RunnerHandle::send`, `TransferEvent::{ItemChanged{id, state},
+  Progress{id, sent, size, bytesPerSec}, BatchFinished{batch, sent, skipped, failed}, DeviceNeedsRepair{device},
+  ConnectionLost{device, addr}, PhoneNeedsUpdate{device}}`. Không trait: `watch` + `mpsc` đủ cho cả discovery thật lẫn test.
+- `transfer/upload.rs` — `UploadRunner::new(device, store, link, throttle, events, RunnerConfig) -> (runner, handle)`,
+  `tokio::spawn(runner.run())`. Vòng: `QueueStore::pending_upload` (thêm mới, đầu hàng kể cả đang backoff) ⇒ `Start` /
+  `WakeUp` ⇒ thực thi effect ⇒ `UploadEvent` ⇒ … Rảnh / Offline / sau `401` ⇒ `select!` chờ lệnh, `Link` đổi, đồng hồ
+  `Waiting.until` — không poll. `Link` đổi lúc đang backoff ⇒ thức ngay (thử: < 1,5 s thay vì chờ hết backoff).
+  - Checking: `list` một lần mỗi lô (`RemoteIndex` theo `batch_id`, sống 10 phút, bỏ khi lô yên), khoá `dir` chuẩn hoá +
+    tên + cỡ; không `dirs` ⇒ so ở gốc (nơi tệp phẳng sẽ nằm). Không phải đuôi video ⇒ `Rejected(Unsupported)` khỏi request.
+  - Creating: `X-File-Dir` chỉ khi `link.dirs` và `dir` khác rỗng; không `dirs` mà mục có thư mục ⇒ gửi phẳng +
+    `PhoneNeedsUpdate` một lần mỗi `Link`.
+  - Sending: kiểm `source_matches` trước mỗi khúc (cả trước Checking / Creating), mở tệp + seek, `MeteredReader` (đếm +
+    token bucket) vào `upload_patch`; `409` dùng luôn offset điện thoại trả (`OffsetReported`, khỏi một `HEAD`).
+  - Mỗi request đọc `Link` mới nhất ⇒ khúc sau đi địa chỉ khác cùng `uid`. Lỗi mạng ⇒ `ConnectionLost{addr}` (discovery
+    chọn lại địa chỉ) + `Transient`.
+  - Lệnh: Pause / Cancel chạm mục đang bay ⇒ cắt request rồi áp (Cancel ⇒ `DELETE` phiên, chờ ≤ 10 s); lệnh khác hoãn tới
+    hết request (≤ một khúc). Lệnh cho mục của thiết bị khác bị bỏ.
+- `transfer/throttle.rs` — `Throttle::new(Option<bytes/s>)` dùng chung (`Arc`) ⇒ giới hạn tổng app, `set_rate` lúc chạy;
+  xô bắt đầu rỗng, trần 100 ms dữ liệu; không giới hạn ⇒ đọc thẳng. `SpeedMeter` trung bình trượt 5 s, mẫu theo nhịp
+  `progress_interval` (500 ms).
+- `tokio` của `mws-core` thêm `fs, macros, rt, sync, time` (cùng crate, không phụ thuộc mới; `deny` ✓).
+
+**Opus chọn 11/11/2026** (D-9):
+- Cắm địa chỉ bằng `watch<Option<Link>>` thay trait: discovery (05) chỉ cần `send_replace`; nhiều địa chỉ / happy
+  eyeballs nằm hẳn ở 05, runner không biết tới tập địa chỉ.
+- `401` ⇒ mục `Paused{NeedsPairing}`, runner dừng cả hàng của thiết bị; `Link` mới (sau ghép lại) ⇒ tự `Resume` mọi mục
+  `NeedsPairing` của thiết bị. Tầng trên không gửi lại `Link` cũ khi chưa có token mới.
+- `507` ⇒ `shortBy: None`: `info` không có chỗ trống (PROTOCOL 6.3) nên PC không biết "thiếu bao nhiêu GB" — xem mục 10.
+- Mục 2.6 "một thông báo khi cả lô xong": `BatchFinished` chỉ khi mọi mục kết thúc (Paused chưa tính) và có ít nhất một
+  mục Done / Skipped / Failed (huỷ cả lô ⇒ im).
+- Khúc cuối đứt rồi `HEAD` ⇒ `404` (phản hồi `201` có thể đã mất): hỏi `list`, có tệp trùng `dir` + tên + cỡ ⇒ coi là
+  Done, không gửi lại thành `a (1).mp4`. Chưa có test (server giả không tách được "commit mà mất phản hồi").
+- Sự kiện máy trạng thái bỏ qua mà mục vẫn đang bay (mã lạ đúng pha) ⇒ ép `Transient` để không quay vòng nóng.
+- Lỗi `Local` khi đọc nguồn: `NotFound` ⇒ `SourceMissing`, còn lại ⇒ `SourceChanged` ("File đã thay đổi").
+- Store dùng `std::sync::Mutex` (không giữ qua `await`, mỗi lệnh SQLite ngắn) — không đẩy sang `spawn_blocking`.
+
+**Nghiệm thu** (`tests/upload.rs`, 14 ca, ~2 s, chạy 5 lần liền xanh): C1 ✓ (cắt sau 100 KB ⇒ `ConnectionLost`, chờ,
+`HEAD`, gửi tiếp; byte đọc ≤ cỡ + 1 khúc; nội dung khớp) · C2 ✓ (`restart` giữa chừng ⇒ Creating lại, gửi lại từ 0) ·
+C3 ✓ (`507` ⇒ `Paused{NoSpace}`, `Resume` ⇒ xong) · C4 ✓ (`DeviceNeedsRepair`, mục 2 vẫn Queued; `Link` mới ⇒ cả hai
+xong) · C5 ✓ (sửa tệp giữa chừng ⇒ `Failed{SourceChanged}`, phiên bị `DELETE`) · C6 ✓ (10 MB/s, 20 MB: tổng và tốc độ
+báo UI trong ±10 %) · C7 ✓ (cổng cũ dừng, cổng mới cùng phiên, không Creating lại) · C-W3a ✓ (`Phim/Chuyến đi/Ngày 1`
+đúng từng tệp; không `dirs` ⇒ phẳng + một `PhoneNeedsUpdate`) · C-W3b ✓ (v4 → v6 giữa hai khúc, không `ConnectionLost`,
+không phiên mới). Thêm: Checking một `list` cho lô 3 tệp (đếm 5 kết nối), tạm dừng / chạy tiếp / huỷ, Offline không
+request nào, backoff thức ngay khi có địa chỉ mới. Test đơn vị `throttle` 4 ca.
+
+**Soát xanh** (cwd = worktree, `target/w1`): `cargo build` ✓, `cargo clippy --all-targets -- -D warnings` ✓, clippy chéo
+`-p mws-core` Windows + Linux (`LIBSQLITE3_SYS_USE_PKG_CONFIG=1`) ✓, `cargo test` ✓ (core lib 80, client 11, upload 14,
+daemon 3), `cargo deny check licenses` ✓.
+
 ## 10. Đề xuất cải tiến
+
+Soát 4 lăng kính: **bảo mật** — log chỉ có `device` / địa chỉ / uid, không token (token nằm trong `PhoneClient`, `Debug`
+che); đường dẫn nguồn lấy từ store (do `plan_batch` dựng), runner không nhận đường dẫn qua IPC. **RAM** — mỗi khúc chỉ
+bộ đệm 64 KB của client (+ 64 KB `scratch` khi bật giới hạn); `RemoteIndex` một lô một lúc. **UI/UX**, **Pro** — không áp
+(lõi), trừ dòng dưới.
+- [ux] `507` không nói được "cần thêm 1,2 GB" (PROTOCOL 2.6 ví dụ) vì `info` không có chỗ trống — PROTOCOL 6.3 / app điện
+  thoại thêm `free` (byte) vào `info` hoặc header vào `507`, PC điền `shortBy = size + 16 MB − free` — S — P2. Không tự
+  làm: đổi hợp đồng (W-1) cần chủ dự án; ghi `plan/_backlog.md`.

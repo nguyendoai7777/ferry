@@ -399,13 +399,19 @@ impl QueueStore {
     /// Đầu hàng upload của một thiết bị (một tệp một lúc, `PROTOCOL.md` 2.8): mục chưa kết thúc, không tạm dừng, sớm
     /// nhất. `Waiting` chưa tới giờ ⇒ `None` (runner ngủ tới [`QueueStore::next_wake`]).
     pub fn next_upload(&self, device: &DeviceId, now: UnixMs) -> Result<Option<UploadItem>> {
-        let item = query_uploads(
+        let item = self.pending_upload(device)?;
+        Ok(item.filter(|i| !matches!(i.state, UploadState::Waiting { until, .. } if until > now)))
+    }
+
+    /// Đầu hàng upload của một thiết bị kể cả khi đang chờ backoff — runner (gd1_04) lấy `Waiting.until` của riêng
+    /// thiết bị mình để ngủ, và đánh thức sớm khi điện thoại hiện lại ở địa chỉ mới.
+    pub fn pending_upload(&self, device: &DeviceId) -> Result<Option<UploadItem>> {
+        Ok(query_uploads(
             &self.conn,
             "device_id = ?1 AND status IN ('queued', 'checking', 'creating', 'sending', 'waiting') ORDER BY id LIMIT 1",
             [&device.0],
         )?
-        .pop();
-        Ok(item.filter(|i| !matches!(i.state, UploadState::Waiting { until, .. } if until > now)))
+        .pop())
     }
 
     pub fn next_download(&self, device: &DeviceId, now: UnixMs) -> Result<Option<DownloadItem>> {
