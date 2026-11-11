@@ -52,7 +52,7 @@ chỉ mở vài lần.
 bash start.sh                      # bản debug: build ferry + ferry-ui, chạy ferry (khay); theo dõi mã, --no-watch chạy một lần
 bash ../start.sh ferry   # cùng việc, gọi từ gốc workspace
 bash build.sh [-f] [--draft]       # = bash ../build.sh --project ferry: bản cài máy đang chạy vào ../release/ferry (Windows: pwsh build.ps1 [-Package setup,portable]; macOS: --arch arm64|x64)
-node packaging/icons/gen-icons.mjs # vẽ lại icon app (png hicolor, .ico, .icns — kết quả đã commit)
+node packaging/icons/gen-icons.mjs # vẽ lại icon app máy bay giấy: png hicolor, .ico, .icns, ferry.svg + bộ Android / iOS ở packaging/icons/mobile (kết quả đã commit)
 ```
 
 - **Đóng gói** (`packaging/`, gd1_14): `linux/build-deb.sh` (`/usr/bin/{ferry,ferry-ui}`, `ferry.desktop` khớp `app_id`

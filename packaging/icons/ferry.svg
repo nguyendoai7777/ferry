@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+<defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EEF1FF"/></linearGradient><mask id="k0" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48"><rect width="48" height="48" fill="#fff"/><path d="M42 7L18 26L35 35Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/><path d="M42 7L18 26L21 37L26 31Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/></mask><mask id="k1" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48"><rect width="48" height="48" fill="#fff"/><path d="M42 7L18 26L21 37L26 31Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/></mask></defs>
+<rect x="1.44" y="1.44" width="45.12" height="45.12" rx="10.15" fill="url(#t)"/>
+<g transform="translate(24 24) scale(0.9066666666666667) translate(-24 -22)"><g mask="url(#k0)"><path d="M42 7L6 21L18 26Z" fill="#4d6bfe"/></g><g mask="url(#k1)"><path d="M42 7L18 26L35 35Z" fill="#8fa6ff"/></g><path d="M42 7L18 26L21 37L26 31Z" fill="#2f49d1"/></g>
+</svg>
