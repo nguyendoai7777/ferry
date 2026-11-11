@@ -5,8 +5,6 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 
 ## ferry
 
-- **Remote git** — lý do: repo khởi tạo 11/11/2026 chỉ có ở máy; tạo repo trên GitHub là việc của chủ dự án. Có URL thì thêm
-  vào bảng repo của `init.sh` / `init.ps1` gốc (`ferry` kéo `materiant`).
 - **Tên hiển thị của app** — lý do: chờ chủ dự án chốt. Tạm dùng "Ferry" qua khoá i18n `app.name`. Icon đã chốt 11/11/2026: máy bay giấy ba mặt (`packaging/icons/gen-icons.mjs`, khay `crates/daemon/src/tray.rs`).
 - **`507` không nói được "cần thêm N GB"** (gd1_04 mục 10) — lý do: `info` không có chỗ trống (PROTOCOL 6.3); thêm trường
   `free` hoặc header vào `507` là đổi hợp đồng (W-1) — chờ chủ dự án. PC đã sẵn `PauseReason::NoSpace { shortBy }`.
