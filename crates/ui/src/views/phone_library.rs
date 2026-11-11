@@ -184,7 +184,9 @@ impl Render for PhoneLibrary {
             .flex()
             .items_center()
             .gap_2()
-            .px_4()
+            // Nút Lùi có ô đệm riêng: mép trái 4 px để mũi tên thẳng hàng với nội dung bên dưới; mép phải giữ 16 px.
+            .pl(px(4.))
+            .pr_4()
             .h(px(44.))
             .border_b_1()
             .border_color(c.border)

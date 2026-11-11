@@ -19,6 +19,11 @@ pub const ROW_HEIGHT: f32 = 32.;
 const MODIFIED_W: f32 = 112.;
 const KIND_W: f32 = 84.;
 const SIZE_W: f32 = 72.;
+/// Khung cuộn chừa mỗi bên chừng này (D-16), dòng tự đệm thêm chừng này bên trong nền chọn: cộng lại = đệm 16 px của
+/// đầu bảng ⇒ icon / chữ / cột cỡ thẳng với tiêu đề cột, nền chọn không dính sát icon.
+const LIST_PAD_X: f32 = 8.;
+const ROW_PAD_X: f32 = 8.;
+const ROW_RADIUS: f32 = 6.;
 
 /// Kết quả chọn sau một cú click (hàm thuần, có test).
 pub fn select_click(
@@ -167,6 +172,8 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                                 .flex()
                                 .items_center()
                                 .gap_2()
+                                .px(px(ROW_PAD_X))
+                                .rounded(px(ROW_RADIUS))
                                 .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
                                 .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
                                     let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
@@ -225,7 +232,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                     })
                     .track(&this.list)
                     .selected(this.anchor)
-                    .padding_x(px(16.))
+                    .padding_x(px(LIST_PAD_X))
                     .on_select(cx.listener(|this, ix: &usize, _, cx| this.key_select(*ix, cx)))
                     .on_activate(cx.listener(move |this, ix: &usize, _, cx| {
                         if let Some(e) = entries_for_activate.get(*ix) {
