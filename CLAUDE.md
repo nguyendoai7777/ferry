@@ -64,7 +64,7 @@ node packaging/icons/gen-icons.mjs # vẽ lại icon app (png hicolor, .ico, .ic
   Đổi mã theo OS ⇒ thêm `cargo clippy -p ferry-core -p ferry-daemon --all-targets --target x86_64-pc-windows-msvc` (và
   `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`; đặt `LIBSQLITE3_SYS_USE_PKG_CONFIG=1`
   cho lệnh chéo (bẫy SQLite bên dưới).
-- `ferry` lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `ferry-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
+- `ferry` chạy tay ⇒ mở cửa sổ ngay (`--autostart` thì chỉ nằm ở khay); lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `ferry-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
 
 Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb forward tcp:18080 tcp:8080`, nhập tay `127.0.0.1:18080`).
 

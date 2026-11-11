@@ -1,8 +1,8 @@
 //! Tiến trình nền `ferry`: khay, IPC, bật cửa sổ `ferry-ui`, chạy hàng đợi gửi sang điện thoại (engine trên runtime tokio
 //! 2 luồng). Không GPU, không framework UI ("RAM là tính năng", `CLAUDE.md` mục Bố cục).
 //!
-//! `ferry` lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát. `ferry --autostart` (OS bật lúc đăng
-//! nhập, `autostart.rs`) gặp instance đã chạy thì thoát im lặng, không mở cửa sổ.
+//! `ferry` chạy tay ⇒ mở cửa sổ ngay; lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát.
+//! `ferry --autostart` (OS bật lúc đăng nhập, `autostart.rs`) chỉ nằm ở khay, gặp instance đã chạy thì thoát im lặng.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -115,6 +115,11 @@ fn main() -> ExitCode {
         };
         let engine = engine::spawn(&rt, cfg, sinks);
         ipc_server::spawn(listener, waker.clone(), engine.clone()).map_err(|e| format!("ipc server: {e}"))?;
+        // Người dùng tự mở app ⇒ hiện cửa sổ ngay (không thì tưởng app không chạy, icon khay dễ bị bỏ qua);
+        // OS bật lúc đăng nhập (`--autostart`) ⇒ chỉ nằm ở khay.
+        if !from_autostart {
+            waker.send(Event::OpenWindow);
+        }
         Daemon::new(I18n::new(language), waker, engine, &rt)
     });
     runtime.shutdown_timeout(Duration::from_secs(1));
