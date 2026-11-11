@@ -1,10 +1,11 @@
 //! Icon khay + menu, chung mọi OS: chữ qua i18n, icon vẽ bằng mã theo [`TrayMode`]. Phần gắn vào OS: `tray-icon` trên
 //! Windows / macOS ([`Tray`] dưới đây), StatusNotifierItem tự viết trên Linux (`platform/linux/sni.rs`).
 //!
-//! Ba trạng thái (gd1_07): rảnh = khung điện thoại; đang gửi = màn hình đầy dần từ đáy theo phần tư (≥ một phần tư);
-//! cần chú ý (cần ghép lại / hết chỗ) = chấm tròn góc trên phải, cắt một vòng trong suốt quanh chấm cho tách khỏi khung.
-//! Icon tạm, chờ bộ icon (`plan/_backlog.md`). macOS ảnh template (đen + alpha, OS tự đổi theo thanh menu sáng / tối);
-//! Windows màu nhấn của app, chấm cam; Linux gần trắng (thanh trên GNOME luôn tối), chấm cam.
+//! Ba trạng thái: rảnh = máy bay giấy (cùng dáng icon app, `packaging/icons/gen-icons.mjs`): cánh trên + sống gấp đậm, cánh
+//! dưới nhạt, các mặt gấp cách nhau một khe trong suốt; đang gửi = máy bay mờ, phần đã gửi đậm dần từ đuôi lên mũi theo
+//! phần tư (≥ một phần tư); cần chú ý (cần ghép lại / hết chỗ) = chấm tròn góc dưới phải, cắt một vòng trong suốt quanh chấm.
+//! macOS ảnh template (đen + alpha, OS tự đổi theo thanh menu sáng / tối); Windows xanh của icon app, chấm cam; Linux gần
+//! trắng (thanh trên GNOME luôn tối), chấm cam.
 
 use ferry_core::i18n::I18n;
 
@@ -78,7 +79,7 @@ fn quarters(percent: u8) -> u8 {
     percent.min(100).div_ceil(25).max(1)
 }
 
-/// Màu khung + màu chấm "cần chú ý".
+/// Màu máy bay + màu chấm "cần chú ý".
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub frame: [u8; 3],
@@ -89,58 +90,92 @@ pub struct Palette {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const TEMPLATE: Palette = Palette { frame: [0, 0, 0], badge: [0, 0, 0] };
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const WINDOWS: Palette = Palette { frame: [0x00, 0x5c, 0xbb], badge: [0xf0, 0x8a, 0x00] };
+pub const WINDOWS: Palette = Palette { frame: [0x4d, 0x6b, 0xfe], badge: [0xf0, 0x8a, 0x00] };
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub const LINUX: Palette = Palette { frame: [0xf2, 0xf2, 0xf2], badge: [0xff, 0x9a, 0x1f] };
 
-/// Khung điện thoại đứng: viền bo góc dày ~1/12 cạnh + chấm ở đáy; thêm phần màn đã đầy / chấm chú ý theo `mode`.
-/// RGBA thẳng (không nhân trước alpha).
+/// Các mặt gấp của máy bay trong lưới 48 (mũi phải-trên), thứ tự vẽ: cánh trên, cánh dưới, sống gấp — cùng toạ độ với icon
+/// app. Mặt vẽ sau khoét mặt vẽ trước một khe. Kèm độ đậm (alpha) của mặt.
+const FACES: [(&[(f32, f32)], f32); 3] = [
+    (&[(42.0, 7.0), (6.0, 21.0), (18.0, 26.0)], 1.0),
+    (&[(42.0, 7.0), (18.0, 26.0), (35.0, 35.0)], 0.55),
+    (&[(42.0, 7.0), (18.0, 26.0), (21.0, 37.0), (26.0, 31.0)], 1.0),
+];
+/// Khung bao máy bay trong lưới 48: x 6..42, y 7..37.
+const PLANE_W: f32 = 36.0;
+const PLANE_CENTER: (f32, f32) = (24.0, 22.0);
+/// Trục bay (đuôi ⇒ mũi) để tô tiến độ gửi.
+const TAIL: (f32, f32) = (8.0, 33.0);
+const NOSE: (f32, f32) = (42.0, 7.0);
+/// Độ đậm phần chưa gửi khi đang gửi.
+const PENDING_ALPHA: f32 = 0.3;
+
+/// Khoảng cách có dấu (đơn vị lưới 48) tới đa giác lồi, âm = bên trong; xấp xỉ bằng max các cạnh (đủ cho khử răng cưa).
+fn polygon_distance(pts: &[(f32, f32)], x: f32, y: f32) -> f32 {
+    let area: f32 = (0..pts.len())
+        .map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            a.0 * b.1 - b.0 * a.1
+        })
+        .sum();
+    let sign = if area < 0.0 { -1.0 } else { 1.0 };
+    (0..pts.len())
+        .map(|i| {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            let len = (b.0 - a.0).hypot(b.1 - a.1);
+            sign * ((x - a.0) * (b.1 - a.1) - (y - a.1) * (b.0 - a.0)) / len
+        })
+        .fold(f32::MIN, f32::max)
+}
+
+/// Máy bay giấy ba mặt + phần đã gửi / chấm chú ý theo `mode`. RGBA thẳng (không nhân trước alpha).
 pub fn icon_rgba(size: u32, mode: TrayMode, palette: Palette) -> Vec<u8> {
     let s = size as f32;
-    let (w, h) = (s * 0.56, s * 0.88);
-    let (x0, y0) = ((s - w) / 2.0, (s - h) / 2.0);
-    let r = s * 0.14;
-    let stroke = (s / 12.0).max(1.5);
-    // Khoảng cách có dấu tới hình chữ nhật bo góc (âm = bên trong).
-    let sdf = |px: f32, py: f32, inset: f32| {
-        let (hw, hh, rr) = (w / 2.0 - inset, h / 2.0 - inset, (r - inset).max(0.0));
-        let dx = (px - (x0 + w / 2.0)).abs() - (hw - rr);
-        let dy = (py - (y0 + h / 2.0)).abs() - (hh - rr);
-        dx.max(0.0).hypot(dy.max(0.0)) + dx.max(dy).min(0.0) - rr
-    };
+    // Điểm ảnh trên một đơn vị lưới 48: máy bay rộng ~0,94 cạnh.
+    let k = s * 0.94 / PLANE_W;
+    // Khe giữa các mặt: 1,5 / 48 như icon app, nhưng không mảnh hơn một điểm ảnh (cỡ 16 vẫn tách được).
+    let gap = (1.5 * k).max(1.0);
     let cover = |d: f32| (0.5 - d).clamp(0.0, 1.0);
-    let dot = (s / 2.0, y0 + h - stroke * 2.2, stroke * 0.9);
-    // Màn hình: trong khung, chừa khe một nét, trên chấm đáy.
-    let gap = stroke * 2.0;
-    let (screen_top, screen_bottom) = (y0 + gap, dot.1 - dot.2 - stroke * 0.8);
-    let fill_from = match mode {
-        TrayMode::Sending { percent } => {
-            Some(screen_bottom - (screen_bottom - screen_top) * f32::from(quarters(percent)) / 4.0)
-        }
+    let done = match mode {
+        // Gửi xong (đủ bốn phần tư) ⇒ cả máy bay đậm như lúc rảnh, không để viền mềm làm mờ mũi.
+        TrayMode::Sending { percent } if quarters(percent) < 4 => Some(f32::from(quarters(percent)) / 4.0),
         _ => None,
     };
+    let axis = (NOSE.0 - TAIL.0, NOSE.1 - TAIL.1);
+    let axis_len2 = axis.0 * axis.0 + axis.1 * axis.1;
     let badge = (mode == TrayMode::Attention).then(|| {
         let br = s * 0.19;
-        (x0 + w - br * 0.5, y0 + br * 1.05, br)
+        (s - br * 1.05, s - br * 1.05, br)
     });
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
         for x in 0..size {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            let ring = cover(sdf(px, py, 0.0)) - cover(sdf(px, py, stroke));
-            let mut a = ring.max(cover((px - dot.0).hypot(py - dot.1) - dot.2));
-            if let Some(top) = fill_from {
-                let inside = cover(sdf(px, py, gap));
-                let rows = (py - top + 0.5).clamp(0.0, 1.0) * (screen_bottom - py + 0.5).clamp(0.0, 1.0);
-                a = a.max(inside * rows);
+            // Toạ độ lưới 48.
+            let (gx, gy) = (PLANE_CENTER.0 + (px - s / 2.0) / k, PLANE_CENTER.1 + (py - s / 2.0) / k);
+            // Khoảng cách theo điểm ảnh tới từng mặt.
+            let d: Vec<f32> = FACES.iter().map(|(pts, _)| polygon_distance(pts, gx, gy) * k).collect();
+            let mut a = 0.0f32;
+            for (i, (_, weight)) in FACES.iter().enumerate() {
+                let mut c = cover(d[i]);
+                for &later in &d[i + 1..] {
+                    c *= 1.0 - cover(later - gap);
+                }
+                a += c * weight;
+            }
+            if let Some(done) = done {
+                // Vị trí dọc trục bay (0 = đuôi, 1 = mũi), viền mềm khoảng một điểm ảnh.
+                let t = ((gx - TAIL.0) * axis.0 + (gy - TAIL.1) * axis.1) / axis_len2;
+                let soft = 1.0 / (k * axis_len2.sqrt());
+                let sent = ((done - t) / soft + 0.5).clamp(0.0, 1.0);
+                a *= PENDING_ALPHA + (1.0 - PENDING_ALPHA) * sent;
             }
             let mut rgb = palette.frame;
             if let Some((bx, by, br)) = badge {
-                let d = (px - bx).hypot(py - by);
-                let disc = cover(d - br);
-                // Vòng trống quanh chấm (dày ~ một nét) xoá phần khung bên dưới.
-                let cut = cover(d - br - stroke);
-                a = a * (1.0 - cut) + disc;
+                let dist = (px - bx).hypot(py - by);
+                let disc = cover(dist - br);
+                // Vòng trống quanh chấm (dày bằng khe) xoá phần máy bay bên dưới.
+                a = a * (1.0 - cover(dist - br - gap)) + disc;
                 if disc > 0.0 {
                     rgb = palette.badge;
                 }
@@ -294,31 +329,40 @@ mod tests {
         rgba[(y * n + x) * 4 + 3]
     }
 
+    fn ink(rgba: &[u8]) -> u32 {
+        rgba.chunks(4).map(|c| u32::from(c[3])).sum()
+    }
+
     #[test]
-    fn idle_icon_has_transparent_corners_and_a_hollow_screen() {
+    fn idle_icon_is_a_plane_with_gaps_between_faces() {
         for size in [16, 22, 24, 32, 36, 48, 64] {
             let rgba = icon_rgba(size, TrayMode::Idle, TEMPLATE);
             let n = size as usize;
             assert_eq!(rgba.len(), n * n * 4);
-            assert_eq!(alpha(&rgba, n, 0, 0), 0, "corner, size {size}");
-            assert_eq!(alpha(&rgba, n, n / 2, n / 2), 0, "screen is hollow, size {size}");
-            assert!((0..n).any(|x| alpha(&rgba, n, x, n / 2) == 255), "frame edge is solid, size {size}");
+            // Góc trên trái + dưới trái trống (máy bay chéo lên phải).
+            assert_eq!(alpha(&rgba, n, 0, 0), 0, "top-left, size {size}");
+            assert_eq!(alpha(&rgba, n, 0, n - 1), 0, "bottom-left, size {size}");
+            assert!(rgba.chunks(4).any(|c| c[3] == 255), "solid wing, size {size}");
+            // Cánh dưới nhạt hơn: có điểm ảnh độ đậm vừa (không chỉ viền khử răng cưa).
+            let mid = rgba.chunks(4).filter(|c| (120..=160).contains(&c[3])).count();
+            assert!(mid >= n / 2, "lighter lower wing, size {size}: {mid}");
         }
     }
 
     #[test]
-    fn sending_fills_the_screen_from_the_bottom() {
-        let n = 48usize;
-        let ink =
-            |p| icon_rgba(n as u32, TrayMode::Sending { percent: p }, TEMPLATE).chunks(4).filter(|c| c[3] > 0).count();
-        let idle = icon_rgba(n as u32, TrayMode::Idle, TEMPLATE).chunks(4).filter(|c| c[3] > 0).count();
-        assert!(ink(0) > idle, "sending shows at least a quarter");
-        assert!(ink(50) > ink(10));
-        assert!(ink(100) > ink(50));
-        let half = icon_rgba(n as u32, TrayMode::Sending { percent: 50 }, TEMPLATE);
-        // Giữa màn, hơi dưới tâm: đã đầy; gần đỉnh màn: còn trống.
-        assert!(alpha(&half, n, n / 2, n / 2 + n / 16) > 200);
-        assert_eq!(alpha(&half, n, n / 2, n / 4), 0);
+    fn sending_darkens_the_plane_from_tail_to_nose() {
+        let n = 48u32;
+        let at = |p| icon_rgba(n, TrayMode::Sending { percent: p }, TEMPLATE);
+        let idle = icon_rgba(n, TrayMode::Idle, TEMPLATE);
+        assert!(ink(&at(0)) < ink(&at(50)));
+        assert!(ink(&at(50)) < ink(&at(100)));
+        assert_eq!(at(100), idle, "all sent = full plane");
+        // Một phần tư: đuôi (cánh trên gần mép trái) đã đậm, mũi còn mờ.
+        let q = at(10);
+        let (tail_x, tail_y) = ((10.0 - 24.0) * 48.0 * 0.94 / 36.0 + 24.0, (21.5 - 22.0) * 48.0 * 0.94 / 36.0 + 24.0);
+        assert!(alpha(&q, 48, tail_x as usize, tail_y as usize) > 200);
+        let (nose_x, nose_y) = ((38.0 - 24.0) * 48.0 * 0.94 / 36.0 + 24.0, (10.5 - 22.0) * 48.0 * 0.94 / 36.0 + 24.0);
+        assert!(alpha(&q, 48, nose_x as usize, nose_y as usize) < 120);
     }
 
     #[test]
@@ -329,5 +373,8 @@ mod tests {
         assert!(orange > 10, "{orange}");
         let idle = icon_rgba(n as u32, TrayMode::Idle, WINDOWS);
         assert_ne!(rgba, idle);
+        // Chấm ở góc dưới phải, góc trên phải (mũi máy bay) không đổi.
+        assert_eq!(alpha(&rgba, n, n - 3, n - 3), 255);
+        assert_eq!(&rgba[..n * 4 * 4], &idle[..n * 4 * 4]);
     }
 }

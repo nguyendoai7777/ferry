@@ -7,7 +7,7 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 
 - **Remote git** — lý do: repo khởi tạo 11/11/2026 chỉ có ở máy; tạo repo trên GitHub là việc của chủ dự án. Có URL thì thêm
   vào bảng repo của `init.sh` / `init.ps1` gốc (`ferry` kéo `materiant`).
-- **Tên hiển thị + icon của app** — lý do: chờ chủ dự án chốt. Tạm dùng "Ferry" qua khoá i18n `app.name`.
+- **Tên hiển thị của app** — lý do: chờ chủ dự án chốt. Tạm dùng "Ferry" qua khoá i18n `app.name`. Icon đã chốt 11/11/2026: máy bay giấy ba mặt (`packaging/icons/gen-icons.mjs`, khay `crates/daemon/src/tray.rs`).
 - **`507` không nói được "cần thêm N GB"** (gd1_04 mục 10) — lý do: `info` không có chỗ trống (PROTOCOL 6.3); thêm trường
   `free` hoặc header vào `507` là đổi hợp đồng (W-1) — chờ chủ dự án. PC đã sẵn `PauseReason::NoSpace { shortBy }`.
 - **gd1_05 C4 — điện thoại thật hiện trong ≤ 5 s** — lý do: cần điện thoại Android thật cùng WiFi (emulator không quảng
@@ -18,7 +18,7 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **Keychain macOS hỏi quyền sau khi cập nhật bản chưa ký** (gd1_06 mục 10) — lý do: cần chứng chỉ ký (trả phí, D-21).
 - **gd1_07 C5 `[owner-qa]` — icon khay trên nền sáng / tối cả 3 OS** — lý do: cần mắt chủ dự án + máy Windows / macOS (KDE
   nền sáng). Icon Linux gần trắng (`#f2f2f2`) có thể mất trên thanh sáng; Windows xanh + chấm cam; macOS template. Xem 3
-  trạng thái Rảnh / Đang gửi / Cần chú ý. Thiết kế icon thật chờ mục "Tên hiển thị + icon".
+  trạng thái Rảnh / Đang gửi / Cần chú ý. Icon khay đã là máy bay giấy (11/11/2026), đang gửi = đậm dần đuôi ⇒ mũi.
 - **gd1_07 C4 trên macOS** — đo `footprint -p <pid>` lúc rảnh (mốc gd1_01 ≈ 10 MB); Linux đã đo: RssAnon 1,9 MB, 0 CPU.
 - **gd1_12 C2 `[owner-qa]` — bật "Khởi động cùng hệ thống" rồi đăng nhập lại ⇒ có khay** — lý do: cần đăng xuất / đăng
   nhập máy thật (Windows / macOS / GNOME). Bản debug ghi mục `ferry.dev`; bản cài ghi `ferry`. Tắt lại ⇒ mục bị gỡ.
