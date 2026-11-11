@@ -11,6 +11,24 @@
 | Phụ thuộc mới | thông báo hệ thống (`notify-rust` MIT/Apache hoặc API OS trực tiếp — soát Linux không kéo `libdbus`) |
 | File đụng tới | MỚI `crates/daemon/src/{engine,tray_state,notify}.rs`; SỬA `crates/core/src/ipc.rs`, `crates/daemon/src/main.rs` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_05 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_05 -->
+
+- **Vòng lặp discovery mẫu**: `crates/core/examples/discover.rs` — `mdns::Browser::next()` ⇒ `Devices::announce` /
+  `withdraw`; ngủ tới `Devices::next_deadline()` (không poll) ⇒ `tick(now)` (phát `Lost` sau 30 s) + `due_probes(now)` ⇒
+  `discovery::connect(id, &devices.addresses(id), token)` ⇒ `info_ok` / `connect_failed`. Bê vào runtime tokio của `mws`.
+- **Sự kiện**: mọi hàm của `Devices` trả `Vec<DeviceEvent>` (`Seen`, `Lost`, `AddressChanged`, `StateChanged`) ⇒ gộp vào
+  snapshot. Runner (gd1_04): lỗi mạng ở một địa chỉ ⇒ `Devices::address_failed(id, addr)` rồi `connect` lại; không địa chỉ
+  nào trả lời ⇒ `connect_failed` (⇒ Offline, thử lại sau `PROBE_INTERVAL` 60 s); `401` ⇒ `unauthorized`.
+- **Mạng đổi** ⇒ `Devices::set_local_interfaces(address::local_interfaces())` (đổi thứ tự địa chỉ); ghi
+  `config.devices = devices.to_config()` khi địa chỉ / tên của máy đã ghép đổi.
+- **Đo C5 gd1_05** (`examples/discover`, release, macOS): mDNS thêm ~0,1 MB footprint, CPU ≈ 0 % — C4 ở đây so lại trên
+  `mws` thật (mốc 10 MB). `mdns::IP_CHECK_INTERVAL_SECS` = 15 s (soát interface của `mdns-sd`); thấy đánh thức nhiều thì nâng.
+- **Khớp gd1_04**: `discovery::connect` ⇒ `Connected { client, info, addr }` ⇒ `Link::new(client, &info)`; `TransferEvent::
+  ConnectionLost{addr}` ⇒ `Devices::address_failed(id, addr)` rồi `connect` lại.
+- **UI**: `Device::newer_api`, `Device::features` (`dirs`) cần vào snapshot (gd1_09 hiện chữ "cập nhật app trên máy tính").
+
 ## 0. Bàn giao từ media-wireless-sync-gd1_04 (11/11/2026)
 
 <!-- handoff: media-wireless-sync-gd1_04 -->

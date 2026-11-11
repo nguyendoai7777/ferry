@@ -71,4 +71,7 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   `LIBSQLITE3_SYS_USE_PKG_CONFIG=1 cargo clippy … --target …`. Không đặt biến này cho build thật.
 - **Hàng đợi** (`queue`, gd1_03): `<data_dir>/queue.sqlite3`, WAL. Đổi schema ⇒ thêm phần tử cuối vào `MIGRATIONS`
   của `queue/store.rs`, không sửa bản cũ; DB của bản mới hơn ⇒ `StoreError::NewerSchema`, không đụng.
+- **Dò mDNS** (`discovery`, gd1_05): test `--test discovery` C2 chạy mDNS thật trong tiến trình (cần interface ngoài
+  loopback, không có thì tự bỏ qua). Kiểm điện thoại thật: `cargo run -p mws-core --example discover`. Link-local cần
+  `scope_id` (index interface nhận bản ghi); config lưu dạng `[fe80::x%en0]:port` (tên, không index — index đổi sau khởi động).
 - RSS của `mws` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

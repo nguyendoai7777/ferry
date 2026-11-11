@@ -791,3 +791,34 @@ pub fn loopback(family: Family, port: u16) -> SocketAddr {
         Family::V6 => SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
     }
 }
+
+/// Mạng chỉ IPv6 (gd1_05, C-W3b): khối `impl` riêng ở cuối tệp để task khác thêm nút không giẫm nhau.
+impl FakePhone {
+    /// Chỉ nghe `[::1]`. `v4()` trả `127.0.0.1` **cùng cổng mà không ai nghe** (địa chỉ chết — nối bị từ chối);
+    /// `info.addresses` vẫn liệt kê cả `127.0.0.1` như điện thoại thật có IPv4 mà mạng không đi được.
+    /// `None` khi máy không có IPv6 loopback.
+    pub async fn start_v6_only() -> Option<Self> {
+        let l6 = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.ok()?;
+        let v6 = l6.local_addr().unwrap();
+        let state = Arc::new(Mutex::new(State {
+            tokens: HashMap::new(),
+            fails: 0,
+            locked_until: None,
+            sessions: HashMap::new(),
+            files: Vec::new(),
+            next_id: 0,
+            clock: 1_762_761_600_000,
+            free_space: u64::MAX / 2,
+            features: vec!["ipv6".into(), "dirs".into()],
+            legacy_info: false,
+            discard_data: false,
+            cut_after: None,
+            fail_next: None,
+            port: v6.port(),
+        }));
+        let connections = Arc::new(AtomicU64::new(0));
+        let tasks = vec![tokio::spawn(accept_loop(l6, state.clone(), connections.clone()))];
+        let v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v6.port());
+        Some(Self { state, v4, v6: Some(v6), tasks, connections })
+    }
+}

@@ -11,8 +11,12 @@ publish.workspace = true
 dirs = "6"
 # `clientName` mặc định (PROTOCOL 6.3): tên máy. Apache-2.0.
 gethostname = "1"
+# Interface của PC (subnet, prefix /64, tên ⇄ index cho link-local) — thứ tự địa chỉ PROTOCOL 6.2. MIT/BSD-3.
+if-addrs = "0.15"
 interprocess.workspace = true
 log.workspace = true
+# Dò `_vpsync._tcp` (PROTOCOL 6.2): một luồng riêng, không runtime async; A + AAAA kèm interface nhận. MIT/Apache.
+mdns-sd = "0.21"
 # Mã hoá tên tệp / thư mục trong header (PROTOCOL 6.1, 6.9). MIT/Apache.
 percent-encoding = "2"
 # Client HTTP v1 (PROTOCOL 6): không TLS, không HTTP/2, không proxy hệ thống; `stream` cho thân PATCH đọc dần từ đĩa. MIT/Apache.
@@ -22,7 +26,7 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sys-locale = "0.3"
-# Runner upload (`transfer`, gd1_04): đọc tệp nguồn, `watch` / `mpsc`, đồng hồ backoff + nhịp tiến độ, `select!`.
+# Runner upload (`transfer`, gd1_04) + happy eyeballs (`discovery`, gd1_05): đọc tệp nguồn, `watch` / `mpsc`, đồng hồ backoff + nhịp tiến độ, `select!`.
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 # `ReaderStream`: thân PATCH đọc từng khúc nhỏ từ tệp, không đọc cả khúc 32 MB vào RAM. MIT.
 tokio-util = { version = "0.7", default-features = false, features = ["io"] }
@@ -37,7 +41,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dev-dependencies]
 tempfile = "3"
 # Server giả `tests/fake_phone` (TCP thô) + test async.
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints]
 workspace = true

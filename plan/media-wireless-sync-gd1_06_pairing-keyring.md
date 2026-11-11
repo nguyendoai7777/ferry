@@ -11,6 +11,21 @@
 | Phụ thuộc mới | `keyring` (MIT/Apache; Linux qua Secret Service — soát cây phụ thuộc không kéo `libdbus` LGPL, dùng backend thuần Rust nếu có) |
 | File đụng tới | MỚI `crates/core/src/pairing.rs`; SỬA `crates/core/src/config.rs` (danh sách thiết bị đã ghép: `id`, tên hiển thị, địa chỉ cuối) |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_05 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_05 -->
+
+- **Đã có sẵn**: `device::Devices` (sổ thiết bị) — `paired(id, now)` sau khi token vào kho khoá (⇒ `Paired`, hẹn `info`
+  ngay), `forget(id)` (⇒ `Discovered` nếu còn thấy qua mDNS, không thì ra khỏi sổ), `unauthorized(id)` (⇒ `NeedsRepair`),
+  `to_config()` ⇒ `Vec<PairedDevice>` (địa chỉ đã xếp, link-local ghi `%en0`) để ghi `config.devices`; `from_config` nạp
+  lại ở `Paired`. Trạng thái nằm ở `Device::state`, không ở config.
+- **Địa chỉ để ghép**: `Devices::addresses(id)` (đã xếp, địa chỉ thắng lên đầu) ⇒ `discovery::connect(id, &addrs, None)`
+  trả `Connected { client, info, addr }` — dùng `client.pair(..)` trên chính client thắng. Nhập tay: `address::parse_address`
+  ⇒ `discovery::probe(addr)` ⇒ `Devices::info_ok(&info, addr, now)` (vào sổ ở `Discovered`).
+- **Bẫy**: `Devices` không giữ token (chỉ biết có / không qua trạng thái) — token ở `pairing` + kho khoá; `connect` nhận
+  `Option<&Secret>`.
+- **Soát lại**: `cargo test -p mws-core device::` và `--test discovery`; mục 9 của `plan/media-wireless-sync-gd1_05_discovery-devices.md`.
+
 ## 0. Bàn giao từ media-wireless-sync-gd1_02 (11/11/2026)
 
 <!-- handoff: media-wireless-sync-gd1_02 -->

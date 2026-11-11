@@ -10,3 +10,6 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **Tên hiển thị + icon của app** — lý do: chờ chủ dự án chốt. Tạm dùng "Media Wireless Sync" qua khoá i18n `app.name`.
 - **`507` không nói được "cần thêm N GB"** (gd1_04 mục 10) — lý do: `info` không có chỗ trống (PROTOCOL 6.3); thêm trường
   `free` hoặc header vào `507` là đổi hợp đồng (W-1) — chờ chủ dự án. PC đã sẵn `PauseReason::NoSpace { shortBy }`.
+- **gd1_05 C4 — điện thoại thật hiện trong ≤ 5 s** — lý do: cần điện thoại Android thật cùng WiFi (emulator không quảng
+  bá mDNS ra LAN). Bật Sync WiFi trên app `video-player` rồi `cargo run -p mws-core --example discover`; xem mục 9 của
+  `plan/media-wireless-sync-gd1_05_discovery-devices.md`.
