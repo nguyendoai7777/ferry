@@ -19,6 +19,10 @@ materiant.workspace = true
 devtool.workspace = true
 futures.workspace = true
 log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Ngày sửa theo múi giờ máy (đã có trong cây qua GPUI).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [lints]
 workspace = true

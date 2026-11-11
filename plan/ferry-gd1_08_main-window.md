@@ -2,7 +2,7 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Trạng thái | ☐ |
+| Trạng thái | ✅ (11/11/2026) |
 | Repo | ferry |
 | Model | sonnet |
 | Cỡ | L — ~1100 dòng (thêm `PhoneBrowser`, W-4) |
@@ -72,5 +72,19 @@ Khoá i18n `main.*`, `queue.*`, `state.*`, `browser.*`.
 - C-W3. Thả một thư mục 2 cấp có cả `.txt` ⇒ một lô, đúng số video, dòng bỏ qua đúng số. `[sonnet-run]`
 
 ## 8. Nợ chuyển task khác
+- gd1_09: nút "Thêm điện thoại" phát `MainEvent::AddPhone` (`views/main_window.rs`); `main.rs` chưa đăng ký nghe — task 09 nối vào màn của nó.
+- gd1_11: chế độ `BrowserMode::Library` đã có (không thanh dưới), thiếu nút "Tải về máy" + lệnh `Download` (IPC của gd1_10), thả / dán vào thư mục đang mở.
+- Daemon chưa giữ bản `list` cache khi offline (spec ghi "daemon giữ"): UI giữ bản đệm theo phiên trong `Model::libraries`, mở lại cửa sổ khi điện thoại offline thì trống. Cần lệnh/biến thể IPC đọc cache ⇒ để gd1_10/11 quyết (không tự thêm).
+- Nút ⚙ cài đặt ở đầu cửa sổ: chưa có (gd1_12 sở hữu màn cài đặt).
+
 ## 9. Bàn giao thực tế
+- Làm bằng Sonnet-session (D-14), không tách subagent. Soát xanh trên worktree w3: `cargo build`, `clippy --all-targets -D warnings`, `cargo test` (core 120 + ui 13 + tích hợp), `cargo deny check licenses` đều xanh.
+- Mới: `core/src/browse.rs` (cây, thư mục ảo, sắp cột, breadcrumb; 8 test = C-W4a); ui: `model.rs` (kho + `apply_progress`), `daemon_link.rs` (đẩy vào `Entity<Model>`), `fmt.rs`, `ui_state.rs`, `assets.rs` (+2 icon `ferry-folder`, `ferry-video`), `views/{main_window,device_header,drop_zone,send_tray,queue_list,phone_browser/*}`. i18n thêm khoá `main.*`, `queue.*`, `state.*`, `browser.*`.
+- Quyết định (Sonnet chọn 11/11/2026): (1) trình duyệt đích mở **thay trang chính trong cùng cửa sổ**, không dialog — đơn giản, không cần chồng overlay; (2) thư mục đích lần trước lưu ở `<data_dir>/ui-state.json` (UI tự ghi) thay vì `config.json` vì daemon là bên duy nhất ghi config và `config.rs` đang do gd1_12 sửa; (3) pause/resume dùng nút chữ (materiant chưa có icon tạm dừng / tiếp tục); (4) ngày sửa theo múi giờ máy nhờ `chrono` (đã có sẵn trong cây phụ thuộc của GPUI, `default-features=false`).
+- Case: C1 ✓ (`queue_list::tests`), C-W4a ✓ (`browse::tests`), khay đúng số (`send_tray::tests`, một phần C-W4b), chọn nhiều Ctrl/Shift (`table::tests`). **Chưa chạy cửa sổ thật** (C2, C-W3, phần còn lại C-W4b với `fake_phone`, soát giao diện): Wayland không đặt được cửa sổ lên màn DELL và không muốn đè màn chủ dự án ⇒ `[owner-qa]`: `bash start.sh` rồi thả thư mục 3 video + 1 ảnh, bấm "Gửi sang điện thoại…" với điện thoại giả / thật.
+- Nhớ: GPUI gốc Rust 2024 bắt buộc hàm view trả `AnyElement` khi mượn `cx` hai lần; `Window::focus(&h, cx)` cần `cx`.
+
 ## 10. Đề xuất cải tiến
+1. [ux] Thả thư mục lớn: khay không biết số video / dung lượng thư mục (chỉ tên) — `send_tray.rs:known_size` — quét nền hoặc daemon trả `plan` trước khi gửi — người dùng thấy trước tổng cỡ — M — P3.
+2. [ux] Icon tạm dừng / tiếp tục / thư mục cho materiant (đang dùng nút chữ + 2 SVG riêng ở `ui/assets`) — `queue_list.rs` — thêm vào `IconName` — đồng bộ với app khác — S — P3.
+3. [ux] Daemon giữ cache `list` theo điện thoại để mở trình duyệt offline ngay từ đầu — xem mục 8 — M — P2 (gd1_10/11).

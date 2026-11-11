@@ -1,25 +1,28 @@
 //! Cửa sổ `ferry-ui` (GPUI + materiant). Chỉ vẽ trạng thái daemon `ferry` gửi qua IPC và gửi lệnh ngược lại — không mạng,
 //! không kho khoá, không SQLite (`CLAUDE.md` mục Bố cục). Đóng cửa sổ ⇒ tiến trình thoát, nhả GPU / RAM; daemon vẫn chạy.
 //!
-//! gd1_01: cửa sổ trống. Màn chính (vùng thả + hàng đợi) là gd1_08.
+//! gd1_08: màn chính (vùng thả + khay chờ + hàng đợi) và trình duyệt điện thoại; màn thêm điện thoại / cài đặt là gd1_09 / gd1_12.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod assets;
 mod daemon_link;
+mod fmt;
+mod model;
+mod ui_state;
 mod views;
+
+use std::rc::Rc;
 
 use ferry_core::i18n::I18n;
 use ferry_core::{VERSION, config, logging, paths};
-use materiant::gpui_kit::prelude::*;
-use materiant::gpui_kit::{
-    self, App, AppContext, Bounds, Context, IntoElement, Render, SharedString, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, px, size,
-};
-use materiant::theme::ActiveTheme;
+use materiant::gpui_kit::{self, App, AppContext, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use model::Model;
+use views::main_window::MainWindow;
 
 /// Cỡ mở đầu của cửa sổ chính, px logic.
-const WINDOW_SIZE: (f32, f32) = (720., 520.);
-const WINDOW_MIN_SIZE: (f32, f32) = (480., 360.);
+const WINDOW_SIZE: (f32, f32) = (860., 620.);
+const WINDOW_MIN_SIZE: (f32, f32) = (640., 460.);
 
 fn main() {
     let log_file = logging::init("ui");
@@ -33,14 +36,16 @@ fn main() {
         .language
         .resolve();
     let i18n = I18n::new(language);
+    let i18n = Rc::new(i18n);
     let link = daemon_link::connect();
+    let sender = link.as_ref().map(daemon_link::sender);
 
-    gpui_kit::application().with_assets(materiant::icon::Assets).run(move |cx: &mut App| {
+    gpui_kit::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         materiant::init(cx);
         devtool::init(cx);
 
         let title: SharedString = i18n.t("app.name").to_owned().into();
-        let placeholder: SharedString = i18n.t("window.placeholder").to_owned().into();
+        let model = cx.new(|_| Model::new(sender));
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -49,7 +54,10 @@ fn main() {
             app_id: Some("ferry".into()),
             ..materiant::window::window_options()
         };
-        let handle = match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| MainView { placeholder })) {
+        let handle = match gpui_kit::open_window(options, cx, |window, cx| {
+            let (model, i18n) = (model.clone(), i18n.clone());
+            cx.new(|cx| MainWindow::new(model, i18n, window, cx))
+        }) {
             Ok((handle, _)) => handle,
             Err(err) => {
                 // Bản phát hành không có console: log mới là chỗ đọc được lý do.
@@ -67,26 +75,8 @@ fn main() {
         .detach();
         cx.activate(true);
         if let Some(link) = link {
-            daemon_link::listen(link, handle, cx);
+            daemon_link::listen(link, model, handle, cx);
         }
     });
     log::info!("ferry-ui stopped");
-}
-
-struct MainView {
-    placeholder: SharedString,
-}
-
-impl Render for MainView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(colors.surface)
-            .text_color(colors.muted)
-            .child(self.placeholder.clone())
-    }
 }

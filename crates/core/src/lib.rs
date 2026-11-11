@@ -4,6 +4,7 @@
 //! Mọi module đã khai sẵn từ gd1_01 để task sau chỉ thêm mã vào tệp của mình, không giẫm `lib.rs`. Chủ của từng module
 //! ghi ở đầu tệp đó.
 
+pub mod browse;
 pub mod client;
 pub mod config;
 pub mod device;

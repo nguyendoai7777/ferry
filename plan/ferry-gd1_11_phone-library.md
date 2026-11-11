@@ -11,6 +11,17 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/ui/src/views/phone_library.rs`; SỬA `crates/ui/src/views/main_window.rs` (tab), `i18n/{vi,en}.toml` |
 
+## 0. Bàn giao từ ferry-gd1_08 (11/11/2026)
+
+<!-- handoff: ferry-gd1_08 -->
+
+- **Có sẵn**: `crates/ui/src/views/phone_browser/` — `PhoneBrowser::new(model, i18n, device, BrowserMode::Library, start_dir, window, cx)`; `selected_items()` trả `Vec<&LibraryItem>` đang chọn (Ctrl/Shift chọn nhiều), `destination()` = thư mục đang mở (`None` ở nhóm "Khác"), `refresh()`. Sự kiện hiện chỉ `Send` / `Cancel` của chế độ chọn đích — thêm biến thể `Download` / `DropPaths` khi cần.
+- Hàm thuần `ferry_core::browse` (`build_tree`, `list_entries`, `sort_entries`, `Location`) đã test; bảng + cây dùng `VirtualList` (D-17), hàng cao cố định.
+- `Model` (`crates/ui/src/model.rs`): `libraries` là cache theo phiên, `library(LibraryOp::List)` + `ModelEvent::Reply`. Lệnh `Download` của gd1_10 thêm vào `daemon_link`/`Model` tương tự `queue()`.
+- **Nợ sang đây**: nút "Tải về máy"; thả / dán vào thư mục đang mở (chế độ thư viện); tab trong `main_window.rs` (hiện `Page::Main | Browse` — thêm trang thư viện); mục tải về trong hàng đợi (`queue_list::build_rows` mới lọc `snapshot.uploads`).
+- **Bẫy**: click dòng bảng xử lý ở `on_mouse_down` (đọc phím bổ trợ) và bỏ lần `on_select` đi kèm bằng cờ `suppress_select`; Rust 2024 ⇒ hàm view mượn `cx` phải trả `AnyElement`.
+- Chưa ai chạy cửa sổ thật với điện thoại: soát bằng `start.sh` + emulator (PROTOCOL 7).
+
 ## 0. Bàn giao từ ferry-gd1_10 (11/11/2026)
 
 <!-- handoff: ferry-gd1_10 -->

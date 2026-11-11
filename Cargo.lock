@@ -1620,11 +1620,14 @@ dependencies = [
 name = "ferry-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "devtool",
  "ferry-core",
  "futures",
  "log",
  "materiant",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

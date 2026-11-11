@@ -1,12 +1,14 @@
 //! Nối daemon `ferry` qua IPC. Một luồng chặn ở `recv` rồi chuyển thông điệp vào vòng GPUI qua kênh async — không chia sẻ
 //! mutex với vòng vẽ. Daemon đóng kết nối (thoát từ khay) ⇒ cửa sổ thoát theo.
 //!
-//! Không có daemon (chạy `ferry-ui` thẳng khi dev) ⇒ vẫn mở cửa sổ, chỉ log cảnh báo.
+//! Không có daemon (chạy `ferry-ui` thẳng khi dev) ⇒ vẫn mở cửa sổ, chỉ log cảnh báo; nút gửi báo chưa nối được.
 
-use ferry_core::ipc::{ClientConnection, DaemonToUi, Role};
+use ferry_core::ipc::{ClientConnection, DaemonToUi, Role, Sender, UiToDaemon};
 use futures::StreamExt;
 use futures::channel::mpsc;
-use materiant::gpui_kit::{AnyWindowHandle, App, AppContext};
+use materiant::gpui_kit::{AnyWindowHandle, App, AppContext, Entity};
+
+use crate::model::Model;
 
 pub fn connect() -> Option<ClientConnection> {
     match ClientConnection::open(Role::Ui) {
@@ -18,12 +20,17 @@ pub fn connect() -> Option<ClientConnection> {
     }
 }
 
+/// Đầu ghi lệnh của kết nối (cho `Model`), lấy trước khi `listen` nhận quyền sở hữu phần đọc.
+pub fn sender(conn: &ClientConnection) -> Sender<UiToDaemon> {
+    conn.sender()
+}
+
 enum Incoming {
     Message(DaemonToUi),
     Closed,
 }
 
-pub fn listen(mut conn: ClientConnection, window: AnyWindowHandle, cx: &mut App) {
+pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: AnyWindowHandle, cx: &mut App) {
     let (tx, mut rx) = mpsc::unbounded();
     let spawned = std::thread::Builder::new().name("ipc-recv".into()).spawn(move || {
         loop {
@@ -57,13 +64,9 @@ pub fn listen(mut conn: ClientConnection, window: AnyWindowHandle, cx: &mut App)
                     });
                 }
                 Incoming::Message(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
-                Incoming::Message(DaemonToUi::Ok) => {}
-                // Kho trạng thái của cửa sổ dựng ở gd1_08 (hàng đợi, thiết bị); tới lúc đó chỉ ghi log.
-                Incoming::Message(DaemonToUi::Snapshot(s)) => {
-                    log::debug!("ipc: snapshot ({} devices, {} uploads)", s.devices.len(), s.uploads.len());
+                Incoming::Message(msg) => {
+                    model.update(cx, |model, cx| model.handle(msg, cx));
                 }
-                Incoming::Message(DaemonToUi::Progress(p)) => log::trace!("ipc: progress of {} item(s)", p.items.len()),
-                Incoming::Message(DaemonToUi::Reply { req, outcome }) => log::debug!("ipc: reply {req}: {outcome:?}"),
                 Incoming::Closed => {
                     log::info!("ipc: daemon is gone, quitting");
                     cx.update(|cx| cx.quit());
