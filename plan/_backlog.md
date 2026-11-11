@@ -26,3 +26,14 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
   cài, xem luật tường lửa "Ferry (mDNS)" trên mạng Public, gỡ cài) và Mac (`bash build.sh`, `Ferry.app` hỏi quyền mạng
   LAN, cửa sổ `ferry-ui` có lấy focus khi `LSUIElement`). Cả ba OS: cài trên máy sạch ⇒ dò điện thoại, gửi 1 tệp (gd1_14 C1).
 - **Icon nhúng trong exe Windows** (gd1_14 mục 10) — lý do: cần máy Windows kiểm resource; shortcut đã dùng `ferry.ico`.
+- **Chờ app điện thoại `video-player`** — lý do: việc ở repo điện thoại (session mobile), PC đã xong phần mình. Khi điện
+  thoại có thì thử thật trên vivo V2425A (`adb connect <ip>:5555`, `~/Android/Sdk/platform-tools/adb`):
+  - **W-7 duyệt bộ nhớ** (PROTOCOL §6.11): công tắc "Cho máy tính duyệt bộ nhớ" + quyền "Truy cập mọi tệp", khai `browse`,
+    route `GET /api/v1/dirs`, gốc `dir` = `/storage/emulated/0`. PC dựng cây từ `dirs` (`browse::FsCache`).
+  - **Server Sync WiFi tự bật lại**: lưu `sync_enabled`, bật lại service ở `Application.onCreate`,
+    `MY_PACKAGE_REPLACED`, `BOOT_COMPLETED`, `START_STICKY`; log tag `VpSync`. Gặp thật 11/11/2026: cài đè apk giết
+    tiến trình, mở lại app không mở cổng 8080 ⇒ PC báo lỗi mạng.
+  - **§6.10 danh sách cả lô** (`batch`, `X-Batch-*`, `503 awaiting_approval`, `410 declined`): phía PC chưa gửi
+    `X-Batch-*` / chưa xử lý `410` — làm khi điện thoại khai `batch`.
+  - **Mã thiết bị bền qua cài lại app** (HMAC của `ANDROID_ID`): cài lại app đổi `id` ⇒ PC đang dò thay thế qua địa chỉ
+    (`discovery::find_replacement`).
