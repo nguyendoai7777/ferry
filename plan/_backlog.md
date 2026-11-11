@@ -20,3 +20,5 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
   nền sáng). Icon Linux gần trắng (`#f2f2f2`) có thể mất trên thanh sáng; Windows xanh + chấm cam; macOS template. Xem 3
   trạng thái Rảnh / Đang gửi / Cần chú ý. Thiết kế icon thật chờ mục "Tên hiển thị + icon".
 - **gd1_07 C4 trên macOS** — đo `footprint -p <pid>` lúc rảnh (mốc gd1_01 ≈ 10 MB); Linux đã đo: RssAnon 1,9 MB, 0 CPU.
+- **gd1_12 C2 `[owner-qa]` — bật "Khởi động cùng hệ thống" rồi đăng nhập lại ⇒ có khay** — lý do: cần đăng xuất / đăng
+  nhập máy thật (Windows / macOS / GNOME). Bản debug ghi mục `ferry.dev`; bản cài ghi `ferry`. Tắt lại ⇒ mục bị gỡ.
