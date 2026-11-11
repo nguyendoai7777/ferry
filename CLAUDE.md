@@ -109,11 +109,15 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   **unicast** thì tới), (b) điện thoại chỉ quảng bá `_adb._tcp`, không có `_vpsync._tcp` (lỗi phía app, backlog). Cách
   phân biệt không cần sudo / adb: gửi truy vấn legacy unicast (socket UDP cổng ngẫu nhiên → `224.0.0.251:5353` và thẳng IP
   điện thoại, hỏi PTR `_services._dns-sd._udp.local`) ⇒ máy nào trả lời là còn thấy được dịch vụ nó khai; `tcpdump` cần
-  root. Quét: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần khi danh sách trống (`RESCAN_EVERY`),
-  daemon gộp lệnh trùng + cách nhau ≥ 10 s; /24 quanh IP của PC, nối TCP 600 ms, 64 cùng lúc, chỉ nhận `info.app` =
-  `protocol::APP` (~2,4 s cho /24). Máy quét thấy đi đường như địa chỉ tay (`apply_untrusted_info`: máy có token thì
+  root. **Khác subnet** (WiFi công ty 11/11/2026: `172.16.0.x` ↔ `172.16.4.x`, mỗi bên `/23` — nối thẳng IP + PIN được
+  vì qua router, mDNS thì không bao giờ qua router) ⇒ quét subnet của PC cũng không thấy: phải quét `/24` của IP điện thoại
+  từng dùng. Quét đầy đủ: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần khi danh sách trống
+  (`RESCAN_EVERY`), daemon gộp lệnh trùng + cách nhau ≥ 10 s; subnet của PC trọn tới `/22` + `/24` quanh IP điện thoại từng
+  dùng (`Engine::phone_hints`: sổ thiết bị + địa chỉ tay). Quét thưa: máy đã ghép nối hỏng mọi địa chỉ ⇒ `maybe_offline_scan`
+  chỉ dải `/24` của máy đó, ≥ 5 phút một lần (`OFFLINE_SCAN_EVERY`). Nối TCP 600 ms, 128 cùng lúc (macOS trần 256 fd),
+  chỉ nhận `info.app` = `protocol::APP` (/24 ~1–2,4 s). Máy quét thấy đi đường như địa chỉ tay (`apply_untrusted_info`: máy có token thì
   nối lại kèm token, không thành NeedsRepair). Thử tay: `FERRY_SCAN=1 cargo run -p ferry-core --example discover`.
-  Điện thoại đã ghép mà đổi IP trên mạng chặn mDNS thì vẫn chỉ thử địa chỉ cũ (chưa quét nền — §6.2 cấm quét ngoài màn Thêm).
+  Điện thoại sang subnet chưa từng thấy thì chỉ còn nhập tay (không quét cả `172.16/12`).
 - **Vòng "đang dò" có vòng nền** (`add_phone::searching_spinner`): cung không xác định của `ProgressCircular` có khung chỉ
   ~10° — ở 24 px (hoặc lúc cửa sổ không vẽ lại) trông như gạch hồng lệch; chồng một `ProgressCircular` `value(0)` làm track.
 - **Tường lửa chặn mDNS** (W-6, `ferry_core::firewall`): Linux `ufw` bật (`/etc/ufw/ufw.conf` `ENABLED=yes`, đọc không cần root)

@@ -18,7 +18,7 @@ async fn main() {
     let t0 = Instant::now();
     let mut devices = Devices::from_config(&[], address::local_interfaces(), t0);
     if std::env::var_os("FERRY_SCAN").is_some() {
-        let targets = discovery::scan::targets(&address::local_interfaces(), address::DEFAULT_PORT);
+        let targets = discovery::scan::targets(&address::local_interfaces(), true, &[], address::DEFAULT_PORT);
         eprintln!("scanning {} hosts", targets.len());
         for (addr, info) in discovery::scan::scan(targets).await {
             println!("{addr} {} id={} features={:?}", info.name, info.id, info.features);

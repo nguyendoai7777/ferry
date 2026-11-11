@@ -153,6 +153,9 @@ struct Replaced {
     addr: SocketAddr,
 }
 
+/// Hai lượt quét thưa cho máy đã ghép Offline cách nhau ít nhất chừng này (PROTOCOL 6.2).
+const OFFLINE_SCAN_EVERY: Duration = Duration::from_secs(300);
+
 enum Internal {
     /// Nối thiết bị có token xong (`probe_device`).
     Connected {
@@ -220,6 +223,8 @@ enum Internal {
     /// Quét LAN dự phòng xong (`discovery::scan`).
     Scanned {
         found: Vec<(SocketAddr, Info)>,
+        /// Lượt đầy đủ (màn Thêm điện thoại) hay lượt thưa (máy Offline).
+        full: bool,
     },
     /// `pkexec ufw allow …` xong (W-6).
     FirewallAllowed {
@@ -291,10 +296,17 @@ struct Engine {
     fw_allowing: bool,
     /// Vòng chính dựng lại `Browser` ở lượt kế (sau khi mở tường lửa).
     restart_mdns: bool,
-    /// Quét LAN dự phòng đang chạy (`PhoneOp::ScanLan`, PROTOCOL 6.2): các lệnh chờ chung lượt này.
-    scan_waiters: Option<Vec<(Outbox, u64)>>,
-    /// Lượt quét LAN xong gần nhất — lệnh tới sớm hơn `SCAN_MIN_INTERVAL_SECS` trả ngay.
+    /// Quét LAN dự phòng đang chạy (PROTOCOL 6.2): `Some(true)` = lượt đầy đủ của màn Thêm điện thoại, `Some(false)` =
+    /// lượt thưa cho máy đã ghép Offline.
+    scan_running: Option<bool>,
+    /// Lệnh `ScanLan` chờ lượt đầy đủ kế xong.
+    scan_waiters: Vec<(Outbox, u64)>,
+    /// Có lệnh `ScanLan` tới lúc lượt thưa đang chạy ⇒ chạy lượt đầy đủ ngay sau.
+    full_scan_wanted: bool,
+    /// Lượt đầy đủ xong gần nhất — lệnh tới sớm hơn `SCAN_MIN_INTERVAL_SECS` trả ngay.
     last_scan: Option<Instant>,
+    /// Lượt thưa (máy Offline) bắt đầu gần nhất — cách nhau ít nhất [`OFFLINE_SCAN_EVERY`].
+    last_offline_scan: Option<Instant>,
 }
 
 struct Subscriber {
@@ -357,8 +369,11 @@ impl Engine {
             mdns_found: false,
             fw_allowing: false,
             restart_mdns: false,
-            scan_waiters: None,
+            scan_running: None,
+            scan_waiters: Vec::new(),
+            full_scan_wanted: false,
             last_scan: None,
+            last_offline_scan: None,
         };
         if browser.is_some() {
             engine.firewall = firewall::detect(&engine.firewall_marker());
@@ -566,22 +581,20 @@ impl Engine {
                 None
             }
             PhoneOp::ScanLan => {
-                if let Some(waiters) = self.scan_waiters.as_mut() {
-                    waiters.push((outbox.clone(), req));
-                    return None;
+                match self.scan_running {
+                    Some(true) => {}
+                    Some(false) => self.full_scan_wanted = true,
+                    None => {
+                        let recent = self.last_scan.is_some_and(|t| {
+                            Instant::now().saturating_duration_since(t) < Duration::from_secs(SCAN_MIN_INTERVAL_SECS)
+                        });
+                        if recent {
+                            return Some(Ok(Outcome::Scanned { found: 0 }));
+                        }
+                        self.start_full_scan();
+                    }
                 }
-                if self.last_scan.is_some_and(|t| Instant::now().saturating_duration_since(t) < Duration::from_secs(SCAN_MIN_INTERVAL_SECS)) {
-                    return Some(Ok(Outcome::Scanned { found: 0 }));
-                }
-                self.refresh_locals();
-                let targets = scan::targets(&self.locals, address::DEFAULT_PORT);
-                log::info!("engine: LAN scan of {} hosts", targets.len());
-                self.scan_waiters = Some(vec![(outbox.clone(), req)]);
-                let tx = self.internal_tx.clone();
-                tokio::spawn(async move {
-                    let found = scan::scan(targets).await;
-                    let _ = tx.send(Internal::Scanned { found });
-                });
+                self.scan_waiters.push((outbox.clone(), req));
                 None
             }
             PhoneOp::AddAddress { address } => {
@@ -846,6 +859,63 @@ impl Engine {
         }
     }
 
+    /// IPv4 điện thoại từng dùng (sổ thiết bị + địa chỉ tay đã lưu) — gợi ý dải quét (PROTOCOL 6.2 dải 2).
+    fn phone_hints(&self, only_offline_paired: bool) -> Vec<std::net::IpAddr> {
+        let mut out: Vec<std::net::IpAddr> = self
+            .devices
+            .iter()
+            .filter(|d| !only_offline_paired || (d.state.has_token() && d.state != DeviceState::Online))
+            .flat_map(|d| self.devices.addresses(&d.id))
+            .map(|a| a.ip())
+            .filter(std::net::IpAddr::is_ipv4)
+            .collect();
+        if !only_offline_paired {
+            out.extend(
+                self.config
+                    .manual_addresses
+                    .iter()
+                    .filter_map(|t| address::parse_address(t, &self.locals).ok())
+                    .map(|a| a.ip())
+                    .filter(std::net::IpAddr::is_ipv4),
+            );
+        }
+        out
+    }
+
+    /// Lượt quét đầy đủ cho màn Thêm điện thoại: subnet của PC + dải điện thoại từng dùng.
+    fn start_full_scan(&mut self) {
+        self.refresh_locals();
+        let hints = self.phone_hints(false);
+        let targets = scan::targets(&self.locals, true, &hints, address::DEFAULT_PORT);
+        self.spawn_scan(targets, true);
+    }
+
+    /// Máy đã ghép nối hỏng ở mọi địa chỉ đã biết: thưa ([`OFFLINE_SCAN_EVERY`]) quét `/24` quanh các địa chỉ đó — điện
+    /// thoại ở subnet khác (qua router, mDNS không tới) đổi IP do DHCP vẫn tìm lại được.
+    fn maybe_offline_scan(&mut self) {
+        if self.scan_running.is_some() || self.last_offline_scan.is_some_and(|t| t.elapsed() < OFFLINE_SCAN_EVERY) {
+            return;
+        }
+        let hints = self.phone_hints(true);
+        if hints.is_empty() {
+            return;
+        }
+        self.last_offline_scan = Some(Instant::now());
+        self.refresh_locals();
+        let targets = scan::targets(&self.locals, false, &hints, address::DEFAULT_PORT);
+        self.spawn_scan(targets, false);
+    }
+
+    fn spawn_scan(&mut self, targets: Vec<SocketAddr>, full: bool) {
+        log::info!("engine: LAN scan ({}) of {} hosts", if full { "full" } else { "offline phones" }, targets.len());
+        self.scan_running = Some(full);
+        let tx = self.internal_tx.clone();
+        tokio::spawn(async move {
+            let found = scan::scan(targets).await;
+            let _ = tx.send(Internal::Scanned { found, full });
+        });
+    }
+
     /// `info` hỏi không token (địa chỉ tay, quét LAN) trả lời từ `addr`.
     fn apply_untrusted_info(&mut self, info: &Info, addr: SocketAddr, now: Instant) {
         let has_token = self.devices.get(&info.id).is_some_and(|d| d.state.has_token());
@@ -1093,6 +1163,7 @@ impl Engine {
                         log::debug!("engine: connect {id}: {e}");
                         let ev = self.devices.connect_failed(&id, now);
                         self.on_device_events(ev);
+                        self.maybe_offline_scan();
                     }
                 }
             }
@@ -1130,15 +1201,21 @@ impl Engine {
                 });
                 reply_to(&outbox, req, r);
             }
-            Internal::Scanned { found } => {
-                self.last_scan = Some(Instant::now());
+            Internal::Scanned { found, full } => {
+                self.scan_running = None;
                 log::info!("engine: LAN scan found {} phone(s)", found.len());
                 let count = u32::try_from(found.len()).unwrap_or(u32::MAX);
                 for (addr, info) in found {
                     self.apply_untrusted_info(&info, addr, now);
                 }
-                for (outbox, req) in self.scan_waiters.take().unwrap_or_default() {
-                    reply_to(&outbox, req, Ok(Outcome::Scanned { found: count }));
+                if full {
+                    self.last_scan = Some(Instant::now());
+                    for (outbox, req) in std::mem::take(&mut self.scan_waiters) {
+                        reply_to(&outbox, req, Ok(Outcome::Scanned { found: count }));
+                    }
+                }
+                if std::mem::take(&mut self.full_scan_wanted) {
+                    self.start_full_scan();
                 }
             }
             Internal::Probed { outbox, req, addr, result, remember } => {

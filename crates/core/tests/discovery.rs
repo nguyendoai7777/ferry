@@ -211,8 +211,7 @@ async fn lan_scan_finds_only_the_phone() {
     let html = canned_http("<html></html>", "200 OK").await;
 
     let start = Instant::now();
-    let found =
-        discovery::scan::scan(vec![closed, silent_addr, other_app, not_found, html, phone.v4()]).await;
+    let found = discovery::scan::scan(vec![closed, silent_addr, other_app, not_found, html, phone.v4()]).await;
     let took = start.elapsed();
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].0, phone.v4());

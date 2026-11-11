@@ -158,13 +158,20 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
   2. IPv6 global / ULA (`fc00::/7`) cùng prefix /64 với PC;
   3. IPv6 link-local `fe80::/10` kèm **scope id = interface PC đã nhận bản ghi mDNS đó**;
   4. mọi địa chỉ còn lại.
-- **Quét LAN dự phòng** (khi mạng không chuyển multicast giữa các máy WiFi — router / AP isolation, gặp 11/11/2026 — hoặc
-  điện thoại không quảng bá được): PC gọi `GET /api/v1/info` (§6.3, route sẵn có, không token) tới mọi IPv4 trong subnet
-  của interface PC, cổng mặc định `8080`. Nhận máy trả JSON đúng §6.3 với `app = "xmobile.videoplayer"` — từ đó như địa
-  chỉ nhập tay (`id`, tên, `addresses`). Nhẹ, có trần: mỗi interface tối đa một /24 quanh IP của PC (prefix ngắn hơn ⇒ chỉ
-  /24 đó), bỏ loopback / link-local `169.254/16`; nối TCP trước (hết giờ 600 ms), cổng mở mới gửi HTTP; tối đa 64 kết nối
-  cùng lúc. Chỉ chạy khi người dùng đang ở màn Thêm điện thoại (§4 mục 4): lúc mở màn rồi 15 s một lần khi danh sách còn trống;
-  không quét nền. IPv6 không quét (/64 quá rộng) — địa chỉ IPv6 lấy từ `info.addresses`. Điện thoại không cần làm gì thêm.
+- **Quét LAN dự phòng** (khi mDNS không tới: router / AP isolation không chuyển multicast giữa các máy WiFi — gặp
+  11/11/2026; PC và điện thoại khác subnet — mDNS không qua router, vd WiFi công ty `172.16.0.0/23` ↔ `172.16.4.0/23`;
+  hoặc điện thoại không quảng bá được): PC gọi `GET /api/v1/info` (§6.3, route sẵn có, không token), cổng mặc định
+  `8080`. Nhận máy trả JSON đúng §6.3 với `app = "xmobile.videoplayer"` — từ đó như địa chỉ nhập tay (`id`, tên,
+  `addresses`; máy đã ghép thì nối lại kèm token ở địa chỉ mới). Dải quét:
+  1. subnet IPv4 của mỗi interface PC, trọn subnet tới `/22` (prefix ngắn hơn ⇒ chỉ `/22` quanh IP của PC);
+  2. `/24` của mọi IPv4 điện thoại từng dùng (địa chỉ nhập tay, `info.addresses`, địa chỉ của máy đã ghép) — điện thoại
+     ở subnet khác mà PC nối thẳng được (qua router) đổi IP do DHCP vẫn tìm lại được.
+  Bỏ loopback / link-local `169.254/16` / IP của PC; tối đa 2048 host một lượt; nối TCP trước (hết giờ 600 ms), cổng mở mới
+  gửi HTTP; tối đa 128 kết nối cùng lúc. Khi nào chạy:
+  - màn Thêm điện thoại (§4 mục 4) đang mở: lúc mở màn rồi 15 s một lần khi danh sách còn trống, cả hai dải;
+  - máy đã ghép nối hỏng ở mọi địa chỉ đã biết (Offline): chỉ dải 2 của máy đó, tối đa 5 phút một lần.
+  Không quét nền gì khác. IPv6 không quét (/64 quá rộng) — địa chỉ IPv6 lấy từ `info.addresses`. Điện thoại không cần
+  làm gì thêm.
 - Nhập tay: `1.2.3.4:8080`, `[fd12::5]:8080`, `[fe80::5%en0]:8080` (Windows `%12`) — màn điện thoại hiện sẵn IPv4 và
   IPv6; rồi `GET /api/v1/info` để lấy `id`.
 
