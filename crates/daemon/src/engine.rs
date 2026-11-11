@@ -586,16 +586,23 @@ impl Engine {
                 };
                 let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
-                    let r = client.list().await.map(|items| Outcome::Library { items }).map_err(|e| {
-                        log::info!("engine: list {device}: {e}");
-                        // Điện thoại tắt Sync WiFi giữa chừng (connection refused) ⇒ đừng để UI tin "Đang kết nối":
-                        // bỏ địa chỉ, nối lại; UI thấy Offline ngay thay vì "Không đọc được danh sách".
-                        if matches!(e, ClientError::Network(_)) {
-                            let _ = tx.send(Internal::LinkFailed { device: device.clone(), addr: client.addr() });
-                            CommandError::Offline
-                        } else {
-                            CommandError::Unreachable
-                        }
+                    let r = client.list().await.map(|items| Outcome::Library { items });
+                    let r = r.map_err(|e| read_error(&tx, &device, &client, "list", e));
+                    reply_to(&outbox, req, r);
+                });
+                None
+            }
+            LibraryOp::Dirs { device, path } => {
+                let client = match self.online_client(&device) {
+                    Ok(c) => c,
+                    Err(e) => return Some(Err(e)),
+                };
+                let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
+                tokio::spawn(async move {
+                    let r = client.dirs(&path).await.map(|listing| Outcome::Dirs { listing });
+                    let r = r.map_err(|e| match e {
+                        ClientError::NotFound | ClientError::BadRequest => CommandError::InvalidInput,
+                        e => read_error(&tx, &device, &client, "dirs", e),
                     });
                     reply_to(&outbox, req, r);
                 });
@@ -1674,6 +1681,24 @@ fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
     })?;
     let _ = std::fs::remove_file(&probe);
     Ok(())
+}
+
+/// Lỗi đọc thư viện / thư mục điện thoại cho UI. Điện thoại tắt Sync WiFi giữa chừng (connection refused) ⇒ đừng để
+/// UI tin "Đang kết nối": bỏ địa chỉ, nối lại; UI thấy Offline ngay thay vì "Không đọc được danh sách".
+fn read_error(
+    tx: &mpsc::UnboundedSender<Internal>,
+    device: &DeviceId,
+    client: &PhoneClient,
+    what: &str,
+    e: ClientError,
+) -> CommandError {
+    log::info!("engine: {what} {device}: {e}");
+    if matches!(e, ClientError::Network(_)) {
+        let _ = tx.send(Internal::LinkFailed { device: device.clone(), addr: client.addr() });
+        CommandError::Offline
+    } else {
+        CommandError::Unreachable
+    }
 }
 
 fn reply_to(outbox: &Outbox, req: u64, r: Result<Outcome, CommandError>) {

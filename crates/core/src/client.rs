@@ -21,8 +21,8 @@ use tokio_util::io::ReaderStream;
 
 use crate::device::DeviceId;
 use crate::protocol::{
-    self, LibraryItem, ListResponse, PairResponse, Secret, UploadCreated, decode_header_value, encode_header_value,
-    encode_path_segment, header, path,
+    self, DirListing, LibraryItem, ListResponse, PairResponse, Secret, UploadCreated, decode_header_value,
+    encode_header_value, encode_path_segment, header, path,
 };
 
 /// Server đóng kết nối sau 60 s không có byte (PROTOCOL 6.1) — client chờ đọc cùng mức.
@@ -270,6 +270,12 @@ impl PhoneClient {
     pub async fn list(&self) -> Result<Vec<LibraryItem>> {
         let r: ListResponse = json(self.send(self.request(Method::GET, path::LIST)).await?).await?;
         Ok(r.items)
+    }
+
+    /// `GET /api/v1/dirs?path=` (§6.11) — chỉ gọi khi `info.features` có `browse`. `path` rỗng = gốc bộ nhớ.
+    pub async fn dirs(&self, dir: &str) -> Result<DirListing> {
+        let q = format!("{}?path={}", path::DIRS, encode_path_segment(&protocol::normalize_dir(dir)));
+        json(self.send(self.request(Method::GET, &q)).await?).await
     }
 
     /// `POST /api/v1/uploads`. `name` chỉ phần tên. `dir` (thư mục đích, `/` hoặc `\` phân cách) chỉ gửi khi điện

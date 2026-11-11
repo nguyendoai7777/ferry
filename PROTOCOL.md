@@ -2,7 +2,7 @@
 
 > Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
 > thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1);
-> bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3).
+> bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3); duyệt bộ nhớ điện thoại (§6.11) 2026-11-11 (W-7).
 > **Đổi giao thức = sửa tệp này trước, rồi sửa cả hai phía** (bản bên `video-player` phải giống hệt mục 6).
 > Mục 3 là đề xuất gốc; bố cục thật của repo ở `CLAUDE.md`.
 
@@ -310,6 +310,44 @@ Chỉ khi `info.features` có `batch`. Mục đích: màn "Đang nhận" trên �
 - Điện thoại mất danh sách (server khởi động lại) mà PC đã thôi gửi thân: `POST` vẫn chạy, tệp hiện như không có lô.
 - Tệp trong danh sách mà tới khi phiên kết thúc (§6.5, rảnh 10 s) PC không gửi → điện thoại hiện "Không gửi".
 - Huỷ một tệp giữa lô: PC `DELETE` upload (nếu đã tạo) — điện thoại hiện lỗi cho tệp đó; tệp chưa tạo thì thôi không gửi.
+
+### 6.11 Duyệt bộ nhớ điện thoại — gửi vào đúng thư mục có thật
+
+Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **cây thư mục thật** của bộ nhớ trong điện thoại
+(`Alarms`, `DCIM`, `Download`, `Movies`…) như màn quản lý tệp, để người dùng chọn đúng chỗ đẩy tệp vào.
+
+- **Bật phía điện thoại**: công tắc "Cho máy tính duyệt bộ nhớ" ở màn Sync WiFi; bật thì xin quyền đọc / ghi mọi tệp
+  (Android 11+: `MANAGE_EXTERNAL_STORAGE`, màn "Truy cập mọi tệp"; Android 10-: `READ/WRITE_EXTERNAL_STORAGE`).
+  Người dùng không bật hoặc không cấp quyền ⇒ **không** khai `browse`, mọi thứ như §6.4, §6.9. Quyền bị thu hồi lúc
+  server chạy ⇒ thôi khai `browse` ngay (`info` lần sau), route dưới trả `403`.
+- **Gốc đổi khi có `browse`**: "gốc nơi lưu" của §6.4, §6.5, §6.9 = **gốc bộ nhớ trong dùng chung**
+  (`/storage/emulated/0`, cái người dùng thấy là "Bộ nhớ điện thoại"). Mọi `dir` — `X-File-Dir`, `dir` trong `list`,
+  thân `201` — tương đối so với gốc đó (vd `"Movies/VideoPlayer"`, `"Download/Phim"`). Tệp của thư viện nằm ngoài bộ
+  nhớ dùng chung (bộ nhớ riêng của app, thẻ nhớ) ⇒ `dir = null`. Không có `X-File-Dir` ⇒ thư mục lưu mặc định của app
+  (giữ như cũ, `dir` trong phản hồi cho PC biết nó ở đâu).
+- **Tệp nhận qua Ferry vào thư viện**: mọi tệp nhận được (ở bất kỳ thư mục nào) có trong `list` với `dir` thật, để
+  bước Checking (trùng `dir` + tên + cỡ) và "Tải về máy" vẫn chạy.
+- **Liệt kê** — `GET /api/v1/dirs?path=<URL-encoded>`, Bearer. `path` như `X-File-Dir` (`/` phân cách, thiếu / rỗng
+  = gốc), làm sạch như §6.9. `200`:
+  ```json
+  {"path":"DCIM",
+   "dirs":[{"name":"Camera","modified":1762761600000,"count":412}],
+   "files":[{"name":"note.txt","size":1200,"modified":1762761600000},
+            {"name":"clip.mp4","size":7340032,"modified":1762761600000,"id":"…"}]}
+  ```
+  - Chỉ con **trực tiếp** của `path` (không đệ quy). `path` trong phản hồi là bản đã làm sạch.
+  - `dirs[].count`: số mục trực tiếp bên trong (như "4 mục" của màn quản lý tệp); không đếm được ⇒ bỏ trường. PC dùng
+    `count > 0` để vẽ nút mở rộng trên cây trước khi liệt kê thư mục đó.
+  - `files[]`: mọi tệp (không chỉ video). `id` chỉ có khi tệp nằm trong thư viện (dùng được với `/api/v1/file/<id>`,
+    "Tải về máy"); thiếu ⇒ PC chỉ hiện, không tải.
+  - `modified`: mili giây Unix. Thứ tự không quan trọng (PC tự sắp).
+  - **Ẩn**: mục bắt đầu bằng `.`; `Android/data`, `Android/obb` (Android không cho đọc). Thư mục `Android` vẫn liệt kê.
+  - Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự) · `404` không có thư mục đó · `403` chưa / hết quyền.
+- **Ghi**: `POST /api/v1/uploads` với `X-File-Dir` trỏ vào `Android` hoặc con của nó, hoặc thư mục điện thoại không
+  ghi được ⇒ `403` (PC: Failed, không thử lại). Thư mục chưa có ⇒ tạo khi commit như §6.9.
+- PC: có `browse` ⇒ trình duyệt điện thoại (§4) dựng từ `dirs` (mở thư mục nào liệt kê thư mục đó, nhớ các lần đã
+  đọc), "Thư mục mới" vẫn là thư mục ảo tới khi có tệp; không `browse` ⇒ dựng từ `list` như cũ. Thư mục đích nhớ theo
+  từng chế độ (đổi chế độ ⇒ về gốc), vì cùng một chuỗi `dir` mang nghĩa khác nhau.
 
 ## 7. Kiểm thử
 

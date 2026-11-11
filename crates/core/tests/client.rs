@@ -434,3 +434,26 @@ async fn c5_one_gigabyte_upload_keeps_ram_flat() {
     );
     assert!(grew < 2 * CHUNK, "RSS tăng {grew} byte");
 }
+
+/// W-7 (§6.11): `dirs` liệt kê con trực tiếp, đường có dấu / khoảng trắng mã hoá đúng; thiếu `browse` ⇒ `403`.
+#[tokio::test]
+async fn dirs_lists_direct_children() {
+    for family in [Family::V4, Family::V6] {
+        let Some((p, c)) = paired(family).await else { continue };
+        p.add_file("a.mp4", Some("DCIM/Camera"), vec![1; 3]);
+        p.add_file("b.txt", Some("Download/Phim hè"), vec![1; 5]);
+        p.add_file("root.mp4", Some(""), vec![1; 2]);
+        assert!(matches!(c.dirs("").await, Err(ClientError::WrongPin)), "chưa khai browse ⇒ 403");
+        p.set_features(&["dirs", "browse"]);
+        let root = c.dirs("").await.unwrap();
+        let names: Vec<_> = root.dirs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["DCIM", "Download"]);
+        assert_eq!(root.files.len(), 1);
+        let sub = c.dirs("Download/Phim hè").await.unwrap();
+        assert_eq!(sub.path, "Download/Phim hè");
+        assert_eq!(sub.files[0].name, "b.txt");
+        assert_eq!(sub.files[0].size, 5);
+        assert!(matches!(c.dirs("Không có").await, Err(ClientError::NotFound)));
+        assert!(feature::BROWSE == "browse");
+    }
+}

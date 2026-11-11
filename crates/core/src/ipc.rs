@@ -34,7 +34,7 @@ use crate::config::{ThemeChoice, WatchFolder};
 use crate::device::{DeviceId, DeviceState};
 use crate::firewall::{AllowResult, MdnsFirewallHint};
 use crate::i18n::LanguagePref;
-use crate::protocol::LibraryItem;
+use crate::protocol::{DirListing, LibraryItem};
 use crate::queue::store::{BatchInfo, BatchProgress, DownloadItem, UploadItem};
 use crate::queue::{BatchId, ItemId};
 
@@ -123,6 +123,9 @@ pub enum LibraryOp {
     /// nhất), xếp mỗi video vào hàng của điện thoại đó (chung hàng với upload), đích `config.downloadDir`. Trả
     /// [`Outcome::DownloadsAdded`]; Offline ⇒ `Offline`; danh sách rỗng ⇒ `InvalidInput`.
     Download { device: DeviceId, remote_ids: Vec<String> },
+    /// W-7: `GET /dirs?path=` của điện thoại Online có `features: browse` (§6.11). `path` rỗng = gốc bộ nhớ trong.
+    /// Trả [`Outcome::Dirs`]; Offline ⇒ `Offline`; thư mục không còn (`404`) ⇒ `InvalidInput`.
+    Dirs { device: DeviceId, path: String },
 }
 
 /// Lệnh màn cài đặt (PROTOCOL 4.5). Quên điện thoại đi [`PhoneOp::Forget`].
@@ -366,6 +369,10 @@ pub enum Outcome {
     },
     Library {
         items: Vec<LibraryItem>,
+    },
+    /// `LibraryOp::Dirs`: con trực tiếp của `listing.path`.
+    Dirs {
+        listing: DirListing,
     },
     /// `Download` (gd1_10): `added` mục mới vào hàng; `alreadyQueued` đang có trong hàng (chưa xong) nên bỏ qua;
     /// `missing` không còn trong `list` của điện thoại.
@@ -890,6 +897,10 @@ mod tests {
                     op: LibraryOp::Download { device: dev.clone(), remote_ids: vec!["v1".into(), "v2".into()] },
                 },
                 r#"{"type":"library","req":7,"op":{"op":"download","device":"3f9a","remoteIds":["v1","v2"]}}"#,
+            ),
+            (
+                UiToDaemon::Library { req: 8, op: LibraryOp::Dirs { device: dev.clone(), path: "DCIM".into() } },
+                r#"{"type":"library","req":8,"op":{"op":"dirs","device":"3f9a","path":"DCIM"}}"#,
             ),
             (UiToDaemon::Settings { req: 7, op: SettingsOp::Get }, r#"{"type":"settings","req":7,"op":{"op":"get"}}"#),
             (

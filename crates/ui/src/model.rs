@@ -3,12 +3,13 @@
 
 use std::collections::HashMap;
 
+use ferry_core::browse::FsCache;
 use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::ipc::{
     DaemonToUi, DeviceView, LibraryOp, Outcome, PhoneOp, ProgressDelta, QueueOp, Sender, SettingsOp, Snapshot,
     UiToDaemon,
 };
-use ferry_core::protocol::LibraryItem;
+use ferry_core::protocol::{LibraryItem, feature};
 use materiant::gpui_kit::{Context, EventEmitter};
 
 use crate::ui_state::UiState;
@@ -27,6 +28,8 @@ pub struct Model {
     pub selected: Option<DeviceId>,
     /// Danh sách điện thoại lần cuối đọc được, theo thiết bị — hiện mờ khi offline.
     pub libraries: HashMap<DeviceId, Vec<LibraryItem>>,
+    /// Các thư mục đã đọc khi điện thoại cho duyệt bộ nhớ (W-7) — trình duyệt mở lại thấy ngay, offline hiện mờ.
+    pub storage: HashMap<DeviceId, FsCache>,
     pub state: UiState,
     sender: Option<Sender<UiToDaemon>>,
     next_req: u64,
@@ -41,6 +44,7 @@ impl Model {
             ready: false,
             selected: None,
             libraries: HashMap::new(),
+            storage: HashMap::new(),
             state: UiState::load(),
             sender,
             next_req: 1,
@@ -100,14 +104,29 @@ impl Model {
         }
     }
 
+    /// Điện thoại cho duyệt bộ nhớ trong (W-7, `features: browse` lần cuối biết).
+    pub fn browses_storage(&self, device: &DeviceId) -> bool {
+        self.snapshot
+            .devices
+            .iter()
+            .find(|d| &d.id == device)
+            .is_some_and(|d| d.features.iter().any(|f| f == feature::BROWSE))
+    }
+
+    /// Khoá thư mục đích nhớ theo chế độ: cùng chuỗi `dir` mang nghĩa khác khi có / không `browse` (§6.11).
+    fn dest_key(&self, device: &DeviceId) -> String {
+        if self.browses_storage(device) { format!("{}#browse", device.0) } else { device.0.clone() }
+    }
+
     /// Thư mục đích lần trước của điện thoại (rỗng = gốc).
     pub fn last_dest(&self, device: &DeviceId) -> String {
-        self.state.last_dest.get(&device.0).cloned().unwrap_or_default()
+        self.state.last_dest.get(&self.dest_key(device)).cloned().unwrap_or_default()
     }
 
     pub fn remember_dest(&mut self, device: &DeviceId, dest: &str) {
-        if self.state.last_dest.get(&device.0).map(String::as_str) != Some(dest) {
-            self.state.last_dest.insert(device.0.clone(), dest.to_owned());
+        let key = self.dest_key(device);
+        if self.state.last_dest.get(&key).map(String::as_str) != Some(dest) {
+            self.state.last_dest.insert(key, dest.to_owned());
             self.state.save();
         }
     }

@@ -48,6 +48,8 @@ fn kind_text(i18n: &I18n, e: &Entry) -> String {
         EntryKind::Folder => i18n.t("browser.kind_folder").to_owned(),
         EntryKind::Video if e.ext.is_empty() => i18n.t("browser.kind_video_plain").to_owned(),
         EntryKind::Video => i18n.t_args("browser.kind_video", &[("ext", &e.ext)]),
+        EntryKind::File if e.ext.is_empty() => i18n.t("browser.kind_file_plain").to_owned(),
+        EntryKind::File => i18n.t_args("browser.kind_file", &[("ext", &e.ext)]),
     }
 }
 
@@ -112,7 +114,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
         if count == 0 {
             let msg = if this.loading {
                 "browser.loading"
-            } else if this.items.is_empty() && this.offline {
+            } else if !this.has_data() && this.offline {
                 "browser.offline_empty"
             } else if this.query.is_empty() && this.is_library() {
                 "browser.empty_library"
@@ -172,10 +174,10 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                                     .items_center()
                                     .gap_2()
                                     .child(
-                                        Icon::new(if e.kind == EntryKind::Folder {
-                                            assets::folder()
-                                        } else {
-                                            assets::video()
+                                        Icon::new(match e.kind {
+                                            EntryKind::Folder => assets::folder(),
+                                            EntryKind::Video => assets::video(),
+                                            EntryKind::File => assets::file(),
                                         })
                                         .size(px(16.))
                                         .color(c.muted),
@@ -203,7 +205,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                                     .child(SharedString::from(kind_text(&i18n, e))),
                             )
                             .child(div().w(px(SIZE_W)).flex().justify_end().text_xs().text_color(c.muted).child(
-                                SharedString::from(if e.kind == EntryKind::Video {
+                                SharedString::from(if e.kind != EntryKind::Folder {
                                     fmt::size(e.size, lang)
                                 } else {
                                     String::new()
@@ -225,7 +227,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
         };
     let _ = weak_select;
     // Chưa có danh sách (đang tải, chưa nối được, thư mục trống): không vẽ đầu bảng rỗng, chỉ dòng báo giữa vùng.
-    let show_header = count > 0 || (!this.items.is_empty() && !this.query.is_empty());
+    let show_header = count > 0 || (this.has_data() && !this.query.is_empty());
     div()
         .flex_1()
         .min_w_0()

@@ -22,6 +22,8 @@ pub mod path {
     /// `+ <id>` (id mờ, URL-encode bằng [`super::encode_path_segment`]).
     pub const FILE: &str = "/api/v1/file/";
     pub const UPLOADS: &str = "/api/v1/uploads";
+    /// `?path=<URL-encoded>` — chỉ khi có [`super::feature::BROWSE`] (§6.11).
+    pub const DIRS: &str = "/api/v1/dirs";
 }
 
 /// Tên header riêng của giao thức (PROTOCOL 6.3, 6.5).
@@ -42,6 +44,8 @@ pub mod feature {
     pub const DIRS: &str = "dirs";
     /// Server nghe IPv6 (§6.8).
     pub const IPV6: &str = "ipv6";
+    /// Duyệt bộ nhớ trong thật qua `GET /dirs`; mọi `dir` tính từ gốc bộ nhớ dùng chung (§6.11, W-7).
+    pub const BROWSE: &str = "browse";
 }
 
 /// Đuôi video điện thoại nhận (PROTOCOL 6.6), chữ thường.
@@ -178,6 +182,43 @@ pub struct ListResponse {
     pub items: Vec<LibraryItem>,
 }
 
+/// Một thư mục con trong `GET /api/v1/dirs` (§6.11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDir {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified: Option<i64>,
+    /// Số mục trực tiếp bên trong; `None` = điện thoại không đếm được.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
+/// Một tệp trong `GET /api/v1/dirs` (§6.11): mọi loại tệp; `id` chỉ khi nằm trong thư viện (tải về được).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFile {
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub modified: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// `200` của `GET /api/v1/dirs?path=` (§6.11): con trực tiếp của `path` (đã làm sạch, `""` = gốc bộ nhớ).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirListing {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub dirs: Vec<RemoteDir>,
+    #[serde(default)]
+    pub files: Vec<RemoteFile>,
+}
+
 /// `201` của `POST /api/v1/uploads` (PROTOCOL 6.5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -194,6 +235,20 @@ pub struct UploadCreated {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dir_listing_parses_with_optional_fields() {
+        let v: DirListing = serde_json::from_str(
+            r#"{"path":"DCIM","dirs":[{"name":"Camera","modified":5,"count":4},{"name":"X"}],
+                "files":[{"name":"a.txt","size":3,"modified":1},{"name":"c.mp4","size":9,"modified":2,"id":"v1"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(v.path, "DCIM");
+        assert_eq!(v.dirs[0].count, Some(4));
+        assert_eq!(v.dirs[1].modified, None);
+        assert_eq!(v.files[1].id.as_deref(), Some("v1"));
+        assert!(v.files[0].id.is_none());
+    }
 
     #[test]
     fn video_names() {

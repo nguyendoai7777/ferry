@@ -497,6 +497,7 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
             let s = state.lock().unwrap();
             Reply::json(200, json!({"items": s.files.iter().map(StoredFile::json).collect::<Vec<_>>()}))
         }
+        ("GET", "/api/v1/dirs") => dirs(&state.lock().unwrap(), &req),
         ("POST", "/api/v1/uploads") => create_upload(&state, &req),
         (m, p) if p.starts_with("/api/v1/uploads/") => {
             let uid = decode(&p["/api/v1/uploads/".len()..]);
@@ -535,6 +536,37 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
         _ => Reply::status(404),
     };
     send(&mut sock, reply).await;
+}
+
+/// `GET /dirs?path=` (§6.11) dựng từ `dir` của các tệp đã lưu: chỉ khi khai `browse`, thiếu thư mục ⇒ `404`.
+fn dirs(s: &State, req: &Request) -> Reply {
+    if !s.features.iter().any(|f| f == "browse") {
+        return Reply::status(403);
+    }
+    let raw = req.path.split_once("?path=").map_or("", |(_, q)| q);
+    let at = decode(raw).trim_matches('/').to_owned();
+    if at.split('/').any(|seg| seg == "..") {
+        return Reply::status(400);
+    }
+    let prefix = if at.is_empty() { String::new() } else { format!("{at}/") };
+    let mut sub = std::collections::BTreeSet::new();
+    let mut files = Vec::new();
+    let mut exists = at.is_empty();
+    for f in &s.files {
+        let Some(d) = f.dir.as_deref() else { continue };
+        if d == at {
+            exists = true;
+            files.push(json!({"name": f.name, "size": f.size, "modified": f.modified, "id": f.id}));
+        } else if let Some(rest) = d.strip_prefix(&prefix) {
+            exists = true;
+            sub.insert(rest.split('/').next().unwrap_or(rest).to_owned());
+        }
+    }
+    if !exists {
+        return Reply::status(404);
+    }
+    let dirs: Vec<_> = sub.into_iter().map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
+    Reply::json(200, json!({"path": at, "dirs": dirs, "files": files}))
 }
 
 fn authorized(state: &Mutex<State>, req: &Request) -> bool {

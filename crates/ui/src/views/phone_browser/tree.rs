@@ -35,7 +35,7 @@ pub fn flatten(tree: &Tree, open: &HashSet<String>, root_label: &str, other_labe
                 loc: Location::Dir(n.path.clone()),
                 label: n.name.clone(),
                 depth,
-                has_children: !n.children.is_empty(),
+                has_children: !n.children.is_empty() || n.has_more,
                 open: is_open,
                 is_virtual: n.is_virtual,
             });
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn flatten_follows_open_state() {
-        let tree = build_tree(&[item(Some("A/B")), item(Some("C")), item(None)], &[]);
+        let tree = build_tree(&[item(Some("A/B")), item(Some("C")), item(None)], &[], &[]);
         let closed = flatten(&tree, &HashSet::new(), "Pixel", "Khác");
         let labels: Vec<_> = closed.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["Pixel", "A", "C", "Khác"]);

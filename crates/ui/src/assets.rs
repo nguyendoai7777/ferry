@@ -40,6 +40,7 @@ macro_rules! ferry_icons {
 ferry_icons! {
     Folder => "folder",
     Video => "video",
+    File => "file",
     Close => "close",
     Minus => "minus",
     ArrowsExpand => "arrows-expand",
@@ -62,6 +63,10 @@ pub fn folder() -> IconSource {
 
 pub fn video() -> IconSource {
     FerryIcon::Video.into()
+}
+
+pub fn file() -> IconSource {
+    FerryIcon::File.into()
 }
 
 pub struct Assets;
