@@ -127,23 +127,40 @@ pub enum SettingsOp {
     /// Đọc cài đặt hiện tại.
     Get,
     /// Đổi ngôn ngữ: khay, thông báo đổi ngay; cửa sổ khác đổi khi mở lại.
-    SetLanguage { language: LanguagePref },
+    SetLanguage {
+        language: LanguagePref,
+    },
     /// Thư mục "Tải về máy". `None` ⇒ mặc định của OS. Không tạo / ghi được ⇒ `NotWritable`; đường dẫn tương đối ⇒
     /// `InvalidInput`.
-    SetDownloadDir { path: Option<PathBuf> },
+    SetDownloadDir {
+        path: Option<PathBuf>,
+    },
     /// Trần tốc độ MB/s; `None` ⇒ tắt. Có hiệu lực ngay cho tệp đang gửi. Ngoài `1..=MAX_SPEED_LIMIT_MB_PER_SEC` ⇒
     /// `InvalidInput`.
-    SetSpeedLimit { mb_per_sec: Option<u32> },
+    SetSpeedLimit {
+        mb_per_sec: Option<u32>,
+    },
     /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
-    SetAutostart { enabled: bool },
+    SetAutostart {
+        enabled: bool,
+    },
     /// Thư mục theo dõi (gd1_13 chạy). `enabled` mà `path` không phải thư mục có thật ⇒ `InvalidInput`.
-    SetWatchFolder { folder: WatchFolder },
+    SetWatchFolder {
+        folder: WatchFolder,
+    },
     /// Tên hiển thị trên PC; chuỗi trắng ⇒ về tên điện thoại báo. Không có trong sổ đã ghép ⇒ `UnknownDevice`.
-    RenameDevice { device: DeviceId, name: String },
+    RenameDevice {
+        device: DeviceId,
+        name: String,
+    },
     /// Thêm địa chỉ tay (mọi dạng `parse_address`): hỏi `info` trước, trả lời được mới lưu. Lỗi như
     /// [`PhoneOp::AddAddress`] (`InvalidInput`, `UnknownInterface`, `Unreachable`).
-    AddAddress { address: String },
-    RemoveAddress { address: String },
+    AddAddress {
+        address: String,
+    },
+    RemoveAddress {
+        address: String,
+    },
 }
 
 /// Cài đặt cho màn hình (PROTOCOL 4.5). Không token.
@@ -863,7 +880,10 @@ mod tests {
                 r#"{"type":"settings","req":10,"op":{"op":"set_language","language":"system"}}"#,
             ),
             (
-                UiToDaemon::Settings { req: 11, op: SettingsOp::RenameDevice { device: dev.clone(), name: "Mẹ".into() } },
+                UiToDaemon::Settings {
+                    req: 11,
+                    op: SettingsOp::RenameDevice { device: dev.clone(), name: "Mẹ".into() },
+                },
                 r#"{"type":"settings","req":11,"op":{"op":"rename_device","device":"3f9a","name":"Mẹ"}}"#,
             ),
         ];

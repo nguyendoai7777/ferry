@@ -45,6 +45,14 @@ fn main() {
 
     gpui_kit::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         materiant::init(cx);
+        // Font nhúng cho mọi cửa sổ (D-20); gốc mỗi cửa sổ đặt `.font_family(cx.theme().font_family())`.
+        materiant::theme::set_theme(
+            &materiant::theme::MateriantTheme {
+                font_family: Some(materiant::font::MONA_SANS.into()),
+                ..Default::default()
+            },
+            cx,
+        );
         devtool::init(cx);
 
         if settings_only {

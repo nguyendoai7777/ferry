@@ -194,7 +194,7 @@ mod native {
             let pause = MenuItem::with_id(PAUSE_ID, i18n.t("tray.pause_all"), false, None);
             let quit = MenuItem::with_id(QUIT_ID, i18n.t("tray.quit"), true, None);
             menu.append_items(&[&open, &settings, &pause, &PredefinedMenuItem::separator(), &quit])
-            .map_err(|e| format!("menu: {e}"))?;
+                .map_err(|e| format!("menu: {e}"))?;
             let builder = TrayIconBuilder::new();
             #[cfg(target_os = "macos")]
             let builder = builder.with_icon_templated(icon(TrayMode::Idle)).with_menu_on_left_click(true);

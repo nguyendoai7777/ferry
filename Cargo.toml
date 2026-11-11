@@ -16,7 +16,8 @@ publish = false
 ferry-core = { path = "crates/core" }
 # Repo anh em trong workspace xdesktop (clone cạnh repo này). Worktree ở `.claude/worktrees/` cần lối nối
 # `.claude/worktrees/materiant` → `materiant` (junction / symlink) để đường dẫn này trỏ đúng.
-materiant = { path = "../materiant" }
+# Font nhúng (D-20): font hệ thống Ubuntu Sans biến thiên làm lệch dấu tiếng Việt trong GPUI.
+materiant = { path = "../materiant", features = ["font-mona-sans"] }
 # Inspector kiểu DevTools (crate `devtool` trong repo materiant, D-25): chỉ bản debug, bản release rỗng.
 devtool = { path = "../materiant/devtool" }
 

@@ -34,10 +34,7 @@ use crate::engine::{EngineConfig, Sinks};
 fn main() -> ExitCode {
     let log_file = logging::init("daemon");
     let from_autostart = std::env::args().skip(1).any(|a| a == "--autostart");
-    log::info!(
-        "ferry {VERSION} starting (pid {}, autostart: {from_autostart}, log: {log_file:?})",
-        std::process::id()
-    );
+    log::info!("ferry {VERSION} starting (pid {}, autostart: {from_autostart}, log: {log_file:?})", std::process::id());
 
     let data_dir = match paths::data_dir() {
         Ok(d) => d,

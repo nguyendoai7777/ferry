@@ -465,7 +465,9 @@ mod tests {
     #[test]
     fn launch_agent_has_args_and_escaped_path() {
         let text = launchd::plist(Path::new("/Users/a b/R&D/ferry"));
-        assert!(text.contains("<string>/Users/a b/R&amp;D/ferry</string>\n    <string>--autostart</string>\n  </array>"));
+        assert!(
+            text.contains("<string>/Users/a b/R&amp;D/ferry</string>\n    <string>--autostart</string>\n  </array>")
+        );
         assert!(text.contains(&format!("<key>Label</key>\n  <string>{}</string>", launchd::LABEL)));
         assert!(text.contains("<key>RunAtLoad</key>\n  <true/>"));
         let exe = Path::new("/Applications/Ferry.app/Contents/MacOS/ferry");

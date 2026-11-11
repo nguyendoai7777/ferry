@@ -237,7 +237,11 @@ mod tests {
     #[test]
     fn remember_and_forget_device() {
         let mut c = Config::default();
-        let dev = |id: &str, name: &str| PairedDevice { id: DeviceId(id.into()), name: name.into(), ..PairedDevice::default() };
+        let dev = |id: &str, name: &str| PairedDevice {
+            id: DeviceId(id.into()),
+            name: name.into(),
+            ..PairedDevice::default()
+        };
         c.remember_device(dev("a", "A"));
         c.remember_device(dev("b", "B"));
         c.remember_device(dev("a", "A2"));

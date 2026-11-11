@@ -280,7 +280,13 @@ impl MainWindow {
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors().clone();
-        let root = div().size_full().relative().bg(c.surface).text_color(c.text).child(ToastViewport::new());
+        let root = div()
+            .size_full()
+            .relative()
+            .bg(c.surface)
+            .text_color(c.text)
+            .font_family(cx.theme().font_family())
+            .child(ToastViewport::new());
         match &self.page {
             Page::Browse { browser, .. } => {
                 return root.child(div().size_full().child(browser.clone())).into_any_element();

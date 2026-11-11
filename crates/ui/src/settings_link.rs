@@ -8,7 +8,9 @@
 use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use ferry_core::ipc::{ClientConnection, CommandError, DaemonToUi, Outcome, PhoneOp, Role, SettingsOp, SettingsView, UiToDaemon};
+use ferry_core::ipc::{
+    ClientConnection, CommandError, DaemonToUi, Outcome, PhoneOp, Role, SettingsOp, SettingsView, UiToDaemon,
+};
 
 /// Lệnh màn cài đặt gửi được: cài đặt + quên điện thoại.
 #[derive(Debug, Clone)]

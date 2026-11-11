@@ -1019,7 +1019,11 @@ impl Engine {
     // ---- thông báo ----
 
     fn phone_name(&self, id: &DeviceId) -> String {
-        self.devices.get(id).map(|d| d.display_name().to_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| id.0.clone())
+        self.devices
+            .get(id)
+            .map(|d| d.display_name().to_owned())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.0.clone())
     }
 
     fn notify(&self, title: String, body: String) {
@@ -1710,7 +1714,10 @@ mod tests {
         let bad = ask(e, SettingsOp::SetDownloadDir { path: Some(blocker.join("sub")) }).await;
         assert_eq!(bad, Outcome::Failed { error: CommandError::NotWritable });
 
-        assert_eq!(view(ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) }).await).speed_limit_mb_per_sec, Some(5));
+        assert_eq!(
+            view(ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) }).await).speed_limit_mb_per_sec,
+            Some(5)
+        );
         let zero = ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(0) }).await;
         assert_eq!(zero, Outcome::Failed { error: CommandError::InvalidInput });
         assert!(view(ask(e, SettingsOp::SetAutostart { enabled: true }).await).autostart);
