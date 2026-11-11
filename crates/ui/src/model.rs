@@ -129,7 +129,8 @@ impl Model {
                 cx.emit(ModelEvent::Reply { req, outcome });
             }
             // Focus xử lý ở `daemon_link` (cần cửa sổ); `Ok` / `Error` chỉ log ở đó.
-            DaemonToUi::Focus | DaemonToUi::Ok | DaemonToUi::Error { .. } => {}
+            // `OpenSettings` cũng ở `daemon_link` (mở cửa sổ cài đặt, gd1_12).
+            DaemonToUi::Focus | DaemonToUi::OpenSettings | DaemonToUi::Ok | DaemonToUi::Error { .. } => {}
         }
     }
 

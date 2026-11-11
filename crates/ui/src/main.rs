@@ -9,6 +9,7 @@ mod assets;
 mod daemon_link;
 mod fmt;
 mod model;
+mod settings_link;
 mod ui_state;
 mod views;
 
@@ -37,6 +38,8 @@ fn main() {
         .resolve();
     let i18n = I18n::new(language);
     let i18n = Rc::new(i18n);
+    // `ferry-ui --settings`: daemon bật từ menu khay "Cài đặt…" (gd1_12) ⇒ chỉ mở cửa sổ cài đặt.
+    let settings_only = std::env::args().skip(1).any(|a| a == "--settings");
     let link = daemon_link::connect();
     let sender = link.as_ref().map(daemon_link::sender);
 
@@ -44,6 +47,21 @@ fn main() {
         materiant::init(cx);
         devtool::init(cx);
 
+        if settings_only {
+            views::settings::open(cx);
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            if let Some(link) = link {
+                // Kho của cửa sổ chính vẫn dựng để nhận ảnh chụp, không cửa sổ nào đọc nó.
+                let model = cx.new(|_| Model::new(sender));
+                daemon_link::listen(link, model, None, cx);
+            }
+            return;
+        }
         let title: SharedString = i18n.t("app.name").to_owned().into();
         let model = cx.new(|_| Model::new(sender));
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
@@ -75,7 +93,7 @@ fn main() {
         .detach();
         cx.activate(true);
         if let Some(link) = link {
-            daemon_link::listen(link, model, handle, cx);
+            daemon_link::listen(link, model, Some(handle), cx);
         }
     });
     log::info!("ferry-ui stopped");

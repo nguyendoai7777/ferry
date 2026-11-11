@@ -9,3 +9,5 @@ pub mod phone_browser;
 pub mod phone_library;
 pub mod queue_list;
 pub mod send_tray;
+/// Cửa sổ cài đặt riêng (gd1_12).
+pub mod settings;

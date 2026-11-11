@@ -148,6 +148,8 @@ pub struct Device {
     pub newer_api: bool,
     /// `info.features` lần cuối (vd `dirs`).
     pub features: Vec<String>,
+    /// Tên người dùng đặt trên PC (cài đặt, gd1_12) — thắng `name` khi hiển thị, `info.name` không đè.
+    pub alias: Option<String>,
     /// Địa chỉ biết được (mDNS, `info`, nhập tay, config), chưa xếp.
     known: Vec<SocketAddr>,
     /// Địa chỉ vừa nối được — thử trước tới khi lỗi (`PROTOCOL.md` 6.8).
@@ -168,6 +170,7 @@ impl Device {
             state,
             newer_api: false,
             features: Vec::new(),
+            alias: None,
             known: Vec::new(),
             winner: None,
             mdns: None,
@@ -184,6 +187,11 @@ impl Device {
     pub fn winner(&self) -> Option<SocketAddr> {
         self.winner
     }
+
+    /// Tên hiện cho người dùng: bí danh đặt trên PC, không thì tên điện thoại báo.
+    pub fn display_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// Sổ thiết bị của daemon.
@@ -199,6 +207,7 @@ impl Devices {
         let mut me = Self { devices: BTreeMap::new(), locals };
         for p in paired {
             let mut d = Device::new(p.id.clone(), p.name.clone(), DeviceState::Paired);
+            d.alias = p.alias.clone().filter(|a| !a.trim().is_empty());
             for a in &p.addresses {
                 match address::parse_address(a, &me.locals) {
                     Ok(addr) => d.known.push(addr),
@@ -220,6 +229,7 @@ impl Devices {
                 id: d.id.clone(),
                 name: d.name.clone(),
                 addresses: self.addresses(&d.id).iter().map(|a| address::format_address(a, &self.locals)).collect(),
+                alias: d.alias.clone(),
             })
             .collect()
     }
@@ -235,6 +245,13 @@ impl Devices {
                 (new != old).then_some(DeviceEvent::AddressChanged { id, addresses: new })
             })
             .collect()
+    }
+
+    /// Đặt / bỏ bí danh (chuỗi trắng ⇒ bỏ). `false` ⇒ không có thiết bị này.
+    pub fn set_alias(&mut self, id: &DeviceId, alias: Option<String>) -> bool {
+        let Some(d) = self.devices.get_mut(id) else { return false };
+        d.alias = alias.map(|a| a.trim().to_owned()).filter(|a| !a.is_empty());
+        true
     }
 
     pub fn get(&self, id: &DeviceId) -> Option<&Device> {
@@ -604,6 +621,7 @@ mod tests {
             id: DeviceId("aa".into()),
             name: "Pixel 8".into(),
             addresses: vec!["[fd12::23]:8080".into(), "192.168.1.23:8080".into()],
+            alias: None,
         };
         let mut devs = Devices::from_config(&[saved], locals(), t0);
         let id = DeviceId("aa".into());
@@ -704,5 +722,30 @@ mod tests {
                 addresses: vec![sa("[fd12::23]:8080"), sa("192.168.1.23:8080")]
             }]
         );
+    }
+
+    /// gd1_12: bí danh đặt trên PC sống qua `info` (tên điện thoại đổi) và qua lần lưu / nạp config.
+    #[test]
+    fn alias_survives_info_and_config_round_trip() {
+        let t0 = Instant::now();
+        let saved = PairedDevice {
+            id: DeviceId("aa".into()),
+            name: "Pixel 8".into(),
+            addresses: vec!["192.168.1.23:8080".into()],
+            alias: Some("Máy của mẹ".into()),
+        };
+        let mut devs = Devices::from_config(&[saved], locals(), t0);
+        let id = DeviceId("aa".into());
+        assert_eq!(devs.get(&id).unwrap().display_name(), "Máy của mẹ");
+        let mut renamed = info("aa", true);
+        renamed.name = "Pixel 8 Pro".into();
+        devs.info_ok(&renamed, sa("192.168.1.23:8080"), t0);
+        let d = devs.get(&id).unwrap();
+        assert_eq!((d.name.as_str(), d.display_name()), ("Pixel 8 Pro", "Máy của mẹ"));
+        assert_eq!(devs.to_config()[0].alias.as_deref(), Some("Máy của mẹ"));
+        assert!(devs.set_alias(&id, Some("   ".into())), "blank clears the alias");
+        assert_eq!(devs.get(&id).unwrap().display_name(), "Pixel 8 Pro");
+        assert_eq!(devs.to_config()[0].alias, None);
+        assert!(!devs.set_alias(&DeviceId("zz".into()), Some("x".into())));
     }
 }

@@ -13,15 +13,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ferry_core::config::{self, Config};
+use ferry_core::config::{self, Config, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
 use ferry_core::discovery::mdns::{Browser, MdnsEvent};
 use ferry_core::discovery::{self, ConnectError, Connected};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
-    Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceView, FINISHED_IN_SNAPSHOT, ItemProgress,
-    LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta, QUEUED_IN_SNAPSHOT, QueueOp, Snapshot,
+    Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView, FINISHED_IN_SNAPSHOT,
+    ItemProgress, LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta, QUEUED_IN_SNAPSHOT, QueueOp, SettingsOp,
+    SettingsView, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
 use ferry_core::protocol::{Info, Secret};
@@ -55,9 +56,14 @@ pub struct EngineConfig {
     /// `false` ⇒ không dò mDNS (test: chỉ địa chỉ trong config / nhập tay).
     pub mdns: bool,
     pub runner: RunnerConfig,
-    /// Trần tốc độ chung mọi điện thoại (cài đặt của gd1_12; giờ không giới hạn).
+    /// Trần tốc độ chung mọi điện thoại — dựng từ `config.speedLimitMbPerSec`, cài đặt đổi qua `Throttle::set_rate`.
     pub throttle: Arc<Throttle>,
     pub i18n: I18n,
+    /// Áp công tắc "Khởi động cùng hệ thống" vào OS (`autostart::apply`; test thay bằng hàm giả). Chạy trong
+    /// `spawn_blocking` (Windows gọi `schtasks`).
+    pub autostart: fn(bool) -> Result<(), String>,
+    /// Lỗi của lần đồng bộ autostart lúc khởi động (`autostart::sync_on_start`).
+    pub autostart_error: Option<String>,
 }
 
 /// Đầu ra không qua IPC. Test thay bằng hàm ghi lại.
@@ -70,6 +76,7 @@ pub enum Op {
     Queue(QueueOp),
     Phone(PhoneOp),
     Library(LibraryOp),
+    Settings(SettingsOp),
 }
 
 pub enum Input {
@@ -152,11 +159,20 @@ enum Internal {
         req: u64,
         result: Result<pairing::Paired, CommandError>,
     },
+    /// `info` của địa chỉ nhập tay. `outbox = None` ⇒ địa chỉ đã lưu, hỏi lúc khởi động (không ai chờ trả lời).
+    /// `remember` ⇒ lệnh cài đặt `AddAddress`: trả lời được thì lưu chuỗi này vào `manualAddresses`.
     Probed {
-        outbox: Outbox,
+        outbox: Option<Outbox>,
         req: u64,
         addr: SocketAddr,
         result: Result<Info, CommandError>,
+        remember: Option<String>,
+    },
+    /// Cài đặt cần đĩa / OS (soát thư mục, `schtasks`) xong trong `spawn_blocking` — áp + lưu ở vòng chính.
+    Settled {
+        outbox: Outbox,
+        req: u64,
+        change: Settled,
     },
     Added {
         outbox: Outbox,
@@ -168,6 +184,14 @@ enum Internal {
         outbox: Outbox,
         req: u64,
     },
+}
+
+/// Thay đổi cài đặt đã soát xong ngoài vòng chính.
+enum Settled {
+    DownloadDir(Option<PathBuf>, Result<(), CommandError>),
+    WatchFolder(WatchFolder, Result<(), CommandError>),
+    /// Lỗi OS không chặn: cấu hình vẫn theo công tắc, lỗi hiện ở màn cài đặt (lần khởi động sau thử lại).
+    Autostart(bool, Result<(), String>),
 }
 
 struct Receivers {
@@ -184,6 +208,8 @@ struct Engine {
     runner_cfg: RunnerConfig,
     throttle: Arc<Throttle>,
     i18n: I18n,
+    autostart: fn(bool) -> Result<(), String>,
+    autostart_error: Option<String>,
     sinks: Sinks,
     devices: Devices,
     locals: Vec<LocalInterface>,
@@ -236,6 +262,8 @@ impl Engine {
             runner_cfg: cfg.runner,
             throttle: cfg.throttle,
             i18n: cfg.i18n,
+            autostart: cfg.autostart,
+            autostart_error: cfg.autostart_error,
             sinks,
             devices,
             locals,
@@ -257,6 +285,7 @@ impl Engine {
         for id in paired {
             engine.ensure_runner(&id);
         }
+        engine.probe_manual_addresses();
         (engine, Receivers { transfer, internal, browser })
     }
 
@@ -329,6 +358,7 @@ impl Engine {
             Op::Queue(op) => self.on_queue(&outbox, req, op),
             Op::Phone(op) => self.on_phone(&outbox, req, op),
             Op::Library(op) => self.on_library(&outbox, req, op),
+            Op::Settings(op) => self.on_settings(&outbox, req, op),
         };
         // `None` ⇒ task con trả lời sau.
         if let Some(r) = reply {
@@ -431,7 +461,7 @@ impl Engine {
                         log::info!("engine: manual address {addr}: {e}");
                         CommandError::Unreachable
                     });
-                    let _ = tx.send(Internal::Probed { outbox, req, addr, result });
+                    let _ = tx.send(Internal::Probed { outbox: Some(outbox), req, addr, result, remember: None });
                 });
                 None
             }
@@ -491,6 +521,178 @@ impl Engine {
                 });
                 None
             }
+        }
+    }
+
+    // ---- cài đặt (gd1_12, PROTOCOL 4.5) ----
+
+    fn on_settings(&mut self, outbox: &Outbox, req: u64, op: SettingsOp) -> Option<Result<Outcome, CommandError>> {
+        let internal_tx = self.internal_tx.clone();
+        let blocking = |change: Box<dyn FnOnce() -> Settled + Send>| {
+            let (tx, outbox) = (internal_tx.clone(), outbox.clone());
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(change).await {
+                    Ok(change) => {
+                        let _ = tx.send(Internal::Settled { outbox, req, change });
+                    }
+                    Err(e) => {
+                        log::warn!("engine: settings task: {e}");
+                        reply_to(&outbox, req, Err(CommandError::Internal));
+                    }
+                }
+            });
+        };
+        match op {
+            SettingsOp::Get => {}
+            SettingsOp::SetLanguage { language } => {
+                if self.config.language != language {
+                    self.config.language = language;
+                    self.persist();
+                    // Khay + thông báo đổi ngay: `TrayStatus` mang ngôn ngữ, luồng chính dựng lại menu theo nó.
+                    self.i18n = I18n::new(language.resolve());
+                    self.tray = None;
+                    self.update_tray();
+                }
+            }
+            SettingsOp::SetDownloadDir { path } => {
+                if path.as_ref().is_some_and(|p| !p.is_absolute()) {
+                    return Some(Err(CommandError::InvalidInput));
+                }
+                blocking(Box::new(move || {
+                    let check = path.as_deref().map_or(Ok(()), check_writable_dir);
+                    Settled::DownloadDir(path, check)
+                }));
+                return None;
+            }
+            SettingsOp::SetSpeedLimit { mb_per_sec } => {
+                if mb_per_sec.is_some_and(|n| n == 0 || n > MAX_SPEED_LIMIT_MB_PER_SEC) {
+                    return Some(Err(CommandError::InvalidInput));
+                }
+                self.config.speed_limit_mb_per_sec = mb_per_sec;
+                self.throttle.set_rate(self.config.speed_limit_bytes());
+                self.persist();
+            }
+            SettingsOp::SetAutostart { enabled } => {
+                let apply = self.autostart;
+                blocking(Box::new(move || Settled::Autostart(enabled, apply(enabled))));
+                return None;
+            }
+            SettingsOp::SetWatchFolder { folder } => {
+                if folder.path.as_ref().is_some_and(|p| !p.is_absolute()) || (folder.enabled && folder.path.is_none()) {
+                    return Some(Err(CommandError::InvalidInput));
+                }
+                blocking(Box::new(move || {
+                    let check = match &folder.path {
+                        Some(p) if folder.enabled && !p.is_dir() => Err(CommandError::InvalidInput),
+                        _ => Ok(()),
+                    };
+                    Settled::WatchFolder(folder, check)
+                }));
+                return None;
+            }
+            SettingsOp::RenameDevice { device, name } => {
+                if !self.config.devices.iter().any(|d| d.id == device) || !self.devices.set_alias(&device, Some(name)) {
+                    return Some(Err(CommandError::UnknownDevice));
+                }
+                self.dirty = true;
+                self.save_config();
+            }
+            SettingsOp::AddAddress { address } => {
+                self.refresh_locals();
+                let addr = match address::parse_address(&address, &self.locals) {
+                    Ok(a) => a,
+                    Err(AddressError::Invalid) => return Some(Err(CommandError::InvalidInput)),
+                    Err(AddressError::UnknownInterface(name)) => {
+                        return Some(Err(CommandError::UnknownInterface { name }));
+                    }
+                };
+                self.spawn_probe(Some(outbox.clone()), req, addr, Some(address.trim().to_owned()));
+                return None;
+            }
+            SettingsOp::RemoveAddress { address } => {
+                let before = self.config.manual_addresses.len();
+                self.config.manual_addresses.retain(|a| a != address.trim());
+                if self.config.manual_addresses.len() != before {
+                    self.persist();
+                }
+            }
+        }
+        Some(Ok(Outcome::Settings(self.settings_view())))
+    }
+
+    fn on_settled(&mut self, change: Settled) -> Result<Outcome, CommandError> {
+        match change {
+            Settled::DownloadDir(path, check) => {
+                check?;
+                self.config.download_dir = path;
+            }
+            Settled::WatchFolder(folder, check) => {
+                check?;
+                self.config.watch_folder = folder;
+            }
+            Settled::Autostart(enabled, result) => {
+                self.config.autostart = enabled;
+                self.autostart_error = result.err();
+            }
+        }
+        self.persist();
+        Ok(Outcome::Settings(self.settings_view()))
+    }
+
+    fn settings_view(&self) -> SettingsView {
+        let c = &self.config;
+        SettingsView {
+            language: c.language,
+            download_dir: c.download_dir(),
+            download_dir_custom: c.download_dir.as_ref().is_some_and(|d| !d.as_os_str().is_empty()),
+            speed_limit_mb_per_sec: c.speed_limit_mb_per_sec.filter(|n| *n > 0),
+            autostart: c.autostart,
+            autostart_error: self.autostart_error.clone(),
+            watch_folder: c.watch_folder.clone(),
+            manual_addresses: c.manual_addresses.clone(),
+            devices: c
+                .devices
+                .iter()
+                .map(|p| {
+                    let live = self.devices.get(&p.id);
+                    DeviceSetting {
+                        id: p.id.clone(),
+                        name: live.map_or_else(|| p.name.clone(), |d| d.name.clone()),
+                        alias: live.map_or_else(|| p.alias.clone(), |d| d.alias.clone()),
+                        state: live.map_or(DeviceState::Paired, |d| d.state),
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Địa chỉ tay đã lưu: hỏi `info` một lần lúc khởi động (mạng chặn mDNS vẫn thấy điện thoại chưa ghép; điện thoại đã
+    /// ghép có token thì nối như thường). Hỏng ⇒ chỉ log.
+    fn probe_manual_addresses(&mut self) {
+        let saved = self.config.manual_addresses.clone();
+        for text in saved {
+            match address::parse_address(&text, &self.locals) {
+                Ok(addr) => self.spawn_probe(None, 0, addr, None),
+                Err(e) => log::warn!("engine: skip manual address {text:?}: {e}"),
+            }
+        }
+    }
+
+    fn spawn_probe(&self, outbox: Option<Outbox>, req: u64, addr: SocketAddr, remember: Option<String>) {
+        let tx = self.internal_tx.clone();
+        tokio::spawn(async move {
+            let result = discovery::probe(addr).await.map_err(|e| {
+                log::info!("engine: manual address {addr}: {e}");
+                CommandError::Unreachable
+            });
+            let _ = tx.send(Internal::Probed { outbox, req, addr, result, remember });
+        });
+    }
+
+    /// Ghi `config.json` (nguyên tử). Chỉ engine ghi — một nơi, tuần tự trong `select!`.
+    fn persist(&self) {
+        if let Err(e) = config::save(&self.config_path, &self.config) {
+            log::warn!("engine: save {}: {e}", self.config_path.display());
         }
     }
 
@@ -693,7 +895,8 @@ impl Engine {
                 });
                 reply_to(&outbox, req, r);
             }
-            Internal::Probed { outbox, req, addr, result } => {
+            Internal::Probed { outbox, req, addr, result, remember } => {
+                let remembered = remember.is_some();
                 let r = result.map(|info| {
                     let has_token = self.devices.get(&info.id).is_some_and(|d| d.state.has_token());
                     if has_token {
@@ -705,8 +908,26 @@ impl Engine {
                         let ev = self.devices.info_ok(&info, addr, now);
                         self.on_device_events(ev);
                     }
+                    if let Some(text) = remember
+                        && !self.config.manual_addresses.contains(&text)
+                    {
+                        self.config.manual_addresses.push(text);
+                        self.persist();
+                    }
                     Outcome::Found { device: info.id, name: info.name }
                 });
+                let r = if remembered { r.map(|_| Outcome::Settings(self.settings_view())) } else { r };
+                match outbox {
+                    Some(outbox) => reply_to(&outbox, req, r),
+                    None => {
+                        if let Err(e) = r {
+                            log::info!("engine: saved manual address {addr} did not answer: {e:?}");
+                        }
+                    }
+                }
+            }
+            Internal::Settled { outbox, req, change } => {
+                let r = self.on_settled(change);
                 reply_to(&outbox, req, r);
             }
             Internal::Added { outbox, req, device, outcome } => {
@@ -798,7 +1019,7 @@ impl Engine {
     // ---- thông báo ----
 
     fn phone_name(&self, id: &DeviceId) -> String {
-        self.devices.get(id).map(|d| d.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| id.0.clone())
+        self.devices.get(id).map(|d| d.display_name().to_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| id.0.clone())
     }
 
     fn notify(&self, title: String, body: String) {
@@ -1026,7 +1247,7 @@ fn snapshot_parts(
         .iter()
         .map(|d| DeviceView {
             id: d.id.clone(),
-            name: d.name.clone(),
+            name: d.display_name().to_owned(),
             state: d.state,
             visible: d.visible(),
             newer_api: d.newer_api,
@@ -1139,6 +1360,17 @@ fn add_files(
     Ok(Outcome::Added { batch, files, skipped_non_video, unreadable })
 }
 
+/// Thư mục tải về: tạo nếu chưa có, rồi thử ghi một tệp tạm (quyền, ổ chỉ đọc, ổ mạng rớt).
+fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
+    let probe = dir.join(format!(".ferry-write-test-{}", std::process::id()));
+    std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&probe, b"")).map_err(|e| {
+        log::info!("engine: download dir {} is not writable: {e}", dir.display());
+        CommandError::NotWritable
+    })?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 fn reply_to(outbox: &Outbox, req: u64, r: Result<Outcome, CommandError>) {
     let outcome = r.unwrap_or_else(|error| Outcome::Failed { error });
     outbox.push(DaemonToUi::Reply { req, outcome });
@@ -1240,6 +1472,7 @@ mod tests {
                 id: device(),
                 name: fake_phone::NAME.into(),
                 addresses: vec![phone.v4().to_string()],
+                alias: None,
             }],
             download_dir: Some(dir.join("dl")),
             ..Config::default()
@@ -1264,6 +1497,8 @@ mod tests {
             },
             throttle: Throttle::new(throttle),
             i18n: I18n::new(Language::En),
+            autostart: |_| Ok(()),
+            autostart_error: None,
         };
         let engine = spawn(&tokio::runtime::Handle::current(), cfg, sinks);
         Rig { engine, captured, store }
@@ -1432,6 +1667,95 @@ mod tests {
             &got.last().unwrap().1,
             DaemonToUi::Reply { outcome: Outcome::Failed { error: CommandError::InvalidInput }, .. }
         ));
+        rig.engine.shutdown();
+    }
+
+    /// Một lệnh cài đặt, chờ trả lời.
+    async fn ask(engine: &EngineHandle, op: SettingsOp) -> Outcome {
+        let (outbox, rx) = Outbox::new();
+        engine.send(Input::Request { outbox, req: 42, op: Op::Settings(op) });
+        let reply = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10))).await.unwrap();
+        match reply {
+            Some(DaemonToUi::Reply { req: 42, outcome }) => outcome,
+            other => panic!("no reply: {other:?}"),
+        }
+    }
+
+    fn view(outcome: Outcome) -> SettingsView {
+        match outcome {
+            Outcome::Settings(v) => v,
+            other => panic!("expected settings, got {other:?}"),
+        }
+    }
+
+    /// C1 (gd1_12, mức engine): đổi từng mục qua IPC ⇒ `config.json` đúng khoá camelCase, đọc lại còn; lỗi nói rõ.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn c1_settings_are_applied_and_saved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let rig = start(tmp.path(), &phone, None).await;
+        let e = &rig.engine;
+        let first = view(ask(e, SettingsOp::Get).await);
+        assert_eq!(first.devices.len(), 1);
+        assert!(!first.download_dir_custom && !first.autostart);
+
+        let dl = tmp.path().join("tải về").join("mới");
+        let v = view(ask(e, SettingsOp::SetDownloadDir { path: Some(dl.clone()) }).await);
+        assert!(v.download_dir_custom && dl.is_dir(), "created on demand");
+        assert_eq!(v.download_dir, dl);
+        let rel = ask(e, SettingsOp::SetDownloadDir { path: Some("relative".into()) }).await;
+        assert_eq!(rel, Outcome::Failed { error: CommandError::InvalidInput });
+        let blocker = tmp.path().join("a-file");
+        std::fs::write(&blocker, b"x").unwrap();
+        let bad = ask(e, SettingsOp::SetDownloadDir { path: Some(blocker.join("sub")) }).await;
+        assert_eq!(bad, Outcome::Failed { error: CommandError::NotWritable });
+
+        assert_eq!(view(ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) }).await).speed_limit_mb_per_sec, Some(5));
+        let zero = ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(0) }).await;
+        assert_eq!(zero, Outcome::Failed { error: CommandError::InvalidInput });
+        assert!(view(ask(e, SettingsOp::SetAutostart { enabled: true }).await).autostart);
+
+        let watch = WatchFolder { enabled: true, path: Some(tmp.path().to_path_buf()) };
+        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: watch.clone() }).await).watch_folder, watch);
+        let missing = WatchFolder { enabled: true, path: Some(tmp.path().join("không có")) };
+        let r = ask(e, SettingsOp::SetWatchFolder { folder: missing }).await;
+        assert_eq!(r, Outcome::Failed { error: CommandError::InvalidInput });
+
+        let v = view(ask(e, SettingsOp::RenameDevice { device: device(), name: "  Máy của mẹ ".into() }).await);
+        assert_eq!(v.devices[0].display_name(), "Máy của mẹ");
+        let r = ask(e, SettingsOp::RenameDevice { device: DeviceId("zz".into()), name: "x".into() }).await;
+        assert_eq!(r, Outcome::Failed { error: CommandError::UnknownDevice });
+
+        let addr = phone.v4().to_string();
+        let v = view(ask(e, SettingsOp::AddAddress { address: addr.clone() }).await);
+        assert_eq!(v.manual_addresses, vec![addr.clone()]);
+        let r = ask(e, SettingsOp::AddAddress { address: "127.0.0.1:9".into() }).await;
+        assert_eq!(r, Outcome::Failed { error: CommandError::Unreachable }, "nothing listens there");
+        let r = ask(e, SettingsOp::AddAddress { address: "không phải địa chỉ".into() }).await;
+        assert_eq!(r, Outcome::Failed { error: CommandError::InvalidInput });
+
+        let v = view(ask(e, SettingsOp::SetLanguage { language: ferry_core::i18n::LanguagePref::Vi }).await);
+        assert_eq!(v.language, ferry_core::i18n::LanguagePref::Vi);
+        wait_for("tray in Vietnamese", || {
+            rig.captured.lock().unwrap().tray.last().is_some_and(|s| s.language == Language::Vi)
+        })
+        .await;
+
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(tmp.path().join("config.json")).unwrap()).unwrap();
+        assert_eq!(json["downloadDir"], dl.to_string_lossy().as_ref());
+        assert_eq!(json["speedLimitMbPerSec"], 5);
+        assert_eq!(json["autostart"], true);
+        assert_eq!(json["watchFolder"]["enabled"], true);
+        assert_eq!(json["manualAddresses"][0], addr.as_str());
+        assert_eq!(json["devices"][0]["alias"], "Máy của mẹ");
+        assert_eq!(json["language"], "vi");
+        let reread = config::load(&tmp.path().join("config.json")).unwrap();
+        assert_eq!(reread.speed_limit_bytes(), Some(5 * 1024 * 1024));
+        assert_eq!(reread.devices[0].alias.as_deref(), Some("Máy của mẹ"));
+
+        let v = view(ask(e, SettingsOp::RemoveAddress { address: addr }).await);
+        assert!(v.manual_addresses.is_empty());
         rig.engine.shutdown();
     }
 

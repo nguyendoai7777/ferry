@@ -448,7 +448,7 @@ mod tests {
         let root = layout(&c, 0);
         assert_eq!(root.2.len(), c.menu.len());
         assert_eq!(root.2[0].value_signature().to_string(), "(ia{sv}av)");
-        let pause = layout(&c, 2);
+        let pause = layout(&c, 3); // Mở · Cài đặt… · Tạm dừng
         assert_eq!(pause.1.get("enabled"), Some(&Value::from(false)));
         assert!(!layout(&c, 1).1.contains_key("enabled"));
     }

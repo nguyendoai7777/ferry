@@ -103,7 +103,7 @@ async fn c1_pair_stores_token_in_keyring_only() {
     assert!(c.has_token());
     assert!(c.info().await.unwrap().paired);
 
-    cfg.remember_device(PairedDevice { id: paired.id, name: paired.name, addresses: vec![addr.to_string()] });
+    cfg.remember_device(PairedDevice { id: paired.id, name: paired.name, addresses: vec![addr.to_string()], alias: None });
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.json");
     config::save(&path, &cfg).unwrap();
@@ -161,7 +161,7 @@ async fn c2_phone_forgets_then_repair() {
     let mut c = PhoneClient::new(addr, Some(&phone_id()), None).unwrap();
     let paired = pairing::pair(&mut c, Some(&phone_id()), &pin(), (&cfg).into(), &tokens).await.unwrap();
     let old = mem.get(&phone_id()).unwrap().unwrap();
-    cfg.remember_device(PairedDevice { id: paired.id, name: paired.name, addresses: vec![addr.to_string()] });
+    cfg.remember_device(PairedDevice { id: paired.id, name: paired.name, addresses: vec![addr.to_string()], alias: None });
 
     // Khởi động daemon: nạp config ⇒ Paired ⇒ `info` với token ⇒ Online.
     let mut devices = Devices::from_config(&cfg.devices, Vec::new(), Instant::now());
@@ -197,7 +197,7 @@ async fn c2_phone_forgets_then_repair() {
 #[tokio::test]
 async fn missing_token_needs_repair() {
     let cfg = Config {
-        devices: vec![PairedDevice { id: phone_id(), name: "P".into(), addresses: vec!["127.0.0.1:9".into()] }],
+        devices: vec![PairedDevice { id: phone_id(), name: "P".into(), addresses: vec!["127.0.0.1:9".into()], alias: None }],
         ..me()
     };
     let tokens = Tokens::new(Arc::new(MemoryKeyring::new()));
@@ -216,7 +216,7 @@ async fn forget_online_and_offline() {
     let mut c = PhoneClient::new(p.v4(), Some(&phone_id()), None).unwrap();
     pairing::pair(&mut c, None, &pin(), (&cfg).into(), &tokens).await.unwrap();
     let token = mem.get(&phone_id()).unwrap().unwrap();
-    cfg.remember_device(PairedDevice { id: phone_id(), name: "P".into(), addresses: vec![] });
+    cfg.remember_device(PairedDevice { id: phone_id(), name: "P".into(), addresses: vec![], alias: None });
 
     let f = pairing::forget(&phone_id(), Some(&c), &tokens).await;
     assert!(f.phone_notified && f.keyring_error.is_none());

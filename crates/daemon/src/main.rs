@@ -1,10 +1,12 @@
 //! Tiến trình nền `ferry`: khay, IPC, bật cửa sổ `ferry-ui`, chạy hàng đợi gửi sang điện thoại (engine trên runtime tokio
 //! 2 luồng). Không GPU, không framework UI ("RAM là tính năng", `CLAUDE.md` mục Bố cục).
 //!
-//! `ferry` lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát.
+//! `ferry` lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát. `ferry --autostart` (OS bật lúc đăng
+//! nhập, `autostart.rs`) gặp instance đã chạy thì thoát im lặng, không mở cửa sổ.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod daemon;
 mod engine;
 mod instance;
@@ -31,7 +33,11 @@ use crate::engine::{EngineConfig, Sinks};
 
 fn main() -> ExitCode {
     let log_file = logging::init("daemon");
-    log::info!("ferry {VERSION} starting (pid {}, log: {log_file:?})", std::process::id());
+    let from_autostart = std::env::args().skip(1).any(|a| a == "--autostart");
+    log::info!(
+        "ferry {VERSION} starting (pid {}, autostart: {from_autostart}, log: {log_file:?})",
+        std::process::id()
+    );
 
     let data_dir = match paths::data_dir() {
         Ok(d) => d,
@@ -39,6 +45,10 @@ fn main() -> ExitCode {
     };
     let lock = match instance::acquire(&data_dir) {
         Ok(Some(lock)) => lock,
+        Ok(None) if from_autostart => {
+            log::info!("autostart: ferry is already running, exiting");
+            return ExitCode::SUCCESS;
+        }
         Ok(None) => return activate_running(),
         Err(e) => return fail(&format!("cannot take instance lock: {e}")),
     };
@@ -58,6 +68,8 @@ fn main() -> ExitCode {
         log::info!("config: wrote {}", config_path.display());
     }
     let language = loaded.config.language.resolve();
+    let autostart_error = autostart::sync_on_start(loaded.config.autostart).err();
+    let throttle = Throttle::new(loaded.config.speed_limit_bytes());
 
     let store = match QueueStore::default_path()
         .map_err(|e| e.to_string())
@@ -94,8 +106,10 @@ fn main() -> ExitCode {
             tokens: Tokens::os(),
             mdns: true,
             runner: RunnerConfig::default(),
-            throttle: Throttle::unlimited(),
+            throttle,
             i18n: I18n::new(language),
+            autostart: autostart::apply,
+            autostart_error,
         };
         let sinks = Sinks {
             tray: Box::new(move |status| tray_waker.send(Event::Tray(status))),

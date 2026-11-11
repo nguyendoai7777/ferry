@@ -15,7 +15,9 @@
 //! - Daemon ⇒ UI (role `ui` sau `Hello`): [`DaemonToUi::Snapshot`] đầy đủ ngay khi nối, rồi mỗi khi đổi; chỉ tiến độ
 //!   trong khúc đổi ⇒ [`DaemonToUi::Progress`]. Gộp tối đa [`MAX_PUSH_PER_SEC`] lần / s. UI thay toàn bộ trạng thái bằng
 //!   `Snapshot`, cộng `Progress` lên trên (`sent` mới hơn `offset` của mục).
-//! - `Cli` (lần chạy `ferry` thứ hai) không nhận đẩy.
+//! - `Cli` (lần chạy `ferry` thứ hai, cửa sổ cài đặt) không nhận đẩy — chỉ `Reply` cho lệnh của nó.
+//! - gd1_12 thêm: `Settings{req, op}` ([`SettingsOp`], mọi lệnh trả [`Outcome::Settings`] = cài đặt sau khi áp),
+//!   [`DaemonToUi::OpenSettings`] (menu khay "Cài đặt…"), [`CommandError::NotWritable`].
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -27,7 +29,9 @@ use interprocess::local_socket::{ListenerOptions, Name, Stream};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::config::WatchFolder;
 use crate::device::{DeviceId, DeviceState};
+use crate::i18n::LanguagePref;
 use crate::protocol::LibraryItem;
 use crate::queue::store::{BatchInfo, BatchProgress, DownloadItem, UploadItem};
 use crate::queue::{BatchId, ItemId};
@@ -54,6 +58,8 @@ pub enum UiToDaemon {
     Phone { req: u64, op: PhoneOp },
     /// Thư viện điện thoại (gd1_07: `List`; gd1_10 / gd1_11 thêm `Download`).
     Library { req: u64, op: LibraryOp },
+    /// Cài đặt (gd1_12). Daemon là bên duy nhất ghi `config.json`; mọi lệnh trả [`Outcome::Settings`] (đã áp + đã lưu).
+    Settings { req: u64, op: SettingsOp },
 }
 
 /// Thao tác người dùng trên mục / lô (nút ở hàng đợi). Ánh xạ sang `transfer::ItemAction` ở daemon.
@@ -114,6 +120,67 @@ pub enum LibraryOp {
     Download { device: DeviceId, remote_ids: Vec<String> },
 }
 
+/// Lệnh màn cài đặt (PROTOCOL 4.5). Quên điện thoại đi [`PhoneOp::Forget`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum SettingsOp {
+    /// Đọc cài đặt hiện tại.
+    Get,
+    /// Đổi ngôn ngữ: khay, thông báo đổi ngay; cửa sổ khác đổi khi mở lại.
+    SetLanguage { language: LanguagePref },
+    /// Thư mục "Tải về máy". `None` ⇒ mặc định của OS. Không tạo / ghi được ⇒ `NotWritable`; đường dẫn tương đối ⇒
+    /// `InvalidInput`.
+    SetDownloadDir { path: Option<PathBuf> },
+    /// Trần tốc độ MB/s; `None` ⇒ tắt. Có hiệu lực ngay cho tệp đang gửi. Ngoài `1..=MAX_SPEED_LIMIT_MB_PER_SEC` ⇒
+    /// `InvalidInput`.
+    SetSpeedLimit { mb_per_sec: Option<u32> },
+    /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
+    SetAutostart { enabled: bool },
+    /// Thư mục theo dõi (gd1_13 chạy). `enabled` mà `path` không phải thư mục có thật ⇒ `InvalidInput`.
+    SetWatchFolder { folder: WatchFolder },
+    /// Tên hiển thị trên PC; chuỗi trắng ⇒ về tên điện thoại báo. Không có trong sổ đã ghép ⇒ `UnknownDevice`.
+    RenameDevice { device: DeviceId, name: String },
+    /// Thêm địa chỉ tay (mọi dạng `parse_address`): hỏi `info` trước, trả lời được mới lưu. Lỗi như
+    /// [`PhoneOp::AddAddress`] (`InvalidInput`, `UnknownInterface`, `Unreachable`).
+    AddAddress { address: String },
+    RemoveAddress { address: String },
+}
+
+/// Cài đặt cho màn hình (PROTOCOL 4.5). Không token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub language: LanguagePref,
+    /// Thư mục tải về đang dùng (đã giải mặc định).
+    pub download_dir: PathBuf,
+    /// `false` ⇒ đang là mặc định của OS (nút "Về mặc định" tắt).
+    pub download_dir_custom: bool,
+    pub speed_limit_mb_per_sec: Option<u32>,
+    pub autostart: bool,
+    /// Lần áp vào OS gần nhất hỏng (chữ của OS, đã log) — hiện dưới công tắc kèm cách gỡ.
+    pub autostart_error: Option<String>,
+    pub watch_folder: WatchFolder,
+    pub manual_addresses: Vec<String>,
+    /// Điện thoại đã ghép, thứ tự ghép.
+    pub devices: Vec<DeviceSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSetting {
+    pub id: DeviceId,
+    /// Tên điện thoại báo (`info.name`) — gợi ý trong ô đổi tên.
+    pub name: String,
+    pub alias: Option<String>,
+    pub state: DeviceState,
+}
+
+impl DeviceSetting {
+    pub fn display_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
+}
+
 /// PIN ghép: chỉ đi UI → daemon, không bao giờ vào snapshot / log (`Debug` che). Daemon bọc ngay `protocol::Secret`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -146,6 +213,8 @@ pub enum DaemonToUi {
         req: u64,
         outcome: Outcome,
     },
+    /// Daemon → UI: mở (hoặc đưa lên trước) cửa sổ cài đặt — menu khay "Cài đặt…" khi UI đang chạy (gd1_12).
+    OpenSettings,
 }
 
 /// Trần nhịp đẩy `Snapshot` + `Progress` cho mỗi client.
@@ -262,6 +331,8 @@ pub enum Outcome {
         already_queued: u64,
         missing: u64,
     },
+    /// Mọi lệnh `Settings` (gd1_12).
+    Settings(SettingsView),
     Failed {
         error: CommandError,
     },
@@ -294,6 +365,8 @@ pub enum CommandError {
     Keyring,
     /// Không nối được điện thoại.
     Unreachable,
+    /// Thư mục không tạo / ghi được (cài đặt thư mục tải về, gd1_12).
+    NotWritable,
     /// Lỗi trong daemon (đĩa, SQLite) — chi tiết ở log.
     Internal,
 }
@@ -771,12 +844,64 @@ mod tests {
                 },
                 r#"{"type":"library","req":7,"op":{"op":"download","device":"3f9a","remoteIds":["v1","v2"]}}"#,
             ),
+            (UiToDaemon::Settings { req: 7, op: SettingsOp::Get }, r#"{"type":"settings","req":7,"op":{"op":"get"}}"#),
+            (
+                UiToDaemon::Settings { req: 8, op: SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) } },
+                r#"{"type":"settings","req":8,"op":{"op":"set_speed_limit","mbPerSec":5}}"#,
+            ),
+            (
+                UiToDaemon::Settings {
+                    req: 9,
+                    op: SettingsOp::SetWatchFolder {
+                        folder: WatchFolder { enabled: true, path: Some("/v/in".into()) },
+                    },
+                },
+                r#"{"type":"settings","req":9,"op":{"op":"set_watch_folder","folder":{"enabled":true,"path":"/v/in"}}}"#,
+            ),
+            (
+                UiToDaemon::Settings { req: 10, op: SettingsOp::SetLanguage { language: LanguagePref::System } },
+                r#"{"type":"settings","req":10,"op":{"op":"set_language","language":"system"}}"#,
+            ),
+            (
+                UiToDaemon::Settings { req: 11, op: SettingsOp::RenameDevice { device: dev.clone(), name: "Mẹ".into() } },
+                r#"{"type":"settings","req":11,"op":{"op":"rename_device","device":"3f9a","name":"Mẹ"}}"#,
+            ),
         ];
         for (msg, wire) in cases {
             assert_eq!(serde_json::to_string(&msg).unwrap(), wire);
             assert_eq!(serde_json::from_str::<UiToDaemon>(wire).unwrap(), msg);
         }
+        let view = SettingsView {
+            language: LanguagePref::Vi,
+            download_dir: "/d".into(),
+            download_dir_custom: true,
+            speed_limit_mb_per_sec: None,
+            autostart: true,
+            autostart_error: None,
+            watch_folder: WatchFolder::default(),
+            manual_addresses: vec![],
+            devices: vec![DeviceSetting {
+                id: dev.clone(),
+                name: "Pixel".into(),
+                alias: Some("Mẹ".into()),
+                state: DeviceState::Online,
+            }],
+        };
         let replies: Vec<(DaemonToUi, &str)> = vec![
+            (
+                DaemonToUi::Reply { req: 7, outcome: Outcome::Settings(view) },
+                concat!(
+                    r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
+                    r#""downloadDirCustom":true,"speedLimitMbPerSec":null,"autostart":true,"autostartError":null,"#,
+                    r#""watchFolder":{"enabled":false},"manualAddresses":[],"#,
+                    r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}]}}"#
+                ),
+            ),
+            (DaemonToUi::OpenSettings, r#"{"type":"open_settings"}"#),
+            (
+                DaemonToUi::Reply { req: 8, outcome: Outcome::Failed { error: CommandError::NotWritable } },
+                r#"{"type":"reply","req":8,"outcome":{"kind":"failed","error":{"code":"not_writable"}}}"#,
+            ),
             (
                 DaemonToUi::Reply { req: 1, outcome: Outcome::Done },
                 r#"{"type":"reply","req":1,"outcome":{"kind":"done"}}"#,

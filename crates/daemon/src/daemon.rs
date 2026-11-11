@@ -64,6 +64,7 @@ impl Daemon {
         match event {
             Event::Menu(id) => match tray::menu_action(&id) {
                 Some(MenuAction::OpenWindow) => self.ui.open(&self.waker),
+                Some(MenuAction::OpenSettings) => self.ui.open_settings(&self.waker),
                 Some(MenuAction::TogglePause) => self.engine.send(Input::TogglePauseAll),
                 Some(MenuAction::Quit) => return false,
                 None => log::debug!("tray: unknown menu id {id}"),
@@ -72,7 +73,13 @@ impl Daemon {
             Event::UiConnected { id, outbox } => self.ui.connected(id, outbox),
             Event::UiDisconnected { id } => self.ui.disconnected(id),
             Event::UiExited { pid } => self.ui.exited(pid),
-            Event::Tray(status) => self.tray.apply(&status, &self.i18n),
+            Event::Tray(status) => {
+                // Cài đặt đổi ngôn ngữ: engine đã đổi chữ trong `status`, menu khay theo cùng ngôn ngữ.
+                if status.language != self.i18n.language() {
+                    self.i18n = I18n::new(status.language);
+                }
+                self.tray.apply(&status, &self.i18n);
+            }
             Event::Quit => return false,
         }
         true

@@ -27,7 +27,32 @@ pub struct Config {
     /// [`Config::download_dir`] thay vì đọc thẳng.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_dir: Option<PathBuf>,
+    /// Trần tốc độ chung mọi điện thoại, MB/s (1 MB = 1 048 576 byte, cùng đơn vị chữ hiển thị); vắng = không giới hạn
+    /// (gd1_12). Dùng [`Config::speed_limit_bytes`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_limit_mb_per_sec: Option<u32>,
+    /// Khởi động cùng hệ thống (gd1_12, `daemon/src/autostart.rs`). Mặc định tắt.
+    pub autostart: bool,
+    /// Thư mục theo dõi (gd1_12 lưu, gd1_13 chạy).
+    pub watch_folder: WatchFolder,
+    /// Địa chỉ nhập tay ở "Nâng cao" (`ip:port`, `[v6]:port`, `[fe80::x%iface]:port`): daemon hỏi `info` lúc khởi động
+    /// để điện thoại vẫn hiện khi mạng chặn mDNS (gd1_12).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub manual_addresses: Vec<String>,
 }
+
+/// Một thư mục theo dõi: tệp mới ổn định trong đó tự gửi sang điện thoại (gd1_13).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WatchFolder {
+    pub enabled: bool,
+    /// Vắng ⇒ chưa chọn; `enabled` không có nghĩa khi chưa có thư mục.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+}
+
+/// Trần trên của giới hạn tốc độ (MB/s) — trên mức này coi như gõ nhầm.
+pub const MAX_SPEED_LIMIT_MB_PER_SEC: u32 = 10_000;
 
 /// Một điện thoại đã ghép (W-3, `PROTOCOL.md` 6.8): `id` + **tập** địa chỉ cuối cùng thấy được, IPv4 lẫn IPv6.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -38,6 +63,9 @@ pub struct PairedDevice {
     pub name: String,
     /// `ip:port`, `[v6]:port`, `[fe80::x%iface]:port` — dạng chuỗi để giữ được tên interface của địa chỉ link-local.
     pub addresses: Vec<String>,
+    /// Tên người dùng đặt trên PC (cài đặt, gd1_12); vắng ⇒ hiện `name` của điện thoại. `info.name` đổi không đè cái này.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
 }
 
 impl Config {
@@ -46,10 +74,19 @@ impl Config {
         self.download_dir.clone().filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_download_dir)
     }
 
+    /// Trần tốc độ, byte / s; `None` = không giới hạn (`0` cũng là không giới hạn).
+    pub fn speed_limit_bytes(&self) -> Option<u64> {
+        self.speed_limit_mb_per_sec.filter(|n| *n > 0).map(|n| u64::from(n) * 1024 * 1024)
+    }
+
     /// Thêm / cập nhật điện thoại vừa ghép (ghép lại ⇒ thay tên + địa chỉ, giữ vị trí trong danh sách). Không token.
     pub fn remember_device(&mut self, device: PairedDevice) {
         match self.devices.iter_mut().find(|d| d.id == device.id) {
-            Some(d) => *d = device,
+            // Ghép lại không mất bí danh người dùng đã đặt.
+            Some(d) => {
+                let alias = d.alias.take();
+                *d = PairedDevice { alias: device.alias.clone().or(alias), ..device };
+            }
             None => self.devices.push(device),
         }
     }
@@ -184,8 +221,9 @@ mod tests {
                 id: DeviceId("a1b2".into()),
                 name: "Pixel".into(),
                 addresses: vec!["192.168.1.20:8080".into(), "[fe80::1%en0]:8080".into()],
+                alias: None,
             }],
-            download_dir: None,
+            ..Config::default()
         };
         save(&path, &config).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -199,7 +237,7 @@ mod tests {
     #[test]
     fn remember_and_forget_device() {
         let mut c = Config::default();
-        let dev = |id: &str, name: &str| PairedDevice { id: DeviceId(id.into()), name: name.into(), addresses: vec![] };
+        let dev = |id: &str, name: &str| PairedDevice { id: DeviceId(id.into()), name: name.into(), ..PairedDevice::default() };
         c.remember_device(dev("a", "A"));
         c.remember_device(dev("b", "B"));
         c.remember_device(dev("a", "A2"));
@@ -219,6 +257,48 @@ mod tests {
         assert_eq!(c.download_dir(), default_download_dir(), "empty string means default");
         let back: Config = serde_json::from_str(r#"{"downloadDir":"/tmp/phim"}"#).unwrap();
         assert_eq!(back.download_dir(), PathBuf::from("/tmp/phim"));
+    }
+
+    /// C1 (gd1_12): mọi khoá cài đặt camelCase, ghi rồi đọc lại còn nguyên; vắng ⇒ mặc định, không ghi ra tệp.
+    #[test]
+    fn settings_keys_are_camel_case_and_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let defaults = serde_json::to_value(Config::default()).unwrap();
+        for key in ["speedLimitMbPerSec", "manualAddresses", "downloadDir"] {
+            assert!(defaults.get(key).is_none(), "{key} stays out of the file when unset");
+        }
+        assert_eq!(defaults["autostart"], false);
+        assert_eq!(defaults["watchFolder"], serde_json::json!({ "enabled": false }));
+
+        let config = Config {
+            client_id: "c".into(),
+            language: LanguagePref::En,
+            download_dir: Some(PathBuf::from("/tmp/nhận")),
+            speed_limit_mb_per_sec: Some(5),
+            autostart: true,
+            watch_folder: WatchFolder { enabled: true, path: Some(PathBuf::from("/tmp/theo dõi")) },
+            manual_addresses: vec!["192.168.1.9:8080".into(), "[fd12::5]:8080".into()],
+            devices: vec![PairedDevice {
+                id: DeviceId("a1".into()),
+                name: "Pixel 8".into(),
+                addresses: vec![],
+                alias: Some("Máy của mẹ".into()),
+            }],
+            ..Config::default()
+        };
+        save(&path, &config).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v["speedLimitMbPerSec"], 5);
+        assert_eq!(v["autostart"], true);
+        assert_eq!(v["watchFolder"], serde_json::json!({ "enabled": true, "path": "/tmp/theo dõi" }));
+        assert_eq!(v["manualAddresses"][1], "[fd12::5]:8080");
+        assert_eq!(v["devices"][0]["alias"], "Máy của mẹ");
+        assert_eq!(v["downloadDir"], "/tmp/nhận");
+        assert_eq!(v["language"], "en");
+        assert_eq!(load(&path).unwrap(), config);
+        assert_eq!(config.speed_limit_bytes(), Some(5 * 1024 * 1024));
+        assert_eq!(Config { speed_limit_mb_per_sec: Some(0), ..Config::default() }.speed_limit_bytes(), None);
     }
 
     #[test]

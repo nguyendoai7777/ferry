@@ -37,6 +37,8 @@ pub struct TrayStatus {
     pub mode: TrayMode,
     pub tooltip: String,
     pub pause: PauseItem,
+    /// Ngôn ngữ chữ của bản này: đổi trong cài đặt (gd1_12) ⇒ luồng chính dựng lại menu khay theo nó.
+    pub language: Language,
 }
 
 /// Việc người dùng phải làm, theo thứ tự ưu tiên (ghép lại trước hết chỗ).
@@ -150,7 +152,7 @@ pub fn status(s: &Summary, progress: &HashMap<ItemId, ItemProgress>, i18n: &I18n
         }
         None => (TrayMode::Idle, i18n.t("app.name").to_owned()),
     };
-    TrayStatus { mode, tooltip, pause }
+    TrayStatus { mode, tooltip, pause, language: i18n.language() }
 }
 
 /// Khoá i18n theo số: `<key>_one` khi `n == 1` (tiếng Anh "1 file"), không thì `<key>`. Hai catalog có đủ cả hai khoá.

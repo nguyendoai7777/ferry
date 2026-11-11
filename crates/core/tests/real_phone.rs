@@ -125,7 +125,7 @@ async fn real_phone_keyring() {
     assert!(OsKeyring.get(&paired.id).unwrap().is_some(), "token in the OS keyring");
     // Đọc lại qua bộ đệm mới (như daemon khởi động lại).
     let token = Tokens::os().get(&paired.id).await.unwrap().expect("token after restart");
-    let saved = vec![PairedDevice { id: paired.id.clone(), name: paired.name, addresses: vec![addr.to_string()] }];
+    let saved = vec![PairedDevice { id: paired.id.clone(), name: paired.name, addresses: vec![addr.to_string()], alias: None }];
     let mut devices = Devices::from_config(&saved, Vec::new(), Instant::now());
     let fresh = PhoneClient::new(addr, Some(&info.id), Some(token.clone())).unwrap();
     devices.info_ok(&fresh.info().await.unwrap(), addr, Instant::now());

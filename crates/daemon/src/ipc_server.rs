@@ -143,6 +143,7 @@ fn serve(id: u64, mut conn: ServerConnection, waker: &Waker, engine: &EngineHand
             Ok(Some(UiToDaemon::Queue { req, op })) => engine.send(request(req, Op::Queue(op))),
             Ok(Some(UiToDaemon::Phone { req, op })) => engine.send(request(req, Op::Phone(op))),
             Ok(Some(UiToDaemon::Library { req, op })) => engine.send(request(req, Op::Library(op))),
+            Ok(Some(UiToDaemon::Settings { req, op })) => engine.send(request(req, Op::Settings(op))),
             Ok(Some(UiToDaemon::Hello { .. })) => {
                 outbox.push(DaemonToUi::Error { message: "already said hello".into() });
             }

@@ -30,7 +30,8 @@ enum Incoming {
     Closed,
 }
 
-pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: AnyWindowHandle, cx: &mut App) {
+/// `window`: cửa sổ chính để đưa lên trước khi daemon gửi `Focus`; `None` khi chỉ mở cửa sổ cài đặt (`--settings`).
+pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: Option<AnyWindowHandle>, cx: &mut App) {
     let (tx, mut rx) = mpsc::unbounded();
     let spawned = std::thread::Builder::new().name("ipc-recv".into()).spawn(move || {
         loop {
@@ -57,11 +58,17 @@ pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: AnyWindo
     cx.spawn(async move |cx| {
         while let Some(incoming) = rx.next().await {
             match incoming {
-                Incoming::Message(DaemonToUi::Focus) => {
-                    let _ = cx.update_window(window, |_, window, cx| {
-                        cx.activate(true);
-                        window.activate_window();
-                    });
+                Incoming::Message(DaemonToUi::Focus) => match window {
+                    Some(window) => {
+                        let _ = cx.update_window(window, |_, window, cx| {
+                            cx.activate(true);
+                            window.activate_window();
+                        });
+                    }
+                    None => log::info!("ipc: focus asked, only the settings window is open"),
+                },
+                Incoming::Message(DaemonToUi::OpenSettings) => {
+                    cx.update(crate::views::settings::open);
                 }
                 Incoming::Message(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
                 Incoming::Message(msg) => {

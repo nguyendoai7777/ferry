@@ -6,6 +6,7 @@ name = "Ferry"
 
 [tray]
 open_window = "Open window"
+settings = "Settings…"
 pause_all = "Pause all"
 resume_all = "Resume all"
 quit = "Quit"
