@@ -14,6 +14,9 @@ gethostname = "1"
 # Interface của PC (subnet, prefix /64, tên ⇄ index cho link-local) — thứ tự địa chỉ PROTOCOL 6.2. MIT/BSD-3.
 if-addrs = "0.15"
 interprocess.workspace = true
+# Token trong kho khoá OS (`pairing`, PROTOCOL 2.2): Keychain macOS, Credential Manager Windows, Secret Service Linux qua
+# `zbus` thuần Rust (không `libdbus`) + mã hoá phiên `crypto-rust`. MIT/Apache, cả cây đã soát `cargo deny` (gd1_06).
+keyring = "4.2"
 log.workspace = true
 # Dò `_vpsync._tcp` (PROTOCOL 6.2): một luồng riêng, không runtime async; A + AAAA kèm interface nhận. MIT/Apache.
 mdns-sd = "0.21"

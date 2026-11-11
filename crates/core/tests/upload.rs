@@ -285,7 +285,8 @@ async fn c5_source_changed_mid_upload_fails() {
 async fn c6_rate_limit_within_ten_percent() {
     let phone = FakePhone::start().await;
     phone.set_discard_data(true);
-    let cfg = RunnerConfig { chunk_size: 4 * MB, progress_interval: Duration::from_millis(250), ..RunnerConfig::default() };
+    let cfg =
+        RunnerConfig { chunk_size: 4 * MB, progress_interval: Duration::from_millis(250), ..RunnerConfig::default() };
     let mut rig = Rig::with_phone(phone, cfg, Some(10 * 1_000_000), true).await;
     let size = 20 * 1_000_000;
     let f = write(&rig.src(), "rate.mp4", size, 7);

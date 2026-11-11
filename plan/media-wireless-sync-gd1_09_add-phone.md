@@ -11,6 +11,15 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/ui/src/views/add_phone.rs`; SỬA `i18n/{vi,en}.toml` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_06 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_06 -->
+
+- Lỗi ghép (qua IPC của gd1_07, gốc `pairing::PairError`) ⇒ chữ nói việc cần làm: `WrongPin` "PIN không đúng, xem lại trên
+  điện thoại"; `RateLimited{retryAfter}` đếm ngược rồi mới cho nhập (thiếu `Retry-After` ⇒ 60 s); `OtherPhone` "Địa chỉ này
+  giờ là điện thoại khác"; `Keyring(Unavailable)` "Cần kho khoá của hệ thống (GNOME Keyring / KWallet) để lưu ghép đôi";
+  mạng ⇒ "Không nối được điện thoại — bật Sync WiFi". PIN không giữ lại sau khi gửi.
+
 ## 1. Làm gì (PROTOCOL mục 4.4)
 - Bước 1: hướng dẫn "Trên điện thoại: mở app → menu → Sync WiFi → Bật".
 - Bước 2: danh sách điện thoại dò thấy chưa ghép (từ snapshot), cập nhật trực tiếp; trống thì gợi ý cùng WiFi + liên kết "Nhập địa chỉ tay" (nâng cao).

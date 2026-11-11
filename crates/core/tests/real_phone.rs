@@ -93,3 +93,60 @@ async fn real_phone_round_trip() {
     assert!(!c.info().await.unwrap().paired);
     assert!(matches!(c.list().await, Err(ClientError::Unauthorized)));
 }
+
+/// gd1_06: ghép với app thật, token vào kho khoá **thật** của OS (dịch vụ `media-wireless-sync.dev` ở bản debug), rồi
+/// chờ người thử bấm "Quên mọi máy tính" trên điện thoại (tối đa 120 s) ⇒ PC thấy `NeedsRepair` ⇒ quên phía PC xoá token.
+///
+/// ```bash
+/// MWS_TEST_PHONE=127.0.0.1:18080 MWS_TEST_PIN=<PIN> \
+///   cargo test -p mws-core --test real_phone real_phone_keyring -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "cần điện thoại / emulator thật + kho khoá OS: MWS_TEST_PHONE, MWS_TEST_PIN"]
+async fn real_phone_keyring() {
+    use std::time::Instant;
+
+    use mws_core::config::{Config, PairedDevice};
+    use mws_core::device::{DeviceState, Devices};
+    use mws_core::pairing::{self, OsKeyring, TokenStore, Tokens};
+
+    let (Ok(addr), Ok(pin)) = (std::env::var("MWS_TEST_PHONE"), std::env::var("MWS_TEST_PIN")) else {
+        eprintln!("bỏ qua: thiếu MWS_TEST_PHONE / MWS_TEST_PIN");
+        return;
+    };
+    let addr: std::net::SocketAddr = addr.parse().expect("MWS_TEST_PHONE = ip:port");
+    let info = PhoneClient::new(addr, None, None).unwrap().info().await.unwrap();
+    let cfg =
+        Config { client_id: "mws-gd1-06-test".into(), client_name: "Máy thử gd1_06".into(), ..Config::default() };
+    let tokens = Tokens::os();
+
+    let mut c = PhoneClient::new(addr, Some(&info.id), None).unwrap();
+    let paired = pairing::pair(&mut c, Some(&info.id), &Secret::new(pin), (&cfg).into(), &tokens).await.unwrap();
+    assert!(OsKeyring.get(&paired.id).unwrap().is_some(), "token in the OS keyring");
+    // Đọc lại qua bộ đệm mới (như daemon khởi động lại).
+    let token = Tokens::os().get(&paired.id).await.unwrap().expect("token after restart");
+    let saved = vec![PairedDevice { id: paired.id.clone(), name: paired.name, addresses: vec![addr.to_string()] }];
+    let mut devices = Devices::from_config(&saved, Vec::new(), Instant::now());
+    let fresh = PhoneClient::new(addr, Some(&info.id), Some(token.clone())).unwrap();
+    devices.info_ok(&fresh.info().await.unwrap(), addr, Instant::now());
+    assert_eq!(devices.get(&info.id).unwrap().state, DeviceState::Online);
+
+    eprintln!(">>> bấm \"Quên mọi máy tính\" trên điện thoại (chờ 120 s)");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let i = fresh.info().await.unwrap();
+        if !i.paired {
+            devices.info_ok(&i, addr, Instant::now());
+            break;
+        }
+        assert!(Instant::now() < deadline, "phone did not forget");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    assert_eq!(devices.get(&info.id).unwrap().state, DeviceState::NeedsRepair);
+    assert!(matches!(fresh.list().await, Err(ClientError::Unauthorized)));
+
+    let f = pairing::forget(&info.id, Some(&fresh), &tokens).await;
+    eprintln!("forget: {f:?}");
+    assert!(f.keyring_error.is_none());
+    assert!(OsKeyring.get(&info.id).unwrap().is_none(), "token removed from the OS keyring");
+}

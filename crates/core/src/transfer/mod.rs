@@ -76,8 +76,14 @@ pub enum ItemAction {
 pub enum Command {
     /// Có mục mới trong hàng đợi của thiết bị (sau `AddFiles`).
     Wake,
-    Item { id: ItemId, action: ItemAction },
-    Batch { batch: BatchId, action: ItemAction },
+    Item {
+        id: ItemId,
+        action: ItemAction,
+    },
+    Batch {
+        batch: BatchId,
+        action: ItemAction,
+    },
     /// Thoát vòng chạy (tắt app). Request đang bay bị cắt; mở lại thì `QueueStore::open` đưa về `Waiting`.
     Stop,
 }

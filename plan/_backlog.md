@@ -13,3 +13,6 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_05 C4 — điện thoại thật hiện trong ≤ 5 s** — lý do: cần điện thoại Android thật cùng WiFi (emulator không quảng
   bá mDNS ra LAN). Bật Sync WiFi trên app `video-player` rồi `cargo run -p mws-core --example discover`; xem mục 9 của
   `plan/media-wireless-sync-gd1_05_discovery-devices.md`.
+- **gd1_06 C3 — kho khoá thật sau khởi động lại máy** (Windows / macOS / GNOME) — lý do: cần daemon gd1_07 + UI ghép,
+  và máy Windows / Ubuntu. Ghép một điện thoại, khởi động lại máy, mở `mws` ⇒ thiết bị Online không hỏi PIN.
+- **Keychain macOS hỏi quyền sau khi cập nhật bản chưa ký** (gd1_06 mục 10) — lý do: cần chứng chỉ ký (trả phí, D-21).

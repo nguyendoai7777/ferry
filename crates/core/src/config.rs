@@ -1,7 +1,7 @@
 //! `config.json` (khoá camelCase, mọi trường có mặc định): định danh của PC với điện thoại (`PROTOCOL.md` 6.3), ngôn
 //! ngữ, thiết bị đã ghép. Chỉ daemon `mws` ghi; `mws-ui` đọc ([`load`]), đổi gì thì gửi lệnh qua IPC.
 //!
-//! Token **không bao giờ** nằm ở đây (`PROTOCOL.md` 2.2): chỉ ở kho khoá OS (task gd1_06).
+//! Token **không bao giờ** nằm ở đây (`PROTOCOL.md` 2.2): chỉ ở kho khoá OS (`pairing`, gd1_06).
 
 use std::fs;
 use std::io::{self, Write};
@@ -34,6 +34,23 @@ pub struct PairedDevice {
     pub name: String,
     /// `ip:port`, `[v6]:port`, `[fe80::x%iface]:port` — dạng chuỗi để giữ được tên interface của địa chỉ link-local.
     pub addresses: Vec<String>,
+}
+
+impl Config {
+    /// Thêm / cập nhật điện thoại vừa ghép (ghép lại ⇒ thay tên + địa chỉ, giữ vị trí trong danh sách). Không token.
+    pub fn remember_device(&mut self, device: PairedDevice) {
+        match self.devices.iter_mut().find(|d| d.id == device.id) {
+            Some(d) => *d = device,
+            None => self.devices.push(device),
+        }
+    }
+
+    /// Bỏ điện thoại đã quên. `false` ⇒ không có trong danh sách.
+    pub fn forget_device(&mut self, id: &DeviceId) -> bool {
+        let before = self.devices.len();
+        self.devices.retain(|d| d.id != *id);
+        self.devices.len() != before
+    }
 }
 
 /// Kết quả của [`load_or_init`].
@@ -161,6 +178,19 @@ mod tests {
         assert_eq!(v["language"], "vi");
         assert_eq!(load(&path).unwrap(), config);
         assert!(!dir.path().join(".config.json.tmp").exists());
+    }
+
+    #[test]
+    fn remember_and_forget_device() {
+        let mut c = Config::default();
+        let dev = |id: &str, name: &str| PairedDevice { id: DeviceId(id.into()), name: name.into(), addresses: vec![] };
+        c.remember_device(dev("a", "A"));
+        c.remember_device(dev("b", "B"));
+        c.remember_device(dev("a", "A2"));
+        assert_eq!(c.devices.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["A2", "B"]);
+        assert!(c.forget_device(&DeviceId("a".into())));
+        assert!(!c.forget_device(&DeviceId("a".into())));
+        assert_eq!(c.devices.len(), 1);
     }
 
     #[test]

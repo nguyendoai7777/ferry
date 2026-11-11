@@ -11,6 +11,24 @@
 | Phụ thuộc mới | thông báo hệ thống (`notify-rust` MIT/Apache hoặc API OS trực tiếp — soát Linux không kéo `libdbus`) |
 | File đụng tới | MỚI `crates/daemon/src/{engine,tray_state,notify}.rs`; SỬA `crates/core/src/ipc.rs`, `crates/daemon/src/main.rs` |
 
+## 0. Bàn giao từ media-wireless-sync-gd1_06 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_06 -->
+
+- **Token**: daemon giữ một `pairing::Tokens::os()` (đệm RAM, clone rẻ). Lúc khởi động `Devices::from_config(&config.devices,
+  ..)` rồi với mỗi probe: `tokens.get(id).await` ⇒ `None` (người dùng xoá trong kho khoá) ⇒ `devices.unauthorized(id)`
+  (NeedsRepair), có ⇒ `discovery::connect(id, &addrs, Some(&token))`. `info.paired=false` đã tự ra `NeedsRepair` qua `info_ok`.
+- **Lệnh `Pair{device, pin}`**: `PhoneClient::new(addr, Some(&id), None)` ⇒ `pairing::pair(&mut c, Some(&id), &pin, (&config).into(),
+  &tokens)` ⇒ `config.remember_device(..)` + `config::save` + `devices.paired(id, now)` ⇒ gửi `Link` mới cho runner (runner
+  đang `NeedsPairing` tự chạy tiếp). Lỗi ⇒ IPC trả loại lỗi (`WrongPin`, `RateLimited{retryAfter giây}`, `OtherPhone`,
+  `Keyring`, mạng) — **PIN chỉ đi UI → daemon, không vào snapshot / log**; `Secret` không `Serialize`, IPC nhận chuỗi rồi
+  bọc ngay `Secret::new`.
+- **Lệnh `Forget{device}`**: dừng runner của thiết bị (`Command::Stop`) ⇒ `pairing::forget(id, client_online, &tokens)` ⇒
+  `config.forget_device` + save ⇒ `QueueStore::remove_device` ⇒ `devices.forget(id)`.
+- Bản debug dùng dịch vụ kho khoá `media-wireless-sync.dev` (`pairing::KEYRING_SERVICE`) — không đè bản đã cài.
+- C4 (RAM): Linux `zbus` bật luồng `async-io` khi chạm kho khoá lần đầu — đo sau khi ghép.
+- **Soát lại**: `cargo test -p mws-core --test pairing`; app thật `real_phone_keyring` (`tests/real_phone.rs`).
+
 ## 0. Bàn giao từ media-wireless-sync-gd1_05 (11/11/2026)
 
 <!-- handoff: media-wireless-sync-gd1_05 -->

@@ -540,9 +540,10 @@ impl Exec<'_> {
             return ev;
         }
         let key = (target_dir(item, self.link.dirs), item.name.clone(), item.size);
-        let cached = self.index.as_ref().filter(|ix| {
-            item.batch_id.as_ref() == Some(&ix.batch) && ix.at.elapsed() < self.cfg.check_ttl
-        });
+        let cached = self
+            .index
+            .as_ref()
+            .filter(|ix| item.batch_id.as_ref() == Some(&ix.batch) && ix.at.elapsed() < self.cfg.check_ttl);
         if let Some(ix) = cached {
             return UploadEvent::Checked { exists: ix.keys.contains(&key) };
         }
@@ -654,7 +655,9 @@ impl Exec<'_> {
             ClientError::Unsupported => Ev::Rejected(FailReason::Unsupported),
             ClientError::TooLarge => Ev::Rejected(FailReason::TooLarge),
             ClientError::BadRequest | ClientError::WrongPin => Ev::Rejected(FailReason::BadRequest),
-            ClientError::Busy { retry_after } | ClientError::RateLimited { retry_after } => Ev::Transient { retry_after },
+            ClientError::Busy { retry_after } | ClientError::RateLimited { retry_after } => {
+                Ev::Transient { retry_after }
+            }
             ClientError::Local(err) => local_event(&err),
             ClientError::NotFound if phase == Phase::Transfer => Ev::UploadGone,
             ClientError::OffsetMismatch(offset) if phase == Phase::Transfer => Ev::OffsetReported { offset },

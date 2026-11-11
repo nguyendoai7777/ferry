@@ -527,6 +527,16 @@ impl QueueStore {
         tx.commit()?;
         Ok(n > 0)
     }
+
+    /// Quên điện thoại (gd1_06, người dùng đã đồng ý xoá hàng đợi ở UI): bỏ mọi mục + lô của thiết bị. Gọi sau khi
+    /// dừng runner của nó (mục đang bay không còn ai ghi). Trả số mục đã xoá.
+    pub fn remove_device(&mut self, device: &DeviceId) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let n = tx.execute("DELETE FROM items WHERE device_id = ?1", [&device.0])?;
+        tx.execute("DELETE FROM batches WHERE device_id = ?1", [&device.0])?;
+        tx.commit()?;
+        Ok(n)
+    }
 }
 
 // ---------------------------------------------------------------- hàng ↔ kiểu
@@ -935,6 +945,18 @@ mod tests {
         assert_eq!((item.remote_id.as_str(), item.remote_dir), ("r/1", None));
         // Upload và download không lẫn nhau.
         assert!(store.uploads().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_device_drops_only_that_device() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = open(&tmp, NOW);
+        store.add_batch(&dev("p1"), &plan(3, "a"), NOW).unwrap();
+        store.add_batch(&dev("p2"), &plan(2, "b"), NOW).unwrap();
+        assert_eq!(store.remove_device(&dev("p1")).unwrap(), 3);
+        assert_eq!(store.uploads().unwrap().len(), 2);
+        assert!(store.batches().unwrap().iter().all(|b| b.device_id == dev("p2")), "batches of p1 are gone");
+        assert!(store.next_upload(&dev("p1"), NOW).unwrap().is_none());
     }
 
     /// C3 — tiến trình con ghi liên tục, bị giết giữa chừng ⇒ DB không hỏng, mở lại được, mục đã commit còn đủ.
