@@ -37,11 +37,22 @@ use crate::model::{Model, ModelEvent};
 
 enum Page {
     Main,
-    Browse { browser: Entity<PhoneBrowser>, _sub: Subscription },
+    Browse {
+        browser: Entity<PhoneBrowser>,
+        _sub: Subscription,
+    },
     /// `None`: chưa chọn / chưa ghép điện thoại nào.
-    Library { library: Option<(Entity<PhoneLibrary>, Subscription)> },
-    AddPhone { view: Entity<AddPhoneView>, _sub: Subscription },
-    Settings { view: Entity<SettingsPage>, _sub: Subscription },
+    Library {
+        library: Option<(Entity<PhoneLibrary>, Subscription)>,
+    },
+    AddPhone {
+        view: Entity<AddPhoneView>,
+        _sub: Subscription,
+    },
+    Settings {
+        view: Entity<SettingsPage>,
+        _sub: Subscription,
+    },
 }
 
 impl Page {
@@ -99,7 +110,8 @@ impl MainWindow {
 
     /// Mục của cột trái.
     fn navigate(&mut self, item: NavItem, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page.active() == Active::Item(item) && !matches!(self.page, Page::Browse { .. } | Page::AddPhone { .. }) {
+        if self.page.active() == Active::Item(item) && !matches!(self.page, Page::Browse { .. } | Page::AddPhone { .. })
+        {
             return;
         }
         match item {
@@ -531,33 +543,33 @@ impl MainWindow {
         let w_paste = weak.clone();
         let w_focus = weak;
         div()
-                        .id("main-page")
-                        .track_focus(&self.focus)
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .on_mouse_down(materiant::gpui_kit::MouseButton::Left, move |_, window, cx| {
-                            let handle = w_focus.read_with(cx, |this, _| this.focus.clone()).ok();
-                            if let Some(h) = handle {
-                                window.focus(&h, cx);
-                            }
-                        })
-                        .on_key_down(move |ev: &KeyDownEvent, _, cx| {
-                            if ev.keystroke.modifiers.secondary(cx) && ev.keystroke.key == "v" {
-                                let _ = w_paste.update(cx, |this, cx| this.paste(cx));
-                            }
-                        })
-                        .on_drop({
-                            let w = cx.weak_entity();
-                            move |paths: &ExternalPaths, _, cx| {
-                                let paths = paths.paths().to_vec();
-                                let _ = w.update(cx, |this, cx| this.add_paths(&paths, cx));
-                            }
-                        })
-                        .child(header)
-                        .child(zone)
-                        .children(tray)
-                        .child(queue)
+            .id("main-page")
+            .track_focus(&self.focus)
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_mouse_down(materiant::gpui_kit::MouseButton::Left, move |_, window, cx| {
+                let handle = w_focus.read_with(cx, |this, _| this.focus.clone()).ok();
+                if let Some(h) = handle {
+                    window.focus(&h, cx);
+                }
+            })
+            .on_key_down(move |ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.modifiers.secondary(cx) && ev.keystroke.key == "v" {
+                    let _ = w_paste.update(cx, |this, cx| this.paste(cx));
+                }
+            })
+            .on_drop({
+                let w = cx.weak_entity();
+                move |paths: &ExternalPaths, _, cx| {
+                    let paths = paths.paths().to_vec();
+                    let _ = w.update(cx, |this, cx| this.add_paths(&paths, cx));
+                }
+            })
+            .child(header)
+            .child(zone)
+            .children(tray)
+            .child(queue)
             .into_any_element()
     }
 }

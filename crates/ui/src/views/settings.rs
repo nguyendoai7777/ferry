@@ -1008,7 +1008,10 @@ mod tests {
 
     #[test]
     fn appearance_errors_and_choices_have_keys() {
-        assert_eq!(error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)).0, "settings.error.internal");
+        assert_eq!(
+            error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)).0,
+            "settings.error.internal"
+        );
         let keys: Vec<_> = ThemeChoice::ALL.iter().map(|c| theme_choice_key(*c)).collect();
         assert_eq!(keys.len(), 3);
     }

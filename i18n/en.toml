@@ -34,7 +34,8 @@ no_space_body_by = "Free up {size} on the phone, then resume."
 
 [add_phone]
 title = "Add a phone"
-step_enable = "On your phone: open the app → menu → Sync WiFi → Turn on"
+step_enable_before = "On your phone: open the app →"
+step_enable_after = "→ Sync WiFi → Turn on"
 found = "Phones found"
 empty = "No phone found yet. Keep your phone and computer on the same WiFi."
 searching = "Looking for phones…"

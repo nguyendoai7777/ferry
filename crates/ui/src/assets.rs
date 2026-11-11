@@ -47,6 +47,7 @@ ferry_icons! {
     Settings => "settings",
     Send => "send",
     Phone => "phone",
+    MoreVertical => "more-vertical",
 }
 
 impl From<FerryIcon> for IconSource {

@@ -34,7 +34,8 @@ no_space_body_by = "Cần thêm {size} trên điện thoại, giải phóng rồ
 
 [add_phone]
 title = "Thêm điện thoại"
-step_enable = "Trên điện thoại: mở app → menu → Sync WiFi → Bật"
+step_enable_before = "Trên điện thoại: mở app →"
+step_enable_after = "→ Sync WiFi → Bật"
 found = "Điện thoại tìm thấy"
 empty = "Chưa thấy điện thoại nào. Hãy để điện thoại và máy tính cùng một WiFi."
 searching = "Đang tìm điện thoại…"

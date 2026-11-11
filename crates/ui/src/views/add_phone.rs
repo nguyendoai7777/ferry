@@ -11,6 +11,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::assets::FerryIcon;
 use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::firewall::{AllowResult, MdnsFirewallHint};
 use ferry_core::i18n::I18n;
@@ -22,7 +23,7 @@ use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
     AnyElement, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
-    SharedString, Subscription, WeakEntity, Window, div, px,
+    SharedString, Subscription, WeakEntity, Window, div, px, svg,
 };
 use materiant::icon::IconName;
 use materiant::progress::ProgressCircular;
@@ -498,8 +499,7 @@ impl AddPhoneView {
             .child(
                 Card::new("add-phone-found")
                     .title(t("add_phone.found"))
-                    .description(t("add_phone.step_enable"))
-                    .child(body),
+                    .child(div().flex().flex_col().gap_3().child(self.render_step_enable(cx)).child(body)),
             )
             .children(firewall)
             .child(div().flex().child(
@@ -515,6 +515,35 @@ impl AddPhoneView {
                     }),
                 ),
             ))
+            .into_any_element()
+    }
+
+    /// "Trên điện thoại: mở app → [⋮] → Sync WiFi → Bật": nút menu của app điện thoại vẽ thành phím 32×32 (viền + bo góc)
+    /// để người dùng nhận ra đúng nút cần bấm.
+    fn render_step_enable(&self, cx: &mut Context<Self>) -> AnyElement {
+        let c = cx.theme().colors().clone();
+        let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
+        let key = div()
+            .flex_none()
+            .size(px(32.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(8.))
+            .border_1()
+            .border_b_2()
+            .border_color(c.border)
+            .bg(c.surface)
+            .child(svg().path(FerryIcon::MoreVertical.path()).size(px(18.)).text_color(c.text));
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .text_color(c.muted)
+            .child(t("add_phone.step_enable_before"))
+            .child(key)
+            .child(t("add_phone.step_enable_after"))
             .into_any_element()
     }
 
