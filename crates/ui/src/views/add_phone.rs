@@ -443,7 +443,8 @@ impl Render for AddPhoneView {
             .flex()
             .flex_col()
             .gap_4()
-            .p_6()
+            .py_3()
+            .px_4()
             .bg(c.surface)
             .text_color(c.text)
             .child(
