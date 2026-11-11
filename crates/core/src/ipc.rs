@@ -133,6 +133,15 @@ pub enum LibraryOp {
     /// W-7: `GET /dirs?path=` của điện thoại Online có `features: browse` (§6.11). `path` rỗng = gốc bộ nhớ trong.
     /// Trả [`Outcome::Dirs`]; Offline ⇒ `Offline`; thư mục không còn (`404`) ⇒ `InvalidInput`.
     Dirs { device: DeviceId, path: String },
+    /// W-8 (§6.12, cần `features: edit`): tạo thư mục `path` (cả cha còn thiếu). Trả [`Outcome::Edited`] với đường
+    /// điện thoại đã làm sạch. Lỗi: `Exists` (`409`), `Forbidden` (`403` — gốc, `Android/`, mục ẩn, tắt quyền),
+    /// `InvalidInput` (`400`), `Offline`.
+    MakeDir { device: DeviceId, path: String },
+    /// W-8: đổi tên tệp / thư mục `path` thành `name` (cùng thư mục). Trả [`Outcome::Edited`] (đường mới); thêm lỗi
+    /// `Missing` (`404`).
+    Rename { device: DeviceId, path: String, name: String },
+    /// W-8: xoá tệp, hoặc thư mục cùng cây con — không hoàn tác (UI hỏi trước). Một mục mỗi lệnh. Trả `Done`.
+    Delete { device: DeviceId, path: String },
 }
 
 /// Lệnh màn cài đặt (PROTOCOL 4.5). Quên điện thoại đi [`PhoneOp::Forget`].
@@ -381,6 +390,10 @@ pub enum Outcome {
     Dirs {
         listing: DirListing,
     },
+    /// `MakeDir` / `Rename` (W-8): đường mới điện thoại đã làm sạch.
+    Edited {
+        path: String,
+    },
     /// `Download` (gd1_10): `added` mục mới vào hàng; `alreadyQueued` đang có trong hàng (chưa xong) nên bỏ qua;
     /// `missing` không còn trong `list` của điện thoại.
     DownloadsAdded {
@@ -432,6 +445,12 @@ pub enum CommandError {
     Unreachable,
     /// Thư mục không tạo / ghi được (cài đặt thư mục tải về, gd1_12).
     NotWritable,
+    /// W-8: đã có mục cùng tên trên điện thoại (`409`).
+    Exists,
+    /// W-8: không còn mục đó trên điện thoại (`404`).
+    Missing,
+    /// W-8: điện thoại không cho sửa ở đây (`403`: gốc, `Android/`, mục ẩn, tắt "Cho máy tính duyệt bộ nhớ").
+    Forbidden,
     /// Lỗi trong daemon (đĩa, SQLite) — chi tiết ở log.
     Internal,
 }

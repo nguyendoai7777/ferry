@@ -9,6 +9,7 @@ use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, ElementId, IntoElement, SharedString, div, px};
 use materiant::icon::{Icon, IconName};
 use materiant::list::VirtualList;
+use materiant::menu::ContextMenuExt;
 use materiant::theme::ActiveTheme;
 
 use super::PhoneBrowser;
@@ -107,7 +108,13 @@ pub fn tree_view(
                 } else {
                     div().w(px(24.)).flex_none().into_any_element()
                 };
+                let (menu_weak, loc, label, is_virtual) = (weak.clone(), r.loc.clone(), r.label.clone(), r.is_virtual);
                 div()
+                    .id(("br-tree-row", ix))
+                    .context_menu(move |menu, _, cx| {
+                        let Some(this) = menu_weak.upgrade() else { return menu };
+                        this.read(cx).tree_menu(&loc, &label, is_virtual, menu, &menu_weak, cx)
+                    })
                     .size_full()
                     .flex()
                     .items_center()

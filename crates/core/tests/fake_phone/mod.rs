@@ -92,6 +92,8 @@ struct State {
     cut_get_after: Option<u64>,
     /// gd1_10: header `Range` / `If-Range` của mọi `GET /file` đã nhận.
     file_gets: Vec<FileGet>,
+    /// W-8: thư mục tạo bằng `POST /dirs` (thư mục khác suy từ `dir` của tệp).
+    made_dirs: std::collections::BTreeSet<String>,
 }
 
 /// Một `GET /api/v1/file/<id>` điện thoại giả đã nhận (gd1_10).
@@ -116,6 +118,42 @@ impl State {
     fn new_id(&mut self) -> String {
         self.next_id += 1;
         format!("f{:04}", self.next_id)
+    }
+
+    /// Thư mục có thật (gốc, chứa tệp, hoặc đã tạo bằng `POST /dirs`).
+    fn dir_exists(&self, p: &str) -> bool {
+        let prefix = format!("{p}/");
+        p.is_empty()
+            || self.files.iter().any(|f| f.dir.as_deref().is_some_and(|d| d == p || d.starts_with(&prefix)))
+            || self.made_dirs.iter().any(|d| d == p || d.starts_with(&prefix))
+    }
+
+    fn file_index(&self, p: &str) -> Option<usize> {
+        let (dir, name) = p.rsplit_once('/').unwrap_or(("", p));
+        self.files.iter().position(|f| f.dir.as_deref() == Some(dir) && f.name == name)
+    }
+
+    /// Có mục (tệp / thư mục) tên `p`, so không phân biệt hoa thường như Android.
+    fn any_exists_ci(&self, p: &str) -> bool {
+        let lower = p.to_lowercase();
+        let (dir, name) = lower.rsplit_once('/').unwrap_or(("", &lower));
+        self.files
+            .iter()
+            .any(|f| f.dir.as_deref().map(str::to_lowercase).as_deref() == Some(dir) && f.name.to_lowercase() == name)
+            || self.dirs_ci().contains(&lower)
+    }
+
+    fn dirs_ci(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let all = self.files.iter().filter_map(|f| f.dir.clone()).chain(self.made_dirs.iter().cloned());
+        for d in all {
+            let mut acc = String::new();
+            for seg in d.split('/').filter(|s| !s.is_empty()) {
+                acc = if acc.is_empty() { seg.to_owned() } else { format!("{acc}/{seg}") };
+                out.push(acc.to_lowercase());
+            }
+        }
+        out
     }
 
     fn unique_name(&self, dir: &str, name: &str) -> String {
@@ -164,6 +202,7 @@ impl FakePhone {
             port: v4.port(),
             cut_get_after: None,
             file_gets: Vec::new(),
+            made_dirs: std::collections::BTreeSet::new(),
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let mut tasks = vec![tokio::spawn(accept_loop(l4, state.clone(), connections.clone()))];
@@ -251,6 +290,11 @@ impl FakePhone {
     /// Không giữ byte upload (chỉ đếm offset) — upload lớn không tốn RAM của tiến trình test.
     pub fn set_discard_data(&self, on: bool) {
         self.st().discard_data = on;
+    }
+
+    /// W-8: thư mục đã tạo bằng `POST /dirs`.
+    pub fn made_dirs(&self) -> Vec<String> {
+        self.st().made_dirs.iter().cloned().collect()
     }
 
     pub fn sessions(&self) -> usize {
@@ -498,6 +542,15 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
             Reply::json(200, json!({"items": s.files.iter().map(StoredFile::json).collect::<Vec<_>>()}))
         }
         ("GET", "/api/v1/dirs") => dirs(&state.lock().unwrap(), &req),
+        ("POST", "/api/v1/dirs") => match read_body(&mut sock, &req, 4096).await {
+            Ok(body) => make_dir(&mut state.lock().unwrap(), &body),
+            Err(code) => Reply::status(code),
+        },
+        ("POST", "/api/v1/rename") => match read_body(&mut sock, &req, 4096).await {
+            Ok(body) => rename(&mut state.lock().unwrap(), &body),
+            Err(code) => Reply::status(code),
+        },
+        ("DELETE", "/api/v1/entries") => delete_entry(&mut state.lock().unwrap(), &req),
         ("POST", "/api/v1/uploads") => create_upload(&state, &req),
         (m, p) if p.starts_with("/api/v1/uploads/") => {
             let uid = decode(&p["/api/v1/uploads/".len()..]);
@@ -552,6 +605,14 @@ fn dirs(s: &State, req: &Request) -> Reply {
     let mut sub = std::collections::BTreeSet::new();
     let mut files = Vec::new();
     let mut exists = at.is_empty();
+    for d in &s.made_dirs {
+        if *d == at {
+            exists = true;
+        } else if let Some(rest) = d.strip_prefix(&prefix) {
+            exists = true;
+            sub.insert(rest.split('/').next().unwrap_or(rest).to_owned());
+        }
+    }
     for f in &s.files {
         let Some(d) = f.dir.as_deref() else { continue };
         if d == at {
@@ -567,6 +628,124 @@ fn dirs(s: &State, req: &Request) -> Reply {
     }
     let dirs: Vec<_> = sub.into_iter().map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
     Reply::json(200, json!({"path": at, "dirs": dirs, "files": files}))
+}
+
+// ---- W-8 (§6.12): thư mục mới, đổi tên, xoá ----
+
+fn edit_on(s: &State) -> bool {
+    s.features.iter().any(|f| f == "edit")
+}
+
+/// Làm sạch đường như §6.9 (đủ cho test): `\` thành `/`, bỏ đoạn rỗng / `.`; `..` ⇒ `Err(400)`.
+fn clean_path(raw: &str) -> Result<String, u16> {
+    let segs: Vec<&str> = raw.split(['/', '\\']).filter(|s| !s.is_empty() && *s != ".").collect();
+    if segs.contains(&"..") || segs.len() > 8 {
+        return Err(400);
+    }
+    Ok(segs.join("/"))
+}
+
+/// Gốc, `Android/…`, mục ẩn ⇒ cấm sửa.
+fn protected(p: &str) -> bool {
+    p.is_empty()
+        || p.split('/').next().is_some_and(|s| s.eq_ignore_ascii_case("android"))
+        || p.split('/').any(|s| s.starts_with('.'))
+}
+
+fn json_field(body: &[u8], key: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    v.get(key)?.as_str().map(str::to_owned)
+}
+
+fn make_dir(s: &mut State, body: &[u8]) -> Reply {
+    if !edit_on(s) {
+        return Reply::status(403);
+    }
+    let Some(raw) = json_field(body, "path") else { return Reply::status(400) };
+    let p = match clean_path(&raw) {
+        Ok(p) => p,
+        Err(c) => return Reply::status(c),
+    };
+    if protected(&p) {
+        return Reply::status(403);
+    }
+    if s.any_exists_ci(&p) {
+        return Reply::status(409);
+    }
+    s.made_dirs.insert(p.clone());
+    Reply::json(201, json!({"path": p}))
+}
+
+fn rename(s: &mut State, body: &[u8]) -> Reply {
+    if !edit_on(s) {
+        return Reply::status(403);
+    }
+    let (Some(raw), Some(name)) = (json_field(body, "path"), json_field(body, "name")) else {
+        return Reply::status(400);
+    };
+    let p = match clean_path(&raw) {
+        Ok(p) => p,
+        Err(c) => return Reply::status(c),
+    };
+    let name = name.trim().to_owned();
+    if name.is_empty() || name == "." || name == ".." || name.starts_with('.') || name.contains(['/', '\\']) {
+        return Reply::status(400);
+    }
+    if protected(&p) {
+        return Reply::status(403);
+    }
+    let parent = p.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
+    let target = if parent.is_empty() { name.clone() } else { format!("{parent}/{name}") };
+    if target == p {
+        return Reply::json(200, json!({"path": p}));
+    }
+    let case_only = target.to_lowercase() == p.to_lowercase();
+    if !case_only && s.any_exists_ci(&target) {
+        return Reply::status(409);
+    }
+    if let Some(ix) = s.file_index(&p) {
+        s.files[ix].name = name;
+        return Reply::json(200, json!({"path": target}));
+    }
+    if !s.dir_exists(&p) {
+        return Reply::status(404);
+    }
+    let prefix = format!("{p}/");
+    let moved = |d: &str| -> Option<String> {
+        if d == p { Some(target.clone()) } else { d.strip_prefix(&prefix).map(|r| format!("{target}/{r}")) }
+    };
+    for f in &mut s.files {
+        if let Some(n) = f.dir.as_deref().and_then(moved) {
+            f.dir = Some(n);
+        }
+    }
+    s.made_dirs = s.made_dirs.iter().map(|d| moved(d).unwrap_or_else(|| d.clone())).collect();
+    Reply::json(200, json!({"path": target}))
+}
+
+fn delete_entry(s: &mut State, req: &Request) -> Reply {
+    if !edit_on(s) {
+        return Reply::status(403);
+    }
+    let raw = req.path.split_once("?path=").map_or(String::new(), |(_, q)| decode(q));
+    let p = match clean_path(&raw) {
+        Ok(p) => p,
+        Err(c) => return Reply::status(c),
+    };
+    if protected(&p) {
+        return Reply::status(403);
+    }
+    if let Some(ix) = s.file_index(&p) {
+        s.files.remove(ix);
+        return Reply::empty(204);
+    }
+    if !s.dir_exists(&p) {
+        return Reply::status(404);
+    }
+    let prefix = format!("{p}/");
+    s.files.retain(|f| !f.dir.as_deref().is_some_and(|d| d == p || d.starts_with(&prefix)));
+    s.made_dirs.retain(|d| *d != p && !d.starts_with(&prefix));
+    Reply::empty(204)
 }
 
 fn authorized(state: &Mutex<State>, req: &Request) -> bool {
@@ -864,6 +1043,7 @@ impl FakePhone {
             port: v6.port(),
             cut_get_after: None,
             file_gets: Vec::new(),
+            made_dirs: std::collections::BTreeSet::new(),
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let tasks = vec![tokio::spawn(accept_loop(l6, state.clone(), connections.clone()))];

@@ -120,6 +120,14 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   Điện thoại sang subnet chưa từng thấy thì chỉ còn nhập tay (không quét cả `172.16/12`).
 - **Vòng "đang dò" có vòng nền** (`add_phone::searching_spinner`): cung không xác định của `ProgressCircular` có khung chỉ
   ~10° — ở 24 px (hoặc lúc cửa sổ không vẽ lại) trông như gạch hồng lệch; chồng một `ProgressCircular` `value(0)` làm track.
+- **Sửa bộ nhớ điện thoại (W-8, `features: edit`, §6.12)**: `LibraryOp::{MakeDir, Rename, Delete}` ⇒ `ClientError`
+  `409` không `Upload-Offset` = `Conflict` ⇒ `CommandError::Exists`, `404` ⇒ `Missing`, `403` ⇒ `Forbidden` (+ đọc lại
+  `info`). Daemon chặn sớm khi máy chưa khai `edit`. UI: `phone_browser/edit.rs` — menu chuột phải gắn ở khung NGOÀI của
+  dòng (`context_menu` dừng lan sự kiện), dòng bên trong bắt chuột phải trước để chọn dòng (con nhận trước cha); một hộp
+  thoại chung cho thư mục mới / đổi tên / xoá; xoá nhiều mục gửi từng lệnh, đủ trả lời mới đọc lại thư mục cha. Không có
+  `edit`: thư mục mới là thư mục ảo như cũ, đổi tên / xoá chỉ cho thư mục ảo. Thử UI không cần điện thoại thật:
+  `cargo run -p ferry-core --example fake_phone` (khai `browse` + `edit`, có sẵn thư mục) rồi nhập tay địa chỉ nó in, PIN
+  `123456` — chạy một bản `ferry` riêng với `FERRY_DATA_DIR` / `FERRY_CONFIG_FILE` khác để không đụng bản dev.
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

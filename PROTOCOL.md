@@ -2,7 +2,8 @@
 
 > Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
 > thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1);
-> bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3); duyệt bộ nhớ điện thoại (§6.11) 2026-11-11 (W-7).
+> bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3); duyệt bộ nhớ điện thoại (§6.11) 2026-11-11 (W-7); thư mục mới / đổi tên / xoá trên điện thoại (§6.12)
+> 2026-11-11 (W-8).
 > **Đổi giao thức = sửa tệp này trước, rồi sửa cả hai phía** (bản bên `video-player` phải giống hệt mục 6).
 > Mục 3 là đề xuất gốc; bố cục thật của repo ở `CLAUDE.md`.
 
@@ -76,7 +77,8 @@ pc-app/
    - Hàng đợi: mỗi dòng = tên, cỡ, thanh tiến độ, tốc độ, trạng thái; nút tạm dừng / huỷ / thử lại. Mục xong gom vào
      "Đã gửi" (gập được), giữ 7 ngày rồi tự dọn.
 3. **Thư viện điện thoại** (tab phụ): trình duyệt kiểu Explorer (mục 4.6) ở chế độ thư viện. Chọn video → "Tải về máy"
-   (vào hàng đợi chiều ngược lại, tải tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
+   (vào hàng đợi chiều ngược lại, tải tiếp bằng `Range`). Thư mục mới / đổi tên / xoá qua menu chuột phải khi điện thoại
+   khai `edit` (§6.12, W-8).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
@@ -94,6 +96,14 @@ pc-app/
      mặc định mở ở thư mục đích lần trước của điện thoại đó. Chế độ **thư viện** (tab 3): nút "Tải về máy" cho mục đã
      chọn; thả / dán từ máy tính vào thư mục đang mở ⇒ gửi vào đó (không hỏi lại).
    - Điện thoại offline ⇒ hiện danh sách lần cuối, mờ đi, không cho "Gửi vào đây".
+   - **Menu chuột phải** (W-8, chỉ khi điện thoại khai `edit` — §6.12; không có thì chỉ còn "Thư mục mới" ảo như trên):
+     - **Tệp**: Đổi tên · Xoá. Chọn nhiều rồi chuột phải lên một mục đang chọn ⇒ chỉ "Xoá N mục".
+     - **Thư mục** (bảng hoặc cây): Mở · Thư mục mới bên trong · Đổi tên · Xoá. Gốc của cây chỉ có "Thư mục mới";
+       nhóm "Khác" không có menu.
+     - **Khoảng trống của bảng**: Thư mục mới · Làm mới.
+     - Thư mục ảo (chưa có trên điện thoại): Đổi tên · Xoá chỉ sửa phía PC.
+     - Thư mục mới / đổi tên mở hộp nhập tên; xoá luôn hỏi lại, nói rõ số mục và "không hoàn tác được" (điện thoại không
+       có thùng rác). Offline ⇒ mục sửa bị tắt.
 
 Văn bản: tiếng Việt + tiếng Anh theo ngôn ngữ hệ thống. Dùng chữ "Gửi sang điện thoại" / "Tải về máy", tránh chữ
 "upload/sync" với người dùng.
@@ -185,7 +195,7 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
 - `paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
 - `port` + `addresses`: mọi địa chỉ LAN của điện thoại (IPv4 riêng + IPv6 global / ULA; **không** link-local — scope
   phía điện thoại vô nghĩa với PC). Thêm đường khi mDNS chỉ trả một họ địa chỉ hoặc IP đổi.
-- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10);
+- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10); `browse` ⇒ duyệt bộ nhớ (§6.11); `edit` ⇒ thư mục mới / đổi tên / xoá (§6.12);
   thiếu ⇒ PC gửi phẳng và báo "Cập nhật app trên điện thoại để giữ thư mục". `ipv6` ⇒ server nghe IPv6.
 
 `POST /api/v1/pair` — không cần xác thực.
@@ -365,6 +375,29 @@ Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **c�
   đọc), "Thư mục mới" vẫn là thư mục ảo tới khi có tệp; không `browse` ⇒ dựng từ `list` như cũ. Thư mục đích nhớ theo
   từng chế độ (đổi chế độ ⇒ về gốc), vì cùng một chuỗi `dir` mang nghĩa khác nhau.
 
+### 6.12 Sửa bộ nhớ điện thoại — thư mục mới, đổi tên, xoá
+
+Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai khi đang có `browse` (cùng công tắc + quyền của
+§6.11; mất quyền ⇒ thôi khai cả hai). Mọi đường tương đối so với gốc bộ nhớ dùng chung như §6.11.
+
+- **Chung**: Bearer. `path` làm sạch như `X-File-Dir` (§6.9: `/` hoặc `\` phân cách, ký tự cấm → `_`, bỏ đoạn rỗng và
+  `.`). Lỗi chung: `400` `..` / quá 8 cấp / quá 255 ký tự / thân JSON sai · `403` không có `edit` (công tắc tắt, mất
+  quyền), hoặc chạm vùng cấm: **gốc** (`path` rỗng), `Android` và mọi thứ bên trong, mục có đoạn bắt đầu bằng `.` ·
+  `404` không có mục đó · `409` đã có mục cùng tên (so không phân biệt hoa thường, như hệ tệp của Android).
+  Thân request `Content-Type: application/json`, ≤ 4 KB. Thư viện (`list`) đi theo ngay sau khi trả lời: tệp bị xoá
+  mất khỏi `list`, tệp đổi tên / nằm trong thư mục đổi tên có `name` / `dir` mới (`id` được phép đổi).
+- **Thư mục mới** — `POST /api/v1/dirs` `{"path":"Download/Phim"}` ⇒ `201` `{"path":"Download/Phim"}` (bản đã làm
+  sạch). Tạo luôn thư mục cha còn thiếu. `409` nếu đã có mục (tệp hoặc thư mục) ở đúng đường đó.
+- **Đổi tên** — `POST /api/v1/rename` `{"path":"Download/a.mp4","name":"b.mp4"}` ⇒ `200` `{"path":"Download/b.mp4"}`.
+  Tệp hay thư mục đều được; chỉ đổi tên trong cùng thư mục (không dời). `name` là một đoạn tên: làm sạch như trên;
+  rỗng / `.` / `..` / bắt đầu bằng `.` / quá 255 byte UTF-8 ⇒ `400`. Trùng tên cũ ⇒ `200` không làm gì; chỉ khác hoa
+  thường ⇒ đổi (không `409`).
+- **Xoá** — `DELETE /api/v1/entries?path=<URL-encoded>` ⇒ `204`. Thư mục xoá cả cây con. Không có thùng rác, không
+  hoàn tác — PC phải hỏi người dùng trước. Một request một mục; chọn nhiều thì PC gửi lần lượt.
+- Đang nhận upload vào đúng tệp / thư mục đó ⇒ `409` (PC thử lại sau). Điện thoại không tự dọn upload dở vì xoá.
+- PC: `409` ⇒ "Đã có mục tên này"; `404` ⇒ đọc lại thư mục cha; `403` ⇒ "Điện thoại không cho sửa ở đây". Xong mọi
+  việc ⇒ đọc lại (`GET /dirs`) thư mục cha của mục vừa sửa.
+
 ## 7. Kiểm thử
 
 - **Không cần điện thoại thật**: Android emulator + `adb forward tcp:18080 tcp:8080` → nhập tay `127.0.0.1:18080`
@@ -383,6 +416,6 @@ Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **c�
 
 ## 8. Ngoài phạm vi v1 (đừng làm trước)
 
-Xoá video trên điện thoại từ PC · đồng bộ thư mục hai chiều · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
+Đồng bộ thư mục hai chiều · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
 (điện thoại phải tự bật Sync WiFi) · nhiều điện thoại gửi song song cùng lúc (cho phép chọn, nhưng hàng đợi mỗi máy chạy
 tuần tự) · iOS (chờ phía iOS cài giao thức này).

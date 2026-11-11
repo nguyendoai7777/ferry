@@ -9,8 +9,10 @@
 //! - Điện thoại offline ⇒ hiện danh sách lần trước, mờ đi, không cho "Gửi vào đây".
 //! - Điện thoại có `features: browse` (§6.11, W-7) ⇒ dựng từ `GET /dirs` thay vì `list`: mở thư mục nào đọc thư mục
 //!   đó (cùng các thư mục cha khi mở sẵn ở đích lần trước), nhớ các lần đã đọc ([`FsCache`], giữ ở `Model::storage`).
+//! - Menu chuột phải + thư mục mới / đổi tên / xoá (W-8, §6.12): [`edit`].
 
 mod breadcrumb;
+mod edit;
 mod table;
 mod tree;
 
@@ -26,10 +28,11 @@ use materiant::button::{Button, Size};
 use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    Context, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString, Subscription, Window, div, px,
+    Context, Entity, EventEmitter, IntoElement, Render, SharedString, Subscription, Window, div, px,
 };
 use materiant::icon::IconName;
 use materiant::list::VirtualListHandle;
+use materiant::overlay::dialog::DialogHandle;
 use materiant::theme::ActiveTheme;
 
 use crate::fmt;
@@ -82,8 +85,16 @@ pub struct PhoneBrowser {
     suppress_select: bool,
     pub(crate) list: VirtualListHandle,
     tree_open: HashSet<String>,
-    creating: bool,
-    folder_field: Entity<TextField>,
+    /// W-8: hộp thoại thư mục mới / đổi tên / xoá.
+    edit_dialog: DialogHandle,
+    edit: Option<edit::Edit>,
+    name_field: Entity<TextField>,
+    /// Đã gửi thư mục mới / đổi tên, chờ trả lời (tắt nút xác nhận).
+    edit_busy: bool,
+    edit_req: HashMap<u64, edit::Pending>,
+    deleting: Option<edit::DeleteRun>,
+    /// Lỗi của lệnh sửa vừa rồi (băng trên bảng), mất khi đổi thư mục / làm mới.
+    notice: Option<String>,
     _subs: Vec<Subscription>,
 }
 
@@ -106,8 +117,8 @@ impl PhoneBrowser {
                 .leading_icon(IconName::Search)
                 .clearable(true)
         });
-        let folder_hint = i18n.t("browser.new_folder_name").to_owned();
-        let folder_field = cx.new(|cx| TextField::new("br-folder", window, cx).placeholder(folder_hint));
+        let name_hint = i18n.t("browser.name_placeholder").to_owned();
+        let name_field = cx.new(|cx| TextField::new("br-name", window, cx).placeholder(name_hint));
         let mut subs = vec![
             cx.subscribe(&search, |this, _, ev: &FieldEvent, cx| {
                 if let FieldEvent::Change(q) = ev {
@@ -115,13 +126,15 @@ impl PhoneBrowser {
                     this.recompute(cx);
                 }
             }),
-            cx.subscribe(&folder_field, |this, _, ev: &FieldEvent, cx| {
-                if let FieldEvent::Submit(name) = ev {
-                    this.create_folder(name.to_string(), cx);
+            cx.subscribe_in(&name_field, window, |this, _, ev: &FieldEvent, window, cx| {
+                if let FieldEvent::Submit(_) = ev {
+                    this.confirm_edit(window, cx);
                 }
             }),
         ];
-        subs.push(cx.subscribe(&model, |this, _, ev: &ModelEvent, cx| this.on_model(ev, cx)));
+        subs.push(
+            cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx)),
+        );
 
         let (offline, name, cached, storage) = {
             let m = model.read(cx);
@@ -166,8 +179,13 @@ impl PhoneBrowser {
             suppress_select: false,
             list: VirtualListHandle::new(),
             tree_open,
-            creating: false,
-            folder_field,
+            edit_dialog: DialogHandle::new(cx),
+            edit: None,
+            name_field,
+            edit_busy: false,
+            edit_req: HashMap::new(),
+            deleting: None,
+            notice: None,
             _subs: subs,
         };
         this.sync_storage();
@@ -290,8 +308,11 @@ impl PhoneBrowser {
         }
     }
 
-    fn on_model(&mut self, ev: &ModelEvent, cx: &mut Context<Self>) {
+    fn on_model(&mut self, ev: &ModelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
+            ModelEvent::Reply { req, outcome } if self.edit_req.contains_key(req) => {
+                self.on_edit_reply(*req, outcome, window, cx);
+            }
             ModelEvent::Changed => {
                 let (offline, name, browses) = {
                     let m = self.model.read(cx);
@@ -347,6 +368,7 @@ impl PhoneBrowser {
 
     /// Đọc lại danh sách từ điện thoại (offline ⇒ giữ bản lần trước).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.notice = None;
         if self.offline {
             self.loading = false;
             cx.notify();
@@ -412,7 +434,7 @@ impl PhoneBrowser {
         }
         self.query.clear();
         self.clear_search = true;
-        self.creating = false;
+        self.notice = None;
         if let Location::Dir(p) = self.at.clone() {
             self.fetch_if_unloaded(&p, cx);
         }
@@ -456,24 +478,6 @@ impl PhoneBrowser {
         }
     }
 
-    fn create_folder(&mut self, name: String, cx: &mut Context<Self>) {
-        let Location::Dir(parent) = self.at.clone() else { return };
-        let Some(name) = browse::sanitize_folder_name(&name) else {
-            let msg: SharedString = self.i18n.t("browser.new_folder_bad").to_owned().into();
-            self.folder_field.update(cx, |f, cx| f.set_error(Some(msg), cx));
-            return;
-        };
-        let full = browse::join_dir(&parent, &name);
-        let exists = self.entries.iter().any(|e| e.kind == EntryKind::Folder && e.path == full);
-        if !exists {
-            self.virtual_dirs.push(full.clone());
-        }
-        self.creating = false;
-        self.tree_open.insert(parent);
-        self.go(Location::Dir(full), cx);
-        self.recompute(cx);
-    }
-
     fn destination_label(&self) -> String {
         match &self.at {
             Location::Dir(p) if !p.is_empty() => p.clone(),
@@ -494,14 +498,17 @@ impl Render for PhoneBrowser {
             let tree = browse::build_tree(&self.items, &self.known, &self.virtual_dirs);
             tree::flatten(&tree, &self.tree_open, &self.device_name, self.i18n.t("browser.other"))
         };
+        let t = |key: &str| self.i18n.t(key).to_owned();
         let banner = if self.at == Location::Other {
-            Some(("browser.other_hint", c.muted))
+            Some((t("browser.other_hint"), c.muted))
+        } else if let Some(n) = &self.notice {
+            Some((n.clone(), c.danger))
         } else if self.failed {
-            Some(("browser.failed", c.danger))
+            Some((t("browser.failed"), c.danger))
         } else if self.offline && self.has_data() {
-            Some(("browser.offline", c.warning))
+            Some((t("browser.offline"), c.warning))
         } else if !self.offline && !self.browses_storage() && self.at == Location::root() {
-            Some(("browser.browse_hint", c.muted))
+            Some((t("browser.browse_hint"), c.muted))
         } else {
             None
         };
@@ -522,38 +529,15 @@ impl Render for PhoneBrowser {
                 };
                 let can_send = self.at.is_destination() && !self.offline;
                 let in_other = !self.at.is_destination();
-                let left = if self.creating {
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(div().w(px(200.)).child(self.folder_field.clone()))
-                        .child(
-                            Button::new("br-folder-ok", self.i18n.t("browser.new_folder_ok")).size(Size::Sm).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    let name = this.folder_field.read(cx).value(cx).to_string();
-                                    this.create_folder(name, cx);
-                                }),
-                            ),
-                        )
-                        .into_any_element()
-                } else {
-                    Button::new("br-new-folder", self.i18n.t("browser.new_folder"))
-                        .size(Size::Sm)
-                        .outlined()
-                        .disabled(in_other)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.creating = true;
-                            this.folder_field.update(cx, |f, cx| {
-                                f.set_value("", window, cx);
-                                f.set_error(None, cx);
-                            });
-                            let handle = this.folder_field.focus_handle(cx);
-                            window.focus(&handle, cx);
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                };
+                let left = Button::new("br-new-folder", self.i18n.t("browser.new_folder"))
+                    .size(Size::Sm)
+                    .outlined()
+                    .disabled(in_other)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Location::Dir(p) = this.at.clone() {
+                            this.start_new_folder(p, true, window, cx);
+                        }
+                    }));
                 Some(
                     div()
                         .flex()
@@ -599,10 +583,13 @@ impl Render for PhoneBrowser {
             .bg(c.surface)
             .text_color(c.text)
             .child(toolbar)
-            .children(banner.map(|(key, color)| {
-                div().px_4().py_1().text_xs().text_color(color).child(SharedString::from(self.i18n.t(key).to_owned()))
-            }))
+            .children(
+                banner.map(|(text, color)| {
+                    div().px_4().py_1().text_xs().text_color(color).child(SharedString::from(text))
+                }),
+            )
             .child(div().flex_1().min_h(px(0.)).flex().child(tree_view).child(table_view))
             .children(bottom)
+            .child(self.render_edit_dialog(cx))
     }
 }

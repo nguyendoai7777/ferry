@@ -113,6 +113,15 @@ impl Model {
             .is_some_and(|d| d.features.iter().any(|f| f == feature::BROWSE))
     }
 
+    /// Điện thoại cho sửa bộ nhớ (W-8, `features: edit` lần cuối biết) — chỉ có nghĩa cùng [`Self::browses_storage`].
+    pub fn edits_storage(&self, device: &DeviceId) -> bool {
+        self.snapshot
+            .devices
+            .iter()
+            .find(|d| &d.id == device)
+            .is_some_and(|d| d.features.iter().any(|f| f == feature::EDIT))
+    }
+
     /// Khoá thư mục đích nhớ theo chế độ: cùng chuỗi `dir` mang nghĩa khác khi có / không `browse` (§6.11).
     fn dest_key(&self, device: &DeviceId) -> String {
         if self.browses_storage(device) { format!("{}#browse", device.0) } else { device.0.clone() }

@@ -9,6 +9,7 @@ use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, IntoElement, MouseButton, SharedString, div, px};
 use materiant::icon::{Icon, IconName};
 use materiant::list::VirtualList;
+use materiant::menu::ContextMenuExt;
 use materiant::theme::{ActiveTheme, Neutral};
 
 use super::PhoneBrowser;
@@ -156,61 +157,71 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                         let c = cx.theme().colors().clone();
                         let is_sel = sel_rows.contains(&ix);
                         let click = weak.clone();
-                        div()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
-                            .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
-                                let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
-                                let _ = click.update(cx, |this, cx| this.click_row(ix, ctrl, shift, cx));
-                            })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        Icon::new(match e.kind {
-                                            EntryKind::Folder => assets::folder(),
-                                            EntryKind::Video => assets::video(),
-                                            EntryKind::File => assets::file(),
-                                        })
-                                        .size(px(16.))
-                                        .color(c.muted),
-                                    )
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_sm()
-                                            .when(e.is_virtual, |d| d.italic())
-                                            .child(SharedString::from(e.name.clone())),
-                                    ),
-                            )
-                            .child(
-                                div().w(px(MODIFIED_W)).truncate().text_xs().text_color(c.muted).child(
+                        let right = weak.clone();
+                        let menu_weak = weak.clone();
+                        // Khung ngoài mang menu chuột phải (W-8); dòng bên trong chọn trước khi menu mở (con nhận
+                        // sự kiện trước cha).
+                        let row =
+                            div()
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
+                                .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
+                                    let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
+                                    let _ = click.update(cx, |this, cx| this.click_row(ix, ctrl, shift, cx));
+                                })
+                                .on_mouse_down(MouseButton::Right, move |_, _, cx| {
+                                    let _ = right.update(cx, |this, cx| this.context_select(ix, cx));
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Icon::new(match e.kind {
+                                                EntryKind::Folder => assets::folder(),
+                                                EntryKind::Video => assets::video(),
+                                                EntryKind::File => assets::file(),
+                                            })
+                                            .size(px(16.))
+                                            .color(c.muted),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_sm()
+                                                .when(e.is_virtual, |d| d.italic())
+                                                .child(SharedString::from(e.name.clone())),
+                                        ),
+                                )
+                                .child(div().w(px(MODIFIED_W)).truncate().text_xs().text_color(c.muted).child(
                                     SharedString::from(e.modified.map(|m| fmt::date(m, now)).unwrap_or_default()),
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .w(px(KIND_W))
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(c.muted)
-                                    .child(SharedString::from(kind_text(&i18n, e))),
-                            )
-                            .child(div().w(px(SIZE_W)).flex().justify_end().text_xs().text_color(c.muted).child(
-                                SharedString::from(if e.kind != EntryKind::Folder {
-                                    fmt::size(e.size, lang)
-                                } else {
-                                    String::new()
-                                }),
-                            ))
+                                ))
+                                .child(
+                                    div()
+                                        .w(px(KIND_W))
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(c.muted)
+                                        .child(SharedString::from(kind_text(&i18n, e))),
+                                )
+                                .child(div().w(px(SIZE_W)).flex().justify_end().text_xs().text_color(c.muted).child(
+                                    SharedString::from(if e.kind != EntryKind::Folder {
+                                        fmt::size(e.size, lang)
+                                    } else {
+                                        String::new()
+                                    }),
+                                ));
+                        div().id(("br-row", ix)).size_full().child(row).context_menu(move |menu, _, cx| {
+                            let Some(this) = menu_weak.upgrade() else { return menu };
+                            this.read(cx).row_menu(ix, menu, &menu_weak, cx)
+                        })
                     })
                     .track(&this.list)
                     .selected(this.anchor)
@@ -226,6 +237,14 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                 .into_any_element()
         };
     let _ = weak_select;
+    // Khoảng trống (dưới các dòng, hoặc bảng trống): Thư mục mới · Làm mới.
+    let blank_weak = cx.weak_entity();
+    let body = div().id("br-table-area").flex_1().min_h(px(0.)).flex().flex_col().child(body).context_menu(
+        move |menu, _, cx| {
+            let Some(this) = blank_weak.upgrade() else { return menu };
+            this.read(cx).blank_menu(menu, &blank_weak, cx)
+        },
+    );
     // Chưa có danh sách (đang tải, chưa nối được, thư mục trống): không vẽ đầu bảng rỗng, chỉ dòng báo giữa vùng.
     let show_header = count > 0 || (this.has_data() && !this.query.is_empty());
     div()

@@ -669,6 +669,15 @@ impl Engine {
                 });
                 None
             }
+            LibraryOp::MakeDir { device, path } => self.edit_op(outbox, req, &device, move |c| async move {
+                c.make_dir(&path).await.map(|path| Outcome::Edited { path })
+            }),
+            LibraryOp::Rename { device, path, name } => self.edit_op(outbox, req, &device, move |c| async move {
+                c.rename(&path, &name).await.map(|path| Outcome::Edited { path })
+            }),
+            LibraryOp::Delete { device, path } => self.edit_op(outbox, req, &device, move |c| async move {
+                c.delete_entry(&path).await.map(|()| Outcome::Done)
+            }),
             LibraryOp::Download { device, remote_ids } => {
                 if remote_ids.is_empty() {
                     return Some(Err(CommandError::InvalidInput));
@@ -706,6 +715,43 @@ impl Engine {
                 None
             }
         }
+    }
+
+    /// W-8 (§6.12): một lệnh sửa bộ nhớ của máy Online, trả lời khi điện thoại trả. Không có `edit` ⇒ `Forbidden` khỏi
+    /// gọi mạng; `403` ⇒ đọc lại `info` (công tắc vừa tắt).
+    fn edit_op<F, Fut>(
+        &mut self,
+        outbox: &Outbox,
+        req: u64,
+        device: &DeviceId,
+        call: F,
+    ) -> Option<Result<Outcome, CommandError>>
+    where
+        F: FnOnce(Arc<PhoneClient>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, ClientError>> + Send + 'static,
+    {
+        let client = match self.online_client(device) {
+            Ok(c) => c,
+            Err(e) => return Some(Err(e)),
+        };
+        if !self.devices.get(device).is_some_and(|d| d.features.iter().any(|f| f == feature::EDIT)) {
+            return Some(Err(CommandError::Forbidden));
+        }
+        let (outbox, tx, device) = (outbox.clone(), self.internal_tx.clone(), device.clone());
+        tokio::spawn(async move {
+            let r = call(client.clone()).await.map_err(|e| match e {
+                ClientError::Conflict => CommandError::Exists,
+                ClientError::NotFound => CommandError::Missing,
+                ClientError::BadRequest => CommandError::InvalidInput,
+                ClientError::WrongPin => {
+                    spawn_info_refresh(&tx, &device, &client);
+                    CommandError::Forbidden
+                }
+                e => read_error(&tx, &device, &client, "edit", e),
+            });
+            reply_to(&outbox, req, r);
+        });
+        None
     }
 
     // ---- cài đặt (gd1_12, PROTOCOL 4.5) ----
@@ -2215,6 +2261,62 @@ mod tests {
         let op = LibraryOp::Dirs { device: device(), path: String::new() };
         rig.engine.send(Input::Request { outbox: outbox.clone(), req: 4, op: Op::Library(op) });
         let (_rx, _) = collect(rx, move |m| has_browse(m, false)).await;
+        rig.engine.shutdown();
+    }
+
+    /// W-8: thư mục mới / đổi tên / xoá đi tới điện thoại; thiếu `edit` ⇒ `Forbidden` không gọi mạng; `409` ⇒ `Exists`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_ops_reach_the_phone() {
+        async fn call(
+            engine: &EngineHandle,
+            outbox: &Outbox,
+            rx: OutboxReceiver,
+            req: u64,
+            op: LibraryOp,
+        ) -> (OutboxReceiver, Outcome) {
+            engine.send(Input::Request { outbox: outbox.clone(), req, op: Op::Library(op) });
+            let (rx, got) = collect(rx, move |m| matches!(m, DaemonToUi::Reply { req: r, .. } if *r == req)).await;
+            let DaemonToUi::Reply { outcome, .. } = got.last().unwrap().1.clone() else { unreachable!() };
+            (rx, outcome)
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        phone.add_file("a.mp4", Some("Download"), vec![1; 4]);
+        phone.set_features(&["dirs", "browse"]);
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, is_online).await;
+        let dev = device();
+
+        let (rx, out) =
+            call(&rig.engine, &outbox, rx, 1, LibraryOp::MakeDir { device: dev.clone(), path: "Download/Mới".into() })
+                .await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::Forbidden });
+        assert!(phone.made_dirs().is_empty());
+
+        phone.set_features(&["dirs", "browse", "edit"]);
+        // Máy đang Online: `List` đọc lại `info` ⇒ có `edit`.
+        let (rx, _) = call(&rig.engine, &outbox, rx, 2, LibraryOp::List { device: dev.clone() }).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (rx, out) =
+            call(&rig.engine, &outbox, rx, 3, LibraryOp::MakeDir { device: dev.clone(), path: "Download/Mới".into() })
+                .await;
+        assert_eq!(out, Outcome::Edited { path: "Download/Mới".into() });
+        let (rx, out) =
+            call(&rig.engine, &outbox, rx, 4, LibraryOp::MakeDir { device: dev.clone(), path: "Download/Mới".into() })
+                .await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::Exists });
+        let rename = LibraryOp::Rename { device: dev.clone(), path: "Download/a.mp4".into(), name: "b.mp4".into() };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 5, rename).await;
+        assert_eq!(out, Outcome::Edited { path: "Download/b.mp4".into() });
+        let (rx, out) =
+            call(&rig.engine, &outbox, rx, 6, LibraryOp::Delete { device: dev.clone(), path: "Download".into() }).await;
+        assert_eq!(out, Outcome::Done);
+        let (_rx, out) =
+            call(&rig.engine, &outbox, rx, 7, LibraryOp::Delete { device: dev, path: "Download".into() }).await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::Missing });
+        assert!(phone.files().is_empty() && phone.made_dirs().is_empty());
         rig.engine.shutdown();
     }
 

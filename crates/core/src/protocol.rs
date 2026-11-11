@@ -26,6 +26,10 @@ pub mod path {
     pub const UPLOADS: &str = "/api/v1/uploads";
     /// `?path=<URL-encoded>` — chỉ khi có [`super::feature::BROWSE`] (§6.11).
     pub const DIRS: &str = "/api/v1/dirs";
+    /// `POST` `{"path","name"}` — chỉ khi có [`super::feature::EDIT`] (§6.12). Thư mục mới là `POST` [`DIRS`].
+    pub const RENAME: &str = "/api/v1/rename";
+    /// `DELETE ?path=<URL-encoded>` — chỉ khi có [`super::feature::EDIT`] (§6.12).
+    pub const ENTRIES: &str = "/api/v1/entries";
 }
 
 /// Tên header riêng của giao thức (PROTOCOL 6.3, 6.5).
@@ -48,6 +52,8 @@ pub mod feature {
     pub const IPV6: &str = "ipv6";
     /// Duyệt bộ nhớ trong thật qua `GET /dirs`; mọi `dir` tính từ gốc bộ nhớ dùng chung (§6.11, W-7).
     pub const BROWSE: &str = "browse";
+    /// Thư mục mới / đổi tên / xoá trên bộ nhớ (§6.12, W-8); chỉ có cùng [`BROWSE`].
+    pub const EDIT: &str = "edit";
 }
 
 /// Đuôi video điện thoại nhận (PROTOCOL 6.6), chữ thường.
@@ -219,6 +225,14 @@ pub struct DirListing {
     pub dirs: Vec<RemoteDir>,
     #[serde(default)]
     pub files: Vec<RemoteFile>,
+}
+
+/// `201` của `POST /api/v1/dirs` và `200` của `POST /api/v1/rename` (§6.12): đường mới đã làm sạch.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPath {
+    #[serde(default)]
+    pub path: String,
 }
 
 /// `201` của `POST /api/v1/uploads` (PROTOCOL 6.5).

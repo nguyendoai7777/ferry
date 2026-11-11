@@ -457,3 +457,41 @@ async fn dirs_lists_direct_children() {
         assert!(feature::BROWSE == "browse");
     }
 }
+
+/// W-8 (§6.12): thư mục mới / đổi tên / xoá; vùng cấm `403`, trùng tên `409`, thiếu `edit` ⇒ `403`.
+#[tokio::test]
+async fn edit_makes_renames_and_deletes() {
+    let Some((p, c)) = paired(Family::V4).await else { return };
+    p.add_file("a.mp4", Some("Download/Phim hè"), vec![1; 3]);
+    p.add_file("b.txt", Some("Download"), vec![1; 5]);
+    p.set_features(&["dirs", "browse"]);
+    assert!(matches!(c.make_dir("Download/Mới").await, Err(ClientError::WrongPin)), "chưa khai edit ⇒ 403");
+    p.set_features(&["dirs", "browse", "edit"]);
+
+    assert_eq!(c.make_dir("Download/Mới").await.unwrap(), "Download/Mới");
+    assert!(matches!(c.make_dir("download/mới").await, Err(ClientError::Conflict)), "trùng tên không phân biệt hoa");
+    assert!(matches!(c.make_dir("Android/data/x").await, Err(ClientError::WrongPin)));
+    assert!(matches!(c.make_dir("").await, Err(ClientError::WrongPin)), "gốc cấm");
+    let sub = c.dirs("Download").await.unwrap();
+    let names: Vec<_> = sub.dirs.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["Mới", "Phim hè"]);
+
+    assert_eq!(c.rename("Download/b.txt", "c.txt").await.unwrap(), "Download/c.txt");
+    assert!(matches!(c.rename("Download/c.txt", "Mới").await, Err(ClientError::Conflict)));
+    assert!(matches!(c.rename("Download/c.txt", ".ẩn").await, Err(ClientError::BadRequest)));
+    assert!(matches!(c.rename("Download/không có", "x").await, Err(ClientError::NotFound)));
+    assert_eq!(c.rename("Download/Phim hè", "Phim thu").await.unwrap(), "Download/Phim thu");
+    assert_eq!(c.dirs("Download/Phim thu").await.unwrap().files[0].name, "a.mp4");
+    assert!(matches!(c.dirs("Download/Phim hè").await, Err(ClientError::NotFound)));
+
+    c.delete_entry("Download/c.txt").await.unwrap();
+    c.delete_entry("Download/Phim thu").await.unwrap();
+    assert!(matches!(c.delete_entry("Download/Phim thu").await, Err(ClientError::NotFound)));
+    assert!(matches!(c.delete_entry("Android").await, Err(ClientError::WrongPin)));
+    assert!(matches!(c.delete_entry("../x").await, Err(ClientError::BadRequest | ClientError::WrongPin)));
+    let left = c.dirs("Download").await.unwrap();
+    assert!(left.files.is_empty());
+    assert_eq!(left.dirs.len(), 1);
+    assert!(p.files().is_empty());
+    assert_eq!(p.made_dirs(), ["Download/Mới"]);
+}

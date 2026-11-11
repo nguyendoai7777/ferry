@@ -21,7 +21,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::device::DeviceId;
 use crate::protocol::{
-    self, DirListing, LibraryItem, ListResponse, PairResponse, Secret, UploadCreated, decode_header_value,
+    self, DirListing, EntryPath, LibraryItem, ListResponse, PairResponse, Secret, UploadCreated, decode_header_value,
     encode_header_value, encode_path_segment, header, path,
 };
 
@@ -48,12 +48,14 @@ pub enum ClientError {
     BadRequest,
     /// `401` — token chết (điện thoại "Quên các máy tính đã ghép") ⇒ `NeedsRepair`.
     Unauthorized,
-    /// `403` — sai PIN (`pair`).
+    /// `403` — sai PIN (`pair`); ở route khác: không có quyền (`dirs` khi thiếu `browse`, vùng cấm sửa §6.12).
     WrongPin,
     /// `404` — không có upload / tệp này (server đã tắt, phiên quá hạn) ⇒ tạo lại.
     NotFound,
     /// `409` — offset lệch; giá trị = offset đúng theo điện thoại.
     OffsetMismatch(u64),
+    /// `409` không kèm `Upload-Offset` — đã có mục cùng tên / đang bận (§6.12).
+    Conflict,
     /// `411` / `413` — thân thiếu / quá dài, khúc vượt `Upload-Length`.
     TooLarge,
     /// `415` — không phải đuôi video (§6.6).
@@ -86,6 +88,7 @@ impl std::fmt::Display for ClientError {
             Self::WrongPin => f.write_str("wrong PIN (403)"),
             Self::NotFound => f.write_str("not found (404)"),
             Self::OffsetMismatch(o) => write!(f, "offset mismatch (409), phone has {o}"),
+            Self::Conflict => f.write_str("conflict (409)"),
             Self::TooLarge => f.write_str("payload too large (413)"),
             Self::Unsupported => f.write_str("unsupported media type (415)"),
             Self::RangeNotSatisfiable => f.write_str("range not satisfiable (416)"),
@@ -120,7 +123,7 @@ impl ClientError {
             404 => Self::NotFound,
             409 => match header_u64(headers, header::UPLOAD_OFFSET) {
                 Some(o) => Self::OffsetMismatch(o),
-                None => Self::InvalidResponse("409 without Upload-Offset".into()),
+                None => Self::Conflict,
             },
             411 | 413 => Self::TooLarge,
             415 => Self::Unsupported,
@@ -276,6 +279,34 @@ impl PhoneClient {
     pub async fn dirs(&self, dir: &str) -> Result<DirListing> {
         let q = format!("{}?path={}", path::DIRS, encode_path_segment(&protocol::normalize_dir(dir)));
         json(self.send(self.request(Method::GET, &q)).await?).await
+    }
+
+    /// `POST /api/v1/dirs` (§6.12) — tạo thư mục (cả cha còn thiếu). Trả đường điện thoại đã làm sạch.
+    pub async fn make_dir(&self, dir: &str) -> Result<String> {
+        let body = serde_json::json!({ "path": protocol::normalize_dir(dir) });
+        let r: EntryPath = json(self.send(self.json_request(Method::POST, path::DIRS, &body)).await?).await?;
+        Ok(r.path)
+    }
+
+    /// `POST /api/v1/rename` (§6.12) — đổi tên tệp / thư mục `entry` thành `name` trong cùng thư mục. Trả đường mới.
+    pub async fn rename(&self, entry: &str, name: &str) -> Result<String> {
+        let body = serde_json::json!({ "path": protocol::normalize_dir(entry), "name": name });
+        let r: EntryPath = json(self.send(self.json_request(Method::POST, path::RENAME, &body)).await?).await?;
+        Ok(r.path)
+    }
+
+    /// `DELETE /api/v1/entries?path=` (§6.12) — xoá tệp, hoặc thư mục cùng cây con. Không hoàn tác.
+    pub async fn delete_entry(&self, entry: &str) -> Result<()> {
+        let q = format!("{}?path={}", path::ENTRIES, encode_path_segment(&protocol::normalize_dir(entry)));
+        self.send(self.request(Method::DELETE, &q)).await.map(drop)
+    }
+
+    fn json_request(&self, method: Method, path: &str, body: &serde_json::Value) -> RequestBuilder {
+        let bytes = serde_json::to_vec(body).unwrap_or_default();
+        self.request(method, path)
+            .header(h::CONTENT_TYPE, "application/json")
+            .header(h::CONTENT_LENGTH, bytes.len())
+            .body(bytes)
     }
 
     /// `POST /api/v1/uploads`. `name` chỉ phần tên. `dir` (thư mục đích, `/` hoặc `\` phân cách) chỉ gửi khi điện
