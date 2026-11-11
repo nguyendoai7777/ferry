@@ -26,8 +26,11 @@ chỉ mở vài lần.
 - UI không gọi mạng: mọi lệnh đi IPC sang `ferry`, `ferry` gửi ảnh chụp trạng thái (snapshot) khi đổi, không chia sẻ mutex.
 - Đóng cửa sổ ⇒ tiến trình UI thoát (nhả GPU / RAM); truyền vẫn chạy ở `ferry`.
 - **Vỏ UI bê từ Groovex**: `views/app_bar.rs` (ba nút cửa sổ), `views/side_nav.rs`, `platform/{window_controls,move_loop,
-  resize_edges}.rs` chép từ `groove/crates/groove-app` — sửa bên đó thì soát bên này. Cửa sổ `titlebar: None` +
-  `WindowDecorations::Client` mọi OS; Linux tự vẽ mép đổi cỡ, Windows `move_loop::install` sau khi mở. Cài đặt là trang
+  resize_edges}.rs` chép từ `groove/crates/groove-app` — sửa bên đó thì soát bên này. Cửa sổ `WindowDecorations::Client` mọi OS; Windows / Linux `titlebar: None`, Linux tự vẽ mép đổi cỡ,
+  Windows `move_loop::install` sau khi mở. **macOS** (11/11/2026): thanh tiêu đề trong suốt của hệ thống (`window_controls::titlebar`)
+  ⇒ đèn giao thông native giữa hàng 36 px đầu cột trái (hàng đó không ghi tên app — thanh menu đã có), ba nút tự vẽ vẫn ở
+  góc phải kiểu cửa sổ Cài đặt của fastcast (ô 28 px bo 7, khe 4, chừa 8 px mép phải cho góc bo, Đóng rê xám); thanh menu
+  của app ở `app_menu.rs` (chữ `[menu]` của i18n, dựng lại khi đổi ngôn ngữ). Cài đặt là trang
   trong cửa sổ chính (`MainWindow::open_settings`); khay "Cài đặt…" / `ferry-ui --settings` mở thẳng trang đó. Giao diện:
   `theme` (`light|dark|system`) + `themePreset` (4 bảng của `builtin_presets()`, không tự chỉnh) trong `config.json`,
   `appearance::apply` lúc khởi động và khi đổi.
@@ -110,4 +113,13 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   mDNS multicast trong `/etc/ufw/before.rules` (đọc phải root) ⇒ ufw bật chưa chắc là thủ phạm: WiFi công ty / AP isolation chặn
   multicast thì cho phép xong vẫn không thấy, còn đường nhập địa chỉ tay. Windows: luật `netsh` của NSIS giữ `profile=any` (WiFi
   mới mặc định là Public). macOS: tường lửa ứng dụng tự hỏi, không thêm bước. Không bao giờ tắt tường lửa / đổi luật khác.
+- **macOS: `titlebar: None` làm nút cửa sổ chết** — gpui-pre-macos 0.3.10 tạo NSWindow chỉ `Titled | FullSizeContentView`,
+  thiếu `Miniaturizable` / `Resizable` ⇒ `miniaturize:` / `zoom:` bị AppKit bỏ qua. Cần `TitlebarOptions` (trong suốt +
+  `traffic_light_position`), không quay lại `None` trên macOS. Cửa sổ chưa focus thì lần bấm đầu chỉ kích hoạt nó (chuẩn macOS).
+- **macOS: không `set_menus` thì thanh menu giữ tên + menu của app trước** (thấy "Claude"). Tên in đậm là `CFBundleName`:
+  `Ferry.app` lấy từ `packaging/macos/Info.plist`; exe trần bản dev lấy `Info.plist` nhúng vào `__TEXT,__info_plist` bởi
+  `crates/ui/build.rs` (chỉ debug) — thiếu thì hiện "ferry-ui". Thử tự động: `osascript` đọc `menu bar 1` của tiến trình, bấm
+  nút native qua subrole `AXCloseButton` / `AXMinimizeButton` (nút xanh là `AXFullScreenButton`).
+- **macOS: thư mục tạm là `/var/…` → `/private/var/…`**; `watch` so theo đường dẫn `canonicalize`. FSEvents nhận theo dõi
+  cả thư mục không đọc được (không lỗi) ⇒ `FolderWatcher::start` soát `read_dir` trước để màn cài đặt vẫn báo lỗi.
 - RSS của `ferry` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

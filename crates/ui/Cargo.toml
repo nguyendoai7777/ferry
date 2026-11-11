@@ -29,5 +29,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
+# Đèn giao thông (cỡ nút để căn giữa thanh trên) + bảng Giới thiệu của AppKit (`platform/macos.rs`). MIT / Apache-2.0, đã có
+# trong cây qua GPUI và `ferry`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSGeometry", "NSString"] }
+
 [lints]
 workspace = true

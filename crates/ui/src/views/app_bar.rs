@@ -3,7 +3,10 @@
 //! ô 36 px; rê xám nhạt, Đóng rê đỏ `red-600` icon trắng). Vùng trống kéo được cửa sổ, nhấp đúp phóng to / khôi phục: vùng
 //! kéo là khung bọc ở `MainWindow` nằm sau thanh; nút `occlude` để không kéo theo.
 //!
-//! Cửa sổ chính không có viền / thanh tiêu đề của OS trên mọi nền (như Groovex): ba nút này là nút cửa sổ duy nhất.
+//! Windows / Linux: cửa sổ không có viền / thanh tiêu đề của OS (như Groovex), ba nút này là nút cửa sổ duy nhất, ô 36 px
+//! sát mép phải. macOS ([`window_controls::NATIVE_CAPTION_BUTTONS`]): thêm đèn giao thông của hệ thống ở góc trái (đầu cột
+//! trái chừa chỗ), ba nút này thành ô vuông 28 px bo 7 px cách nhau 4 px, chừa 8 px mép phải cho góc bo của cửa sổ, Đóng rê
+//! xám như hai nút kia — y như thanh tiêu đề cửa sổ Cài đặt của fastcast (`fastcast/crates/ui/src/settings/title_bar.rs`).
 
 use materiant::effect::ripple::{RippleConfig, RippleExt};
 // `#[derive(IntoElement)]` trỏ crate `gpui`; bản không test chỉ có `materiant::gpui_kit`.
@@ -23,6 +26,13 @@ pub const HEIGHT: f32 = 36.;
 /// Nút cửa sổ: ô 36 px, icon 20 px.
 const CONTROL_WIDTH: f32 = 36.;
 const CAPTION_ICON: f32 = 20.;
+/// macOS (như cửa sổ Cài đặt của fastcast / app Claude desktop): nút là ô vuông bo góc nhỏ hơn thanh, có khe giữa các nút,
+/// chừa mép phải để góc bo của cửa sổ không cắt nút Đóng; Đóng rê xám (đỏ là quy ước của Windows).
+const MAC_CONTROL: f32 = 28.;
+const MAC_CONTROL_RADIUS: f32 = 7.;
+const MAC_CONTROL_ICON: f32 = 18.;
+const MAC_CONTROL_GAP: f32 = 4.;
+const MAC_CONTROL_TRAIL: f32 = 8.;
 
 /// Nhãn trợ năng / tooltip của ba nút (đã dịch).
 pub struct CaptionLabels {
@@ -80,30 +90,35 @@ pub struct CaptionPaint {
 impl CaptionPaint {
     pub fn resolve(caption: Caption, text: Hsla) -> CaptionPaint {
         match caption {
+            Caption::Close if window_controls::NATIVE_CAPTION_BUTTONS => CaptionPaint::neutral(text),
             Caption::Close => {
                 let red: Hsla = hex(CLOSE_HOVER).into();
                 CaptionPaint { icon: text, hover_bg: red, hover_icon: white(), active_bg: red.opacity(0.9) }
             }
-            _ => CaptionPaint {
-                icon: text,
-                hover_bg: text.opacity(0.09),
-                hover_icon: text,
-                active_bg: text.opacity(0.06),
-            },
+            _ => CaptionPaint::neutral(text),
         }
+    }
+
+    fn neutral(text: Hsla) -> CaptionPaint {
+        CaptionPaint { icon: text, hover_bg: text.opacity(0.09), hover_icon: text, active_bg: text.opacity(0.06) }
     }
 }
 
-/// Nút cửa sổ rộng 36 px, cao bằng thanh, icon 20 px, ripple từ tâm. Bấm gọi [`window_controls`].
+/// Nút cửa sổ rộng 36 px, cao bằng thanh, icon 20 px (macOS: ô 28 px bo góc, icon 18 px), ripple từ tâm. Bấm gọi [`window_controls`].
 fn caption(id: &'static str, caption: Caption, maximized: bool, label: SharedString, cx: &App) -> impl IntoElement {
     let paint = CaptionPaint::resolve(caption, cx.theme().colors().text);
+    let compact = window_controls::NATIVE_CAPTION_BUTTONS;
+    let (w, h, icon) =
+        if compact { (MAC_CONTROL, MAC_CONTROL, MAC_CONTROL_ICON) } else { (CONTROL_WIDTH, HEIGHT, CAPTION_ICON) };
     div()
         .id(id)
         .group(id)
         .occlude()
         .flex_none()
-        .w(px(CONTROL_WIDTH))
-        .h(px(HEIGHT))
+        .w(px(w))
+        .h(px(h))
+        // Trước `.ripple`: ripple chép bo góc để cắt vòng.
+        .when(compact, |d| d.rounded(px(MAC_CONTROL_RADIUS)))
         .flex()
         .items_center()
         .justify_center()
@@ -118,7 +133,7 @@ fn caption(id: &'static str, caption: Caption, maximized: bool, label: SharedStr
         .child(
             svg()
                 .path(caption.icon(maximized).path())
-                .size(px(CAPTION_ICON))
+                .size(px(icon))
                 .flex_none()
                 .text_color(paint.icon)
                 .group_hover(id, move |s| s.text_color(paint.hover_icon)),
@@ -137,6 +152,9 @@ impl RenderOnce for AppBar {
                 .items_center()
                 .h_full()
                 .occlude()
+                .when(window_controls::NATIVE_CAPTION_BUTTONS, |row| {
+                    row.gap(px(MAC_CONTROL_GAP)).pr(px(MAC_CONTROL_TRAIL))
+                })
                 .child(caption("app-bar-minimize", Caption::Minimize, self.maximized, minimize, cx))
                 .child(caption("app-bar-maximize", Caption::Maximize, self.maximized, toggle_label, cx))
                 .child(caption("app-bar-close", Caption::Close, self.maximized, close, cx)),
@@ -153,9 +171,13 @@ mod tests {
     fn caption_paint_matches_groovex() {
         let text: Hsla = hex(0xf5f5f5).into();
         let close = CaptionPaint::resolve(Caption::Close, text);
-        assert_eq!(close.hover_bg, Hsla::from(hex(CLOSE_HOVER)));
-        assert_eq!(close.hover_icon, white());
         assert_eq!(close.icon, text);
+        if window_controls::NATIVE_CAPTION_BUTTONS {
+            assert_eq!(close, CaptionPaint::neutral(text), "macOS: Đóng rê xám như cửa sổ Cài đặt của fastcast");
+        } else {
+            assert_eq!(close.hover_bg, Hsla::from(hex(CLOSE_HOVER)));
+            assert_eq!(close.hover_icon, white());
+        }
         for caption in [Caption::Minimize, Caption::Maximize] {
             let p = CaptionPaint::resolve(caption, text);
             assert_eq!(p.hover_icon, text);

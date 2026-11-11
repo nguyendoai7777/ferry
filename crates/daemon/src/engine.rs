@@ -2043,7 +2043,8 @@ mod tests {
         })
         .await;
         let u = uploads();
-        assert_eq!(u[0].path, src);
+        // `watch` theo dõi thư mục đã `canonicalize`: macOS `/var/…` của thư mục tạm là `/private/var/…`.
+        assert_eq!(u[0].path, src.canonicalize().unwrap());
         assert_eq!(u[0].dir, "Gửi/Phim", "C-W3: tree kept like copy/paste");
 
         std::fs::rename(&src, root.join("Phim").join("b.mp4")).unwrap();

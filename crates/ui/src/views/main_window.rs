@@ -140,6 +140,9 @@ impl MainWindow {
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &SettingsEvent, _, cx| match ev {
             SettingsEvent::LanguageChanged(language) => {
                 this.i18n = Rc::new(I18n::new(*language));
+                if cfg!(target_os = "macos") {
+                    crate::app_menu::install(&this.i18n, cx);
+                }
                 cx.notify();
             }
         });

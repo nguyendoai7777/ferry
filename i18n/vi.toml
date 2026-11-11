@@ -90,6 +90,20 @@ maximize = "Phóng to"
 restore = "Khôi phục"
 close = "Đóng"
 
+# Thanh menu macOS (`app_menu.rs`); {app} = app.name.
+[menu]
+about = "Giới thiệu {app}"
+settings = "Cài đặt…"
+services = "Dịch vụ"
+hide = "Ẩn {app}"
+hide_others = "Ẩn ứng dụng khác"
+show_all = "Hiện tất cả"
+quit = "Thoát {app}"
+window = "Cửa sổ"
+minimize = "Thu nhỏ"
+zoom = "Phóng to / thu lại"
+close = "Đóng cửa sổ"
+
 [theme_preset]
 default = "Mặc định"
 deeppink = "Hồng đậm"

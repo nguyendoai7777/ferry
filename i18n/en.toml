@@ -90,6 +90,20 @@ maximize = "Maximize"
 restore = "Restore"
 close = "Close"
 
+# macOS menu bar (`app_menu.rs`); {app} = app.name.
+[menu]
+about = "About {app}"
+settings = "Settings…"
+services = "Services"
+hide = "Hide {app}"
+hide_others = "Hide Others"
+show_all = "Show All"
+quit = "Quit {app}"
+window = "Window"
+minimize = "Minimize"
+zoom = "Zoom"
+close = "Close Window"
+
 [theme_preset]
 default = "Default"
 deeppink = "Deeppink"

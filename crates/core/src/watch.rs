@@ -245,6 +245,9 @@ impl FolderWatcher {
         let remote_root = remote_root(&root);
         // `notify` trả đường dẫn thật (macOS: `/private/var/…`) ⇒ so cây theo bản canonical.
         let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        // macOS: FSEvents nhận theo dõi cả thư mục không đọc được (không lỗi, rồi im lặng) ⇒ soát quyền đọc trước, mọi nền
+        // cùng báo lỗi lên màn cài đặt như inotify của Linux.
+        fs::read_dir(&root).map_err(|e| e.to_string())?;
         let (tx, rx) = std_mpsc::channel();
         let events = tx.clone();
         let mut watcher = notify::recommended_watcher(move |res| {

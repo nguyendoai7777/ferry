@@ -20,6 +20,7 @@ use materiant::theme::color::hex;
 use materiant::theme::{ActiveTheme, Neutral};
 
 use crate::assets::FerryIcon;
+use crate::platform::window_controls;
 
 pub const WIDTH: f32 = 200.;
 pub const HEADER_HEIGHT: f32 = 36.;
@@ -104,7 +105,11 @@ impl RenderOnce for SideNav {
             .flex()
             .items_center()
             .px_4()
-            .child(div().flex_1().min_w_0().truncate().text_color(c.text).child(self.title));
+            // macOS: hàng này là chỗ của đèn giao thông (`window_controls::traffic_lights`), không lặp tên app — thanh menu
+            // của hệ thống đã ghi "Ferry" (chủ dự án 11/11/2026).
+            .when(!window_controls::NATIVE_CAPTION_BUTTONS, |d| {
+                d.child(div().flex_1().min_w_0().truncate().text_color(c.text).child(self.title))
+            });
 
         let items: Vec<AnyElement> = NavItem::ALL
             .iter()

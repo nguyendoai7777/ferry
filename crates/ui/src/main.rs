@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_menu;
 mod appearance;
 mod assets;
 mod daemon_link;
@@ -20,7 +21,11 @@ use std::rc::Rc;
 
 use ferry_core::i18n::I18n;
 use ferry_core::{VERSION, config, logging, paths};
-use materiant::gpui_kit::{self, App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size};
+use materiant::gpui_kit::{
+    self, ActivationPolicy, App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
+};
+use platform::window_controls;
+use views::app_bar;
 use model::Model;
 use views::main_window::MainWindow;
 
@@ -49,14 +54,22 @@ fn main() {
         // Nền + bảng màu đã lưu, font nhúng (D-20); gốc cửa sổ đặt `.font_family(cx.theme().font_family())`.
         appearance::apply(theme, &theme_preset, cx);
         devtool::init(cx);
+        if cfg!(target_os = "macos") {
+            // Exe trần (bản dev) không có `Info.plist`: nói rõ là app thường (Dock + thanh menu), rồi dựng thanh menu — không
+            // có menu chính thì thanh menu giữ tên + menu của app trước đó.
+            cx.set_activation_policy(ActivationPolicy::Regular);
+            app_menu::bind_keys(cx);
+            app_menu::install(&i18n, cx);
+        }
 
         let model = cx.new(|_| Model::new(sender));
         let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            // Như Groovex: không thanh tiêu đề OS trên mọi nền, thanh trên + ba nút cửa sổ tự vẽ (`views::app_bar`). Tên
-            // cửa sổ (taskbar, Alt+Tab) đặt bằng `set_window_title` ở lần vẽ đầu.
-            titlebar: None,
+            // Như Groovex: không thanh tiêu đề OS, thanh trên + ba nút cửa sổ tự vẽ (`views::app_bar`). macOS: thanh tiêu
+            // đề trong suốt của hệ thống, chỉ còn đèn giao thông giữa thanh trên (`window_controls::titlebar`). Tên cửa sổ
+            // (taskbar, Alt+Tab) đặt bằng `set_window_title` ở lần vẽ đầu.
+            titlebar: window_controls::titlebar(i18n.t("app.name"), app_bar::HEIGHT),
             window_decorations: Some(WindowDecorations::Client),
             window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
             app_id: Some("ferry".into()),
@@ -81,6 +94,9 @@ fn main() {
                 main.update(cx, |main, cx| main.open_settings(window, cx));
             }
         });
+        if cfg!(target_os = "macos") {
+            app_menu::register(handle, &main, cx);
+        }
         // Một cửa sổ: đóng là thoát tiến trình (daemon vẫn chạy).
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
