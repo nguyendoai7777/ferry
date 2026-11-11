@@ -124,6 +124,7 @@ Lỗi mạng / 5xx / 503 → Waiting (backoff 2 s, 4 s … tối đa 60 s) → H
 404 upload id (server đã tắt) → Creating lại từ đầu
 409 Upload-Offset lệch → HEAD → tiếp từ offset đúng
 415 / 413 → Failed (không thử lại; nói lý do)
+410 ở POST /uploads → cả lô Failed "Điện thoại từ chối nhận" (không thử lại, §6.5)
 507 → Paused (hết chỗ; báo số GB thiếu; người dùng bấm thử lại)
 File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã thay đổi"
 ```
@@ -170,7 +171,7 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
 - `paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
 - `port` + `addresses`: mọi địa chỉ LAN của điện thoại (IPv4 riêng + IPv6 global / ULA; **không** link-local — scope
   phía điện thoại vô nghĩa với PC). Thêm đường khi mDNS chỉ trả một họ địa chỉ hoặc IP đổi.
-- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9);
+- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10);
   thiếu ⇒ PC gửi phẳng và báo "Cập nhật app trên điện thoại để giữ thư mục". `ipv6` ⇒ server nghe IPv6.
 
 `POST /api/v1/pair` — không cần xác thực.
@@ -210,9 +211,19 @@ nhận `200` (file đã đổi) thì ghi lại từ đầu.
 1. **Tạo** — `POST /api/v1/uploads`, Bearer, không thân (`Content-Length: 0`).
    Header: `X-File-Name: <URL-encoded>` (chỉ lấy phần tên, không thư mục), `Upload-Length: <tổng byte, > 0>`,
    `X-File-Dir: <URL-encoded>` (tuỳ chọn, chỉ khi `features` có `dirs` — §6.9).
+   `X-Batch-Files: <số tệp của lô>`, `X-Batch-Bytes: <tổng byte của lô>` (tuỳ chọn, gửi ở **mọi** `POST` của lô —
+   điện thoại dùng để hỏi người dùng "N tệp (cỡ)"; thiếu thì điện thoại tự đếm các `POST` đã thấy).
+   Khi `features` có `batch`: thêm `X-Batch-Id`, `X-Batch-Index` và (có điều kiện) thân JSON danh sách lô — §6.10.
    - `201` + `Location: /api/v1/uploads/<uid>` + thân `{"id":"<uid>","offset":0,"length":<tổng>,"dir":"<đã làm sạch>"}`
    - `415` không phải đuôi video · `507` không đủ chỗ (cần tổng + 16 MB) · `400` thiếu header / `X-File-Dir` sai
      (§6.9) · `503` quá nhiều phiên upload dở (tối đa 8).
+   - `503` + `Retry-After: 2` + thân `{"error":"awaiting_approval"}` — điện thoại tắt "Tự động nhận file", đang chờ
+     người dùng bấm Nhận. **Chờ rồi gửi lại đúng `POST` này** (như `503` khác); không giới hạn số lần, người dùng có thể
+     để lâu. Điện thoại trả ngay, không giữ request treo.
+   - `410` + thân `{"error":"declined"}` — **người dùng từ chối lô**. Dừng cả lô của điện thoại này (mọi tệp chưa
+     `Done` → Failed "Điện thoại từ chối nhận"), **không thử lại**, không HEAD/PATCH các upload cũ. Điện thoại tiếp tục
+     trả `410` cho mọi `POST` của máy này tới khi phiên nhận hết (không có request nào trong 10 s); lô sau sẽ được hỏi lại.
+   - Đã nhận một phiên thì các `POST` tiếp theo của phiên đó (cùng PC, không rảnh quá 10 s) không hỏi lại.
 2. **Gửi khúc** — `PATCH /api/v1/uploads/<uid>`, Bearer.
    Header: `Upload-Offset: <byte bắt đầu khúc này>`, `Content-Length: <cỡ khúc, > 0>`, `Content-Type:
    application/offset+octet-stream`. Thân: byte thô.
@@ -271,6 +282,34 @@ PC đẩy tệp và thư mục y như copy/paste giữa hai ổ trong Explorer /
 - **Trùng**: thư mục đã có ⇒ gộp vào (như paste "merge"); tệp trùng tên trong cùng thư mục ⇒ điện thoại đổi tên
   `a (1).mp4`. PC tránh gửi lại bằng bước Checking (trùng `dir` + tên + cỡ ⇒ bỏ qua, §5).
 - Thư mục chưa có ⇒ điện thoại tạo khi **commit** (khúc cuối) — upload dở / huỷ không để lại thư mục rỗng.
+
+### 6.10 Danh sách cả lô — điện thoại thấy trước mọi tệp sẽ nhận
+
+Chỉ khi `info.features` có `batch`. Mục đích: màn "Đang nhận" trên điện thoại hiện **đủ** các tệp của lô ngay từ đầu
+(chờ / đang nhận / xong / lỗi / đã có sẵn) như hàng đợi trên PC, và hỏi "N tệp (cỡ)" đúng ngay lần đầu.
+
+- Mọi `POST /api/v1/uploads` của một lô mang thêm:
+  - `X-Batch-Id: <id lô>` — 8…64 ký tự `[A-Za-z0-9_-]`, PC sinh ngẫu nhiên cho mỗi lô;
+  - `X-Batch-Index: <số thứ tự tệp trong danh sách, từ 0>`.
+- **Thân danh sách**: PC gửi kèm thân JSON (`Content-Type: application/json`, `Content-Length` đúng, ≤ 1 MiB, ≤ 10 000
+  mục) ở mọi `POST` của lô **cho tới khi** một `POST` của lô đó nhận `201` (gửi lại cả khi thử lại sau `503`). Sau đó
+  `POST` của lô gửi không thân (`Content-Length: 0`) như cũ. Điện thoại bỏ qua bản danh sách trùng của cùng `X-Batch-Id`.
+
+  ```json
+  {"files":[
+    {"name":"fastcast_2026-11-10_11-01-25.mp4","dir":"Ghi màn hình","length":5138022},
+    {"name":"fastcast_2026-11-09_10-48-24.mp4","dir":"","length":1153433,"skip":true}
+  ]}
+  ```
+  - `name`, `dir`: chuỗi thô (không URL-encode) — cùng giá trị PC sẽ gửi ở `X-File-Name` / `X-File-Dir` của tệp đó.
+  - `length`: byte, > 0. `skip: true` — PC sẽ **không** gửi tệp này (đã có trên điện thoại, kiểm bằng `list`); điện
+    thoại hiện "Đã có sẵn", không tính vào số tệp / cỡ cần nhận.
+  - Thứ tự mảng = `X-Batch-Index`.
+- Lỗi: thân không phải JSON hợp lệ / sai kiểu / `X-Batch-*` sai định dạng / index ngoài danh sách đã nhận → `400`;
+  thân > 1 MiB → `413`. `401` / `503` / `410` như §6.5 (kiểm token trước, rồi cổng xác nhận).
+- Điện thoại mất danh sách (server khởi động lại) mà PC đã thôi gửi thân: `POST` vẫn chạy, tệp hiện như không có lô.
+- Tệp trong danh sách mà tới khi phiên kết thúc (§6.5, rảnh 10 s) PC không gửi → điện thoại hiện "Không gửi".
+- Huỷ một tệp giữa lô: PC `DELETE` upload (nếu đã tạo) — điện thoại hiện lỗi cho tệp đó; tệp chưa tạo thì thôi không gửi.
 
 ## 7. Kiểm thử
 
