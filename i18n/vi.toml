@@ -201,6 +201,7 @@ drop_other = "Không gửi vào nhóm Khác được — mở một thư mục."
 
 [settings]
 window_title = "Cài đặt — Ferry"
+close = "Đóng"
 loading = "Đang tải cài đặt…"
 retry = "Thử lại"
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"

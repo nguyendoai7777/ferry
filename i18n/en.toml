@@ -201,6 +201,7 @@ drop_other = "You cannot send into Other — open a folder."
 
 [settings]
 window_title = "Settings — Ferry"
+close = "Close"
 loading = "Loading settings…"
 retry = "Try again"
 no_daemon = "Ferry isn't running — open Ferry, then try again"

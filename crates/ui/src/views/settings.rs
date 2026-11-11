@@ -11,22 +11,24 @@ use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::i18n::{I18n, LanguagePref};
 use ferry_core::ipc::{CommandError, DeviceSetting, PhoneOp, SettingsOp, SettingsView};
 use ferry_core::paths;
-use materiant::button::{Button, Size};
+use materiant::button::{Button, IconButton, Size};
 use materiant::card::{Card, CardGroup, CardItem};
 use materiant::field::input::TextField;
 use materiant::field::number::NumberField;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, AnyWindowHandle, App, AppContext, Bounds, ClickEvent, Context, Entity, Focusable, Global, IntoElement,
-    PathPromptOptions, Render, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div, px,
-    size,
+    self, AnyWindowHandle, App, AppContext, Bounds, ClickEvent, Context, Decorations, Entity, Focusable, Global,
+    IntoElement, PathPromptOptions, Render, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds,
+    WindowDecorations, WindowOptions, div, px, size,
 };
+use materiant::icon::IconName;
 use materiant::overlay::dialog::{Dialog, DialogHandle};
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
 use materiant::switch::Switch;
 use materiant::theme::ActiveTheme;
+use materiant::window::DragRegionExt;
 use std::path::PathBuf;
 
 use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
@@ -58,6 +60,7 @@ pub fn open(cx: &mut App) {
         titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
         window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
         app_id: Some("ferry".into()),
+        window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
         ..materiant::window::window_options()
     };
     match gpui_kit::open_window(options, cx, move |window, cx| cx.new(|cx| SettingsPage::new(i18n, window, cx))) {
@@ -779,6 +782,34 @@ impl SettingsPage {
             .children(self.error_line(Section::Advanced, cx))
     }
 
+    /// Linux (Mutter không có SSD): GPUI rơi về CSD ⇒ tự vẽ thanh tiêu đề kéo được + nút đóng.
+    fn render_title_bar(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let theme = cx.theme();
+        let (border, title_weight) = (theme.colors().border, theme.title_weight());
+        div()
+            .w_full()
+            .h(px(36.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pl_4()
+            .pr_1()
+            .border_b_1()
+            .border_color(border)
+            .drag_region()
+            .child(div().truncate().font_weight(title_weight).child(self.t("settings.window_title")))
+            .child(
+                div().occlude().child(
+                    IconButton::new("settings-close", IconName::CloseThin)
+                        .size(Size::Sm)
+                        .base_hover(materiant::style::Accent::Danger)
+                        .accessibility_label(self.t("settings.close"))
+                        .on_click(|_, window, _| window.remove_window()),
+                ),
+            )
+    }
+
     fn render_dialogs(&self, cx: &mut Context<Self>) -> (Dialog, Dialog) {
         let muted = cx.theme().colors().muted;
         let caption = cx.theme().caption_size();
@@ -846,7 +877,7 @@ fn setting_row(cx: &App, label: SharedString, hint: Option<SharedString>, contro
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (colors, font_family, font_size) = {
             let theme = cx.theme();
             (theme.colors().clone(), theme.font_family(), theme.font_size())
@@ -884,7 +915,8 @@ impl Render for SettingsPage {
             _ => self.render_message(self.t("settings.loading"), false, cx).into_any_element(),
         };
         let (rename, forget) = self.render_dialogs(cx);
-        root.child(body).child(rename).child(forget)
+        let bar = matches!(window.window_decorations(), Decorations::Client { .. }).then(|| self.render_title_bar(cx));
+        root.children(bar).child(body).child(rename).child(forget)
     }
 }
 
