@@ -252,7 +252,7 @@ mod native {
             if key != self.key {
                 self.key = key;
                 #[cfg(target_os = "macos")]
-                let r = self.icon.set_icon_with_as_template(Some(icon(status.mode)), true);
+                let r = self.icon.set_icon_templated(Some(icon(status.mode)));
                 #[cfg(not(target_os = "macos"))]
                 let r = self.icon.set_icon(Some(icon(status.mode)));
                 if let Err(e) = r {
