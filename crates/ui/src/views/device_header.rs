@@ -1,15 +1,15 @@
 //! Đầu cửa sổ (PROTOCOL 4.2): điện thoại đang chọn — chấm trạng thái + tên (nhiều máy ⇒ `Select`) — và nút
-//! "Thêm điện thoại". Chưa ghép máy nào ⇒ chỉ nút thêm.
+//! "Thêm điện thoại" + nút cài đặt (mở cửa sổ cài đặt riêng, gd1_12). Chưa ghép máy nào ⇒ chỉ hai nút bên phải.
 
 use std::rc::Rc;
 
 use ferry_core::device::DeviceState;
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::DeviceView;
-use materiant::button::{Button, Size};
+use materiant::button::{Button, IconButton, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{App, IntoElement, SharedString, Window, div, px};
-use materiant::icon::{Icon, IconSource};
+use materiant::icon::{Icon, IconName, IconSource};
 use materiant::select::Select;
 use materiant::theme::{ActiveTheme, Neutral};
 
@@ -67,10 +67,22 @@ pub fn device_header(
         .border_color(c.border)
         .child(left)
         .child(
-            Button::new("add-phone", i18n.t("main.add_phone"))
-                .size(Size::Sm)
-                .tonal()
-                .on_click(move |_, window, cx| on_add(window, cx)),
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Button::new("add-phone", i18n.t("main.add_phone"))
+                        .size(Size::Sm)
+                        .tonal()
+                        .on_click(move |_, window, cx| on_add(window, cx)),
+                )
+                .child(
+                    IconButton::new("open-settings", IconName::Settings)
+                        .size(Size::Sm)
+                        .accessibility_label(SharedString::from(i18n.t("main.settings").to_owned()))
+                        .on_click(|_, _, cx| crate::views::settings::open(cx)),
+                ),
         )
 }
 

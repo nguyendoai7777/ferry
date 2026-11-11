@@ -17,7 +17,9 @@ use std::rc::Rc;
 
 use ferry_core::i18n::I18n;
 use ferry_core::{VERSION, config, logging, paths};
-use materiant::gpui_kit::{self, App, AppContext, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use materiant::gpui_kit::{
+    self, App, AppContext, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+};
 use model::Model;
 use views::main_window::MainWindow;
 
@@ -78,6 +80,7 @@ fn main() {
             titlebar: Some(TitlebarOptions { title: Some(title.clone()), ..Default::default() }),
             window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
             app_id: Some("ferry".into()),
+            window_decorations: views::title_bar::requested_decorations(),
             ..materiant::window::window_options()
         };
         let handle = match gpui_kit::open_window(options, cx, |window, cx| {

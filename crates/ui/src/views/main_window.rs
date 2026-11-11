@@ -278,23 +278,35 @@ impl MainWindow {
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors().clone();
-        let root = div()
+        // Thanh tiêu đề tự vẽ (GNOME Wayland không cấp viền) nằm trên mọi trang; trang bên dưới chiếm phần còn lại.
+        let bar = super::title_bar::title_bar(
+            "main-close",
+            SharedString::from(self.i18n.t("app.name").to_owned()),
+            SharedString::from(self.i18n.t("main.close").to_owned()),
+            window,
+            cx,
+        );
+        let frame = div()
             .size_full()
-            .relative()
+            .flex()
+            .flex_col()
             .bg(c.surface)
             .text_color(c.text)
             .font_family(cx.theme().font_family())
-            .child(ToastViewport::new());
+            .children(bar);
+        let root = div().w_full().flex_1().min_h_0().relative().child(ToastViewport::new());
         match &self.page {
             Page::Browse { browser, .. } => {
-                return root.child(div().size_full().child(browser.clone())).into_any_element();
+                return frame.child(root.child(div().size_full().child(browser.clone()))).into_any_element();
             }
             Page::Library { library, .. } => {
-                return root.child(div().size_full().child(library.clone())).into_any_element();
+                return frame.child(root.child(div().size_full().child(library.clone()))).into_any_element();
             }
-            Page::AddPhone { view, .. } => return root.child(div().size_full().child(view.clone())).into_any_element(),
+            Page::AddPhone { view, .. } => {
+                return frame.child(root.child(div().size_full().child(view.clone()))).into_any_element();
+            }
             Page::Main => {}
         }
         let weak = cx.weak_entity();
@@ -476,36 +488,39 @@ impl Render for MainWindow {
 
         let w_paste = weak.clone();
         let w_focus = weak;
-        root.child(
-            div()
-                .id("main-page")
-                .track_focus(&self.focus)
-                .size_full()
-                .flex()
-                .flex_col()
-                .on_mouse_down(materiant::gpui_kit::MouseButton::Left, move |_, window, cx| {
-                    let handle = w_focus.read_with(cx, |this, _| this.focus.clone()).ok();
-                    if let Some(h) = handle {
-                        window.focus(&h, cx);
-                    }
-                })
-                .on_key_down(move |ev: &KeyDownEvent, _, cx| {
-                    if ev.keystroke.modifiers.secondary(cx) && ev.keystroke.key == "v" {
-                        let _ = w_paste.update(cx, |this, cx| this.paste(cx));
-                    }
-                })
-                .on_drop({
-                    let w = cx.weak_entity();
-                    move |paths: &ExternalPaths, _, cx| {
-                        let paths = paths.paths().to_vec();
-                        let _ = w.update(cx, |this, cx| this.add_paths(&paths, cx));
-                    }
-                })
-                .child(header)
-                .child(zone)
-                .children(tray)
-                .child(queue),
-        )
-        .into_any_element()
+        frame
+            .child(
+                root.child(
+                    div()
+                        .id("main-page")
+                        .track_focus(&self.focus)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .on_mouse_down(materiant::gpui_kit::MouseButton::Left, move |_, window, cx| {
+                            let handle = w_focus.read_with(cx, |this, _| this.focus.clone()).ok();
+                            if let Some(h) = handle {
+                                window.focus(&h, cx);
+                            }
+                        })
+                        .on_key_down(move |ev: &KeyDownEvent, _, cx| {
+                            if ev.keystroke.modifiers.secondary(cx) && ev.keystroke.key == "v" {
+                                let _ = w_paste.update(cx, |this, cx| this.paste(cx));
+                            }
+                        })
+                        .on_drop({
+                            let w = cx.weak_entity();
+                            move |paths: &ExternalPaths, _, cx| {
+                                let paths = paths.paths().to_vec();
+                                let _ = w.update(cx, |this, cx| this.add_paths(&paths, cx));
+                            }
+                        })
+                        .child(header)
+                        .child(zone)
+                        .children(tray)
+                        .child(queue),
+                ),
+            )
+            .into_any_element()
     }
 }

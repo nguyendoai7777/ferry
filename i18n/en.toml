@@ -68,6 +68,8 @@ placeholder = "Drop videos here to send them to your phone"
 
 [main]
 add_phone = "Add phone"
+settings = "Settings"
+close = "Close window"
 no_phone = "No phone yet"
 no_phone_hint = "Pair a phone to start sending videos."
 phone_online = "Connected"

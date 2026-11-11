@@ -1701,7 +1701,8 @@ mod tests {
         let e = &rig.engine;
         let first = view(ask(e, SettingsOp::Get).await);
         assert_eq!(first.devices.len(), 1);
-        assert!(!first.download_dir_custom && !first.autostart);
+        // Bộ thử đặt sẵn `downloadDir` = `<tmp>/dl` (gd1_10).
+        assert!(first.download_dir_custom && !first.autostart);
 
         let dl = tmp.path().join("tải về").join("mới");
         let v = view(ask(e, SettingsOp::SetDownloadDir { path: Some(dl.clone()) }).await);

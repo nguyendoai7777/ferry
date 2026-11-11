@@ -11,3 +11,5 @@ pub mod queue_list;
 pub mod send_tray;
 /// Cửa sổ cài đặt riêng (gd1_12).
 pub mod settings;
+/// Thanh tiêu đề tự vẽ khi hệ thống không cấp viền (GNOME Wayland).
+pub mod title_bar;

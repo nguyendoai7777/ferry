@@ -68,6 +68,8 @@ placeholder = "Thả video vào đây để gửi sang điện thoại"
 
 [main]
 add_phone = "Thêm điện thoại"
+settings = "Cài đặt"
+close = "Đóng cửa sổ"
 no_phone = "Chưa có điện thoại nào"
 no_phone_hint = "Ghép một điện thoại để bắt đầu gửi video."
 phone_online = "Đang kết nối"
