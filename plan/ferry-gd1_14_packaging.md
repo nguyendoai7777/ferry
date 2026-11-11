@@ -11,6 +11,15 @@
 | Phụ thuộc mới | `cargo-about` (công cụ build) |
 | File đụng tới | MỚI `build.sh`, `build.ps1`, `packaging/…`, `release-notes/TEMPLATE.md`; SỬA gốc `build.sh`, `build.ps1`, `tag.sh`, `tag.ps1` |
 
+## 0. Bàn giao từ ferry-gd1_13 (11/11/2026)
+<!-- handoff: ferry-gd1_13 -->
+
+- Phụ thuộc mới `notify` 8 (CC0-1.0) trong `ferry-core` — trang giấy phép bên thứ ba có CC0; `cargo deny` đã qua.
+- Daemon có thêm luồng `ferry-watch` + luồng inotify chỉ khi bật thư mục theo dõi; RSS release Linux 10,7 ⇒ 11,9 MB.
+- Linux: theo dõi đệ quy tốn một inotify watch mỗi thư mục con (giới hạn `fs.inotify.max_user_watches`); hết thì màn cài đặt
+  hiện lỗi theo dõi (`watchError`) — bản cài không cần chỉnh sysctl.
+- Kiểm tay trên bản cài Windows / macOS: đổi tên tệp cũ trong thư mục theo dõi (gd1_13 mục 6 C5).
+
 ## 0. Bàn giao từ ferry-gd1_12 (11/11/2026)
 <!-- handoff: ferry-gd1_12 -->
 
