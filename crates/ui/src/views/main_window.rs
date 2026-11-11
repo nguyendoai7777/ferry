@@ -81,7 +81,6 @@ pub struct MainWindow {
     i18n: Rc<I18n>,
     tray: Vec<TrayEntry>,
     expanded: HashSet<BatchId>,
-    sent_open: bool,
     page: Page,
     focus: FocusHandle,
     /// `req` của `AddFiles` đang chờ trả lời.
@@ -109,7 +108,6 @@ impl MainWindow {
             i18n,
             tray: Vec::new(),
             expanded: HashSet::new(),
-            sent_open: false,
             page: Page::Main,
             focus,
             sending: None,
@@ -380,7 +378,6 @@ impl MainWindow {
                     self.expanded.insert(id);
                 }
             }
-            RowCommand::Toggle(RowKind::SentHeader { .. }) => self.sent_open = !self.sent_open,
             RowCommand::Toggle(_) => {}
         }
         cx.notify();
@@ -523,7 +520,7 @@ impl MainWindow {
                 };
                 let rows = {
                     let snap = &self.model.read(cx).snapshot;
-                    queue_list::build_rows(&i18n, snap, dev, &self.expanded, self.sent_open)
+                    queue_list::build_rows(&i18n, snap, dev, &self.expanded)
                 };
                 let empty = rows.is_empty();
                 let w = weak.clone();

@@ -38,7 +38,6 @@ pub enum Tone {
 pub enum RowKind {
     Batch { id: BatchId, open: bool },
     Item { id: ItemId, nested: bool },
-    SentHeader { open: bool },
     More,
 }
 
@@ -200,14 +199,8 @@ fn download_row(i18n: &I18n, snapshot: &Snapshot, item: &DownloadItem, device: D
     }
 }
 
-/// Dựng các dòng của hàng đợi cho một điện thoại. `expanded`: lô đang mở; `sent_open`: nhóm "Đã gửi" đang mở.
-pub fn build_rows(
-    i18n: &I18n,
-    snapshot: &Snapshot,
-    device: &DeviceView,
-    expanded: &HashSet<BatchId>,
-    sent_open: bool,
-) -> Vec<Row> {
+/// Dựng các dòng của hàng đợi cho một điện thoại. `expanded`: lô đang mở.
+pub fn build_rows(i18n: &I18n, snapshot: &Snapshot, device: &DeviceView, expanded: &HashSet<BatchId>) -> Vec<Row> {
     let items: Vec<&UploadItem> = snapshot.uploads.iter().filter(|u| u.device_id == device.id).collect();
     let lang = i18n.language();
 
@@ -306,28 +299,7 @@ pub fn build_rows(
         out.push(more_row(i18n, "queue.and_more", snapshot.queued_omitted));
     }
 
-    // Nhóm "Đã gửi": mục xong / bỏ qua / huỷ không thuộc dòng gộp còn sống, mới nhất trước.
-    let mut sent: Vec<&&UploadItem> = items.iter().filter(|u| is_sent(&u.state) && !in_live(u)).collect();
-    sent.sort_by_key(|u| std::cmp::Reverse(u.id));
-    let count = sent.len() as u64 + snapshot.finished_omitted;
-    if count > 0 {
-        out.push(Row {
-            kind: RowKind::SentHeader { open: sent_open },
-            title: i18n.t_args("queue.sent_group", &[("count", &count.to_string())]),
-            meta: String::new(),
-            status: String::new(),
-            tone: Tone::Muted,
-            progress: None,
-            speed: None,
-            actions: vec![],
-        });
-        if sent_open {
-            out.extend(sent.iter().map(|u| item_row(i18n, snapshot, u, device.state, true)));
-            if snapshot.finished_omitted > 0 {
-                out.push(more_row(i18n, "queue.and_more", snapshot.finished_omitted));
-            }
-        }
-    }
+    // Mục đã gửi xong / bỏ qua / huỷ không hiện (chủ dự án 11/11/2026: hàng đợi chỉ còn việc đang làm + lỗi cần xử lý).
     out
 }
 
@@ -378,7 +350,7 @@ pub fn queue_list(
     .padding_x(px(PAD_X))
     .on_activate(move |ix: &usize, window, cx| {
         if let Some(row) = activate_rows.get(*ix)
-            && matches!(row.kind, RowKind::Batch { .. } | RowKind::SentHeader { .. })
+            && matches!(row.kind, RowKind::Batch { .. })
         {
             activate(RowCommand::Toggle(row.kind.clone()), window, cx);
         }
@@ -402,9 +374,9 @@ fn render_row(
         Tone::Danger => c.danger,
     };
     let nested = matches!(row.kind, RowKind::Item { nested: true, .. });
-    let header = matches!(row.kind, RowKind::Batch { .. } | RowKind::SentHeader { .. });
+    let header = matches!(row.kind, RowKind::Batch { .. });
     let chevron = match &row.kind {
-        RowKind::Batch { open, .. } | RowKind::SentHeader { open } => {
+        RowKind::Batch { open, .. } => {
             let open = *open;
             let kind = row.kind.clone();
             let cmd = on_command.clone();
@@ -591,9 +563,9 @@ mod tests {
         let snap = snapshot();
         let dev = &snap.devices[0];
         let vi = I18n::new(Language::Vi);
-        let rows = build_rows(&vi, &snap, dev, &HashSet::new(), false);
-        // lô, solo lỗi, nhóm "Đã gửi" (đóng)
-        assert_eq!(rows.len(), 3);
+        let rows = build_rows(&vi, &snap, dev, &HashSet::new());
+        // lô, solo lỗi; mục đã gửi không hiện
+        assert_eq!(rows.len(), 2);
         assert!(matches!(rows[0].kind, RowKind::Batch { open: false, .. }));
         assert_eq!(rows[0].title, "Chuyến đi");
         assert!(rows[0].status.starts_with("Đang gửi"), "{}", rows[0].status);
@@ -601,21 +573,19 @@ mod tests {
         assert_eq!(rows[1].status, "Không tìm thấy tệp trên máy tính");
         assert_eq!(rows[1].tone, Tone::Danger);
         assert_eq!(rows[1].actions, vec![Action::Retry, Action::Cancel]);
-        assert_eq!(rows[2].title, "Đã gửi (1)");
+        assert!(rows.iter().all(|r| r.title != "old.mp4"));
 
         let open: HashSet<_> = [BatchId("b1".into())].into();
-        let rows = build_rows(&vi, &snap, dev, &open, true);
-        // lô + 2 con + solo + header + 1 đã gửi
-        assert_eq!(rows.len(), 6);
+        let rows = build_rows(&vi, &snap, dev, &open);
+        // lô + 2 con + solo
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[1].status, "Đang gửi · 40 %");
         assert_eq!(rows[2].status, "Đang chờ");
-        assert_eq!(rows.last().unwrap().status, "Đã gửi");
 
         let en = I18n::new(Language::En);
-        let rows = build_rows(&en, &snap, dev, &open, true);
+        let rows = build_rows(&en, &snap, dev, &open);
         assert_eq!(rows[1].status, "Sending · 40 %");
         assert_eq!(rows[2].status, "Waiting");
-        assert_eq!(rows[5].status, "Sent");
         assert_eq!(rows[2 + 1].status, "The file is no longer on this computer");
     }
 
@@ -625,7 +595,7 @@ mod tests {
         snap.devices[0].state = DeviceState::Offline;
         snap.uploads[0].state = UploadState::Queued;
         let vi = I18n::new(Language::Vi);
-        let rows = build_rows(&vi, &snap, &snap.devices[0].clone(), &HashSet::new(), false);
+        let rows = build_rows(&vi, &snap, &snap.devices[0].clone(), &HashSet::new());
         assert_eq!(rows[0].status.split(" · ").next().unwrap(), "Bật Sync WiFi trên điện thoại để gửi tiếp");
     }
 
@@ -636,8 +606,8 @@ mod tests {
         snap.batches[0].info.label = None;
         snap.batches[0].progress.files = 1;
         let vi = I18n::new(Language::Vi);
-        let rows = build_rows(&vi, &snap, &snap.devices[0].clone(), &HashSet::new(), true);
-        assert!(rows.iter().all(|r| !matches!(r.kind, RowKind::Batch { .. } | RowKind::SentHeader { .. })));
+        let rows = build_rows(&vi, &snap, &snap.devices[0].clone(), &HashSet::new());
+        assert!(rows.iter().all(|r| !matches!(r.kind, RowKind::Batch { .. })));
         assert_eq!(rows.len(), 3);
     }
 
@@ -670,7 +640,7 @@ mod tests {
         snap.downloads.push(dl(3, DownloadState::Failed { reason: DownloadFailReason::RemoteGone }));
         snap.progress.push(ItemProgress { id: 1, sent: 40, size: 100, bytes_per_sec: 5 });
         let vi = I18n::new(Language::Vi);
-        let rows = build_rows(&vi, &snap, &device(DeviceState::Online), &HashSet::new(), false);
+        let rows = build_rows(&vi, &snap, &device(DeviceState::Online), &HashSet::new());
         assert_eq!(rows.len(), 2, "mục đã tải xong không nằm ở hàng sống");
         assert_eq!(rows[0].kind, RowKind::Item { id: 1, nested: false });
         assert!(rows[0].status.contains("40 %"));

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ferry_core::client::PhoneClient;
+use ferry_core::client::{ClientError, PhoneClient};
 use ferry_core::config::{self, Config, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
@@ -175,6 +175,11 @@ enum Internal {
     /// Hàng đợi của mã cũ đã chuyển sang máy cài lại (`Replaced`) ⇒ đánh thức runner mã mới.
     Moved {
         device: DeviceId,
+    },
+    /// Lệnh ngoài runner (`list`) lỗi mạng ở địa chỉ đang dùng ⇒ như `TransferEvent::ConnectionLost`.
+    LinkFailed {
+        device: DeviceId,
+        addr: SocketAddr,
     },
     /// `info` của địa chỉ nhập tay. `outbox = None` ⇒ địa chỉ đã lưu, hỏi lúc khởi động (không ai chờ trả lời).
     /// `remember` ⇒ lệnh cài đặt `AddAddress`: trả lời được thì lưu chuỗi này vào `manualAddresses`.
@@ -579,11 +584,18 @@ impl Engine {
                     Ok(c) => c,
                     Err(e) => return Some(Err(e)),
                 };
-                let outbox = outbox.clone();
+                let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
                     let r = client.list().await.map(|items| Outcome::Library { items }).map_err(|e| {
                         log::info!("engine: list {device}: {e}");
-                        CommandError::Unreachable
+                        // Điện thoại tắt Sync WiFi giữa chừng (connection refused) ⇒ đừng để UI tin "Đang kết nối":
+                        // bỏ địa chỉ, nối lại; UI thấy Offline ngay thay vì "Không đọc được danh sách".
+                        if matches!(e, ClientError::Network(_)) {
+                            let _ = tx.send(Internal::LinkFailed { device: device.clone(), addr: client.addr() });
+                            CommandError::Offline
+                        } else {
+                            CommandError::Unreachable
+                        }
                     });
                     reply_to(&outbox, req, r);
                 });
@@ -1146,6 +1158,12 @@ impl Engine {
                     log::info!("engine: mDNS allowed in the firewall, browsing again");
                 }
                 reply_to(&outbox, req, Ok(Outcome::Firewall { result }));
+            }
+            Internal::LinkFailed { device, addr } => {
+                log::info!("engine: lost {device} at {addr} (library), reconnecting");
+                self.devices.address_failed(&device, addr);
+                self.probe_device(&device, None);
+                self.dirty = true;
             }
             Internal::Moved { device } => {
                 if let Some(r) = self.runners.get(&device) {
