@@ -25,6 +25,9 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_13` `watch-folder` | thư mục "Gửi sang điện thoại": tệp mới ổn định ⇒ vào hàng đợi | 04, 12 | opus |
 | `gd1_14` `packaging` | `build.sh` / `build.ps1`, bản cài ba OS, trang giấy phép bên thứ ba, nối `build.*` / `tag.*` gốc | 08–13 | opus |
 
+**Bổ sung W-3 (11/11/2026)**: IPv4 + IPv6 (PROTOCOL 6.8) và đẩy thư mục như copy/paste (6.9) — gộp vào 02, 03, 04, 05,
+08, 11, 13 (mục "Bổ sung W-3" trong từng task). Phía Android: `video-player` task_10 (IPv6) + task_11 (thư mục).
+
 Làn song song sau 01: {02 → 04, 05 → 06} và 03 chạy song song (khác tệp); 08, 09, 12 song song sau 07.
 
 ## Ngoài GĐ1

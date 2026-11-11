@@ -1,7 +1,8 @@
 # media-wireless-sync — App PC "cầu nối" gửi video sang điện thoại qua WiFi
 
 > Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
-> thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1).
+> thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1);
+> bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3).
 > **Đổi giao thức = sửa tệp này trước, rồi sửa cả hai phía** (bản bên `video-player` phải giống hệt mục 6).
 > Mục 3 là đề xuất gốc; bố cục thật của repo ở `CLAUDE.md`.
 
@@ -66,11 +67,14 @@ pc-app/
    tạm dừng tất cả, thoát.
 2. **Cửa sổ chính** = một vùng thả lớn + hàng đợi bên dưới.
    - Đầu cửa sổ: thiết bị đang chọn (tên điện thoại, chấm xanh/xám online). Nhiều điện thoại thì là menu chọn.
-   - Thả file/thư mục vào (hoặc nút "Chọn video…"): chỉ nhận đuôi video (§6.6); thư mục thì lấy video bên trong (đệ quy).
+   - Thả / dán (Ctrl+V · Cmd+V sau khi Copy trong Explorer / Finder) tệp **và thư mục** vào, hoặc nút "Chọn…": đẩy y như
+     copy/paste giữa hai ổ — thư mục giữ nguyên cây con trên điện thoại (§6.9). Chỉ tệp video được gửi (§6.6); tệp khác bỏ
+     qua, báo gộp một dòng "Bỏ qua N tệp không phải video".
    - Hàng đợi: mỗi dòng = tên, cỡ, thanh tiến độ, tốc độ, trạng thái; nút tạm dừng / huỷ / thử lại. Mục xong gom vào
      "Đã gửi" (gập được), giữ 7 ngày rồi tự dọn.
-3. **Thư viện điện thoại** (tab phụ): danh sách từ `GET /api/v1/list` — tên, cỡ, ngày. Chọn → "Tải về…" (vào hàng đợi
-   chiều ngược lại, tải tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
+3. **Thư viện điện thoại** (tab phụ): cây thư mục dựng từ `dir` của `GET /api/v1/list` (§6.4) — tên, cỡ, ngày. Chọn một
+   thư mục rồi thả / dán vào ⇒ gửi vào đúng thư mục đó (§6.9). Chọn video → "Tải về…" (vào hàng đợi chiều ngược lại, tải
+   tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
    điện thoại dò thấy (chưa ghép). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
@@ -97,7 +101,7 @@ Online/Offline ─(info trả paired:false hoặc 401)→ NeedsRepair   (điện
 ### Mục upload
 
 ```
-Queued → Checking (list: trùng tên+cỡ? → Skipped)
+Queued → Checking (list: trùng dir+tên+cỡ? → Skipped)
        → Creating (POST /uploads → upload id, lưu ngay vào hàng đợi)
        → Sending  (PATCH theo khúc; sau mỗi khúc lưu offset)
        → Done (201 + mục thư viện)            ← lưu tên thật trên điện thoại
@@ -109,6 +113,9 @@ Lỗi mạng / 5xx / 503 → Waiting (backoff 2 s, 4 s … tối đa 60 s) → H
 File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã thay đổi"
 ```
 
+Một lần thả / dán = một **lô**: hàng đợi hiện lô như một dòng gộp (tên thư mục hoặc "N tệp", tổng tiến độ), mở ra thấy
+từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái trên và mang theo `dir` đích (§6.9).
+
 ## 6. Giao thức v1 (điện thoại = server, PC = client)
 
 ### 6.1 Chung
@@ -116,7 +123,8 @@ File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã tha
 - HTTP/1.1 thường (không TLS) trên LAN. **Mỗi kết nối đúng một request** — server luôn trả `Connection: close`. Đừng
   dùng keep-alive pool (hoặc tắt nó: `reqwest::ClientBuilder::pool_max_idle_per_host(0)`).
 - Server đọc chờ tối đa 60 s không nhận byte nào thì đóng. Tối đa 16 kết nối đồng thời; quá thì `503` + `Retry-After: 2`.
-- Header tên file: URL-encoded UTF-8 (percent-encoding mọi byte ngoài ASCII in được).
+- Server nghe **cả IPv4 lẫn IPv6** trên cùng một cổng (socket dual-stack). Host header theo RFC: `[fd12::5]:8080`.
+- Header tên file / thư mục: URL-encoded UTF-8 (percent-encoding mọi byte ngoài ASCII in được).
 - Lỗi: thân `text/plain` ngắn, chỉ để log; client quyết theo **mã trạng thái**.
 - Xác thực: `Authorization: Bearer <token>`. Token từ §6.3 (lâu dài) hoặc từ đăng nhập trang web (sống tới khi tắt server).
 - Server chỉ chạy khi người dùng bật Sync WiFi trên điện thoại (foreground service, có thông báo). Android 15+ giới hạn
@@ -128,16 +136,27 @@ File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã tha
   ` (2)` khi trùng). TXT:
   - `api=1` — phiên bản giao thức; client bỏ qua thiết bị có `api` lớn hơn bản mình hiểu… nhưng vẫn gọi `info`.
   - `id=<16 ký tự hex>` — id cố định của điện thoại (giữ qua lần bật/tắt, đổi khi cài lại app). **Khoá nhận dạng.**
-- Địa chỉ lấy từ bản ghi SRV/A của mDNS. Có thể có nhiều địa chỉ: chọn IPv4 cùng subnet với PC trước.
-- Nhập tay: `ip:port` (màn điện thoại hiện sẵn), rồi `GET /api/v1/info` để lấy `id`.
+- Địa chỉ lấy từ bản ghi SRV + **A và AAAA** của mDNS, cộng `addresses` trong `info` (§6.3). Giữ mọi địa chỉ của thiết
+  bị; thứ tự thử (IPv4 / IPv6 ngang hàng, mạng nào chạy thì dùng mạng đó — §6.8):
+  1. IPv4 cùng subnet với một interface của PC;
+  2. IPv6 global / ULA (`fc00::/7`) cùng prefix /64 với PC;
+  3. IPv6 link-local `fe80::/10` kèm **scope id = interface PC đã nhận bản ghi mDNS đó**;
+  4. mọi địa chỉ còn lại.
+- Nhập tay: `1.2.3.4:8080`, `[fd12::5]:8080`, `[fe80::5%en0]:8080` (Windows `%12`) — màn điện thoại hiện sẵn IPv4 và
+  IPv6; rồi `GET /api/v1/info` để lấy `id`.
 
 ### 6.3 Thông tin + ghép đôi
 
 `GET /api/v1/info` — không cần xác thực.
 ```json
-{"app":"xmobile.videoplayer","api":1,"id":"3f9a0c1d2b4e5a67","name":"Pixel 8","paired":false}
+{"app":"xmobile.videoplayer","api":1,"id":"3f9a0c1d2b4e5a67","name":"Pixel 8","paired":false,
+ "port":8080,"addresses":["192.168.1.23","fd12:3456:789a::23"],"features":["ipv6","dirs"]}
 ```
-`paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
+- `paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
+- `port` + `addresses`: mọi địa chỉ LAN của điện thoại (IPv4 riêng + IPv6 global / ULA; **không** link-local — scope
+  phía điện thoại vô nghĩa với PC). Thêm đường khi mDNS chỉ trả một họ địa chỉ hoặc IP đổi.
+- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9);
+  thiếu ⇒ PC gửi phẳng và báo "Cập nhật app trên điện thoại để giữ thư mục". `ipv6` ⇒ server nghe IPv6.
 
 `POST /api/v1/pair` — không cần xác thực.
 - Header: `X-Client-Id: <8–64 ký tự [A-Za-z0-9_-]>` (UUID của PC), `X-Client-Name: <URL-encoded, ≤ 64 ký tự>` (tuỳ chọn, thiếu thì "PC"),
@@ -162,6 +181,9 @@ File nguồn đổi (cỡ/mtime khác lúc thả vào) → Failed "File đã tha
 {"items":[{"id":"…","name":"clip.mp4","size":7340032,"modified":1762761600000,"mime":"video/mp4"}]}
 ```
 - `id` là chuỗi mờ (opaque), dùng nguyên văn trong URL (URL-encode khi ghép đường dẫn). Không suy luận gì từ nó.
+- `dir`: thư mục chứa video, **tương đối so với nơi lưu của điện thoại** (gốc nhận upload), `/` phân cách, `""` = gốc
+  (vd `"Chuyến đi/Ngày 1"`). `null` (hoặc vắng) = video nằm ngoài nơi lưu (thư mục quét / thư mục người dùng thêm) — PC
+  xếp vào nhóm "Khác", không dùng làm đích gửi. Điện thoại cũ không có trường này = coi như `""`.
 - `modified`: mili giây Unix. Mới nhất trước. Gồm thư viện của app ở mọi nơi lưu (bộ nhớ riêng, `Movies/VideoPlayer`, thư mục lưu người dùng chọn).
 
 `GET` / `HEAD /api/v1/file/<id>` — Bearer. Tải về; hỗ trợ `Range: bytes=a-b` (một khoảng), `If-Range` với `ETag`,
@@ -171,10 +193,11 @@ nhận `200` (file đã đổi) thì ghi lại từ đầu.
 ### 6.5 Upload nối tiếp (kiểu tus rút gọn)
 
 1. **Tạo** — `POST /api/v1/uploads`, Bearer, không thân (`Content-Length: 0`).
-   Header: `X-File-Name: <URL-encoded>` (chỉ lấy phần tên, không thư mục), `Upload-Length: <tổng byte, > 0>`.
-   - `201` + `Location: /api/v1/uploads/<uid>` + thân `{"id":"<uid>","offset":0,"length":<tổng>}`
-   - `415` không phải đuôi video · `507` không đủ chỗ (cần tổng + 16 MB) · `400` thiếu header · `503` quá nhiều phiên
-     upload dở (tối đa 8).
+   Header: `X-File-Name: <URL-encoded>` (chỉ lấy phần tên, không thư mục), `Upload-Length: <tổng byte, > 0>`,
+   `X-File-Dir: <URL-encoded>` (tuỳ chọn, chỉ khi `features` có `dirs` — §6.9).
+   - `201` + `Location: /api/v1/uploads/<uid>` + thân `{"id":"<uid>","offset":0,"length":<tổng>,"dir":"<đã làm sạch>"}`
+   - `415` không phải đuôi video · `507` không đủ chỗ (cần tổng + 16 MB) · `400` thiếu header / `X-File-Dir` sai
+     (§6.9) · `503` quá nhiều phiên upload dở (tối đa 8).
 2. **Gửi khúc** — `PATCH /api/v1/uploads/<uid>`, Bearer.
    Header: `Upload-Offset: <byte bắt đầu khúc này>`, `Content-Length: <cỡ khúc, > 0>`, `Content-Type:
    application/offset+octet-stream`. Thân: byte thô.
@@ -202,6 +225,37 @@ một request; server vẫn kiểm (`415`).
 
 `GET /` trang · `POST /api/login` (thân PIN → cookie) · `GET /api/list` (mảng JSON) · `GET /api/file/<id>` ·
 `PUT /api/upload` (một phát, không nối tiếp). App PC **không** dùng các route này.
+
+### 6.8 IPv4 + IPv6
+
+- Điện thoại: một `ServerSocket` dual-stack (`::`, cùng cổng cho cả hai họ); mDNS quảng bá A + AAAA; màn Sync hiện URL
+  IPv4 và URL IPv6 (global / ULA, dạng `http://[fd12::5]:8080`); `info.addresses` liệt kê cả hai.
+- PC: dò mDNS trên mọi interface (cả hai họ); thiết bị là một `id` với **tập địa chỉ**, không phải một IP.
+  - Nối kiểu "happy eyeballs" đơn giản: thử địa chỉ đầu theo thứ tự §6.2, sau 250 ms chưa nối được thì thử song song địa
+    chỉ kế; địa chỉ thắng được nhớ cho tới khi lỗi kết nối, lỗi thì chọn lại từ đầu (không đổi giữa một khúc PATCH).
+  - Upload nối tiếp không phụ thuộc địa chỉ: khúc sau đi đường khác vẫn đúng (phiên upload theo `uid`, không theo kết nối).
+  - **Bẫy**: crate `url` (và `reqwest`) không nhận zone id `%en0` trong URL. Đừng ghép IP vào URL: dùng host giả
+    `<id>.vpsync.invalid` + `ClientBuilder::resolve(host, SocketAddr)` (link-local: `SocketAddrV6` có `scope_id`) — một
+    đường code cho cả IPv4, IPv6, link-local.
+- Mạng chỉ có IPv6 (không DHCPv4) hoặc chỉ IPv4 đều phải chạy. Mạng chặn multicast: nhập tay (§6.2).
+
+### 6.9 Thư mục — đẩy như copy/paste
+
+PC đẩy tệp và thư mục y như copy/paste giữa hai ổ trong Explorer / Finder; điện thoại dựng lại cây trong nơi lưu.
+
+- **Đích**: gốc nơi lưu (mặc định) hoặc thư mục người dùng chọn ở tab thư viện điện thoại (một `dir` có thật trong `list`).
+- **Tệp lẻ** thả vào ⇒ `X-File-Dir = <đích>`.
+- **Thư mục** thả vào (vd `D:\Phim\Chuyến đi`) ⇒ mỗi video bên trong gửi với
+  `X-File-Dir = <đích>/Chuyến đi/<đường con>` (giữ tên thư mục được thả làm gốc, như paste). Thư mục không có video nào
+  (ở mọi cấp) thì không tạo. Tệp không phải video bỏ qua.
+- **Mã hoá** `X-File-Dir`: URL-encode cả chuỗi UTF-8; sau khi giải mã, `/` là phân cách (PC Windows đổi `\` thành `/`
+  trước khi gửi; điện thoại cũng coi `\` là phân cách).
+- **Điện thoại làm sạch** từng đoạn như tên tệp (ký tự cấm `\ : * ? " < > |` và ký tự điều khiển → `_`, bỏ `.` đầu,
+  bỏ khoảng trắng hai đầu), bỏ đoạn rỗng và `.`; `..` ⇒ `400`; quá 8 cấp hoặc quá 255 ký tự sau làm sạch ⇒ `400`.
+  Chuỗi rỗng = gốc. `dir` trong phản hồi (`POST /uploads`, `201` cuối) là bản đã làm sạch — PC lưu lại để đối chiếu.
+- **Trùng**: thư mục đã có ⇒ gộp vào (như paste "merge"); tệp trùng tên trong cùng thư mục ⇒ điện thoại đổi tên
+  `a (1).mp4`. PC tránh gửi lại bằng bước Checking (trùng `dir` + tên + cỡ ⇒ bỏ qua, §5).
+- Thư mục chưa có ⇒ điện thoại tạo khi **commit** (khúc cuối) — upload dở / huỷ không để lại thư mục rỗng.
 
 ## 7. Kiểm thử
 

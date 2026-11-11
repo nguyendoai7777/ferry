@@ -7,7 +7,7 @@
 | Model | opus |
 | Cỡ | M — ~600 dòng |
 | Phụ thuộc | gd1_01 (song song với 02) |
-| Quyết định áp dụng | W-1 |
+| Quyết định áp dụng | W-1, W-3 |
 | Phụ thuộc mới | `rusqlite` (`bundled`; MIT, SQLite public domain) |
 | File đụng tới | MỚI `crates/core/src/queue/{mod,state,store,backoff}.rs` |
 
@@ -18,6 +18,7 @@
 - Mục ghi kèm `size` + `mtime` lúc thả vào để phát hiện "File đã thay đổi".
 - "Đã gửi" giữ 7 ngày rồi tự dọn (lúc khởi động + mỗi ngày một lần, không timer dày).
 - Mỗi thiết bị một hàng đợi tuần tự (`device_id` trên mục).
+- Bổ sung W-3: mục upload lưu `dir` đích (đã chuẩn hoá `/`) và `batch_id` (một lần thả / dán = một lô — PROTOCOL 5); truy vấn tổng tiến độ theo lô.
 
 ## 2. Không làm trong task này
 - Không gọi mạng; effect chỉ là mô tả (`Effect::Create`, `Effect::Patch{offset}`, `Effect::Head`…), task 04 thực thi.
@@ -27,6 +28,7 @@
 - C2. Ghi 1000 mục, đóng / mở lại store ⇒ đủ mục, đúng trạng thái + offset; `Sending` mở lại thành `Waiting` (cần `HEAD`). `[opus-unit]`
 - C3. Giết tiến trình giữa lúc ghi (test con) ⇒ DB không hỏng. `[opus-unit]`
 - C4. Backoff ca biên: lần 1, lần chạm trần, `Retry-After` 0 / lớn. `[opus-unit]`
+- C-W3. Lô 3 tệp trong 2 thư mục con: lưu / đọc lại đúng `dir`, tổng tiến độ lô đúng sau khởi động lại. `[opus-unit]`
 
 ## 8. Nợ chuyển task khác
 ## 9. Bàn giao thực tế
