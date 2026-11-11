@@ -115,6 +115,9 @@ pub struct AddPhoneView {
     firewall_dialog: DialogHandle,
     /// Đã tự mở hộp một lần trong lần mở màn này.
     firewall_asked: bool,
+    /// Mở để ghép lại một máy đã biết (`repair`): "Quay lại" ở bước PIN thoát hẳn màn, không tự mở hộp tường lửa (máy đã có
+    /// địa chỉ, không cần dò mDNS).
+    repair: bool,
     focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -234,7 +237,8 @@ impl AddPhoneView {
             firewall_command: None,
             opened_at: Instant::now(),
             firewall_dialog: DialogHandle::new(cx),
-            firewall_asked: false,
+            firewall_asked: repair.is_some(),
+            repair: repair.is_some(),
             focus: cx.focus_handle(),
             _subs: subs,
         };
@@ -359,6 +363,7 @@ impl AddPhoneView {
         self.error = None;
         match self.step {
             Step::Pick => cx.emit(AddPhoneEvent::Back),
+            Step::Pin if self.repair => cx.emit(AddPhoneEvent::Back),
             Step::Manual | Step::Pin => self.step = Step::Pick,
         }
         cx.notify();
@@ -674,7 +679,8 @@ impl AddPhoneView {
 impl Render for AddPhoneView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors().clone();
-        let title = SharedString::from(self.i18n.t("add_phone.title").to_owned());
+        let title_key = if self.repair { "add_phone.title_repair" } else { "add_phone.title" };
+        let title = SharedString::from(self.i18n.t(title_key).to_owned());
         let back_label = SharedString::from(self.i18n.t("add_phone.back").to_owned());
         let content = match self.step {
             Step::Pick => self.render_pick(cx),

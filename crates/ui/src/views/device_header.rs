@@ -1,5 +1,6 @@
 //! Đầu cửa sổ (PROTOCOL 4.2): điện thoại đang chọn — chấm trạng thái + tên (nhiều máy ⇒ `Select`) — và nút
-//! "Thêm điện thoại" (Cài đặt nằm ở đáy cột trái). Chưa ghép máy nào ⇒ chỉ nút bên phải.
+//! "Thêm điện thoại" (Cài đặt nằm ở đáy cột trái). Chưa ghép máy nào ⇒ chỉ nút bên phải. Máy đang chọn cần ghép lại / chưa
+//! nối được ⇒ nút đổi thành "Kết nối lại" và chủ mở thẳng bước PIN cho máy đó ([`super::devices::needs_reconnect`]).
 
 use std::rc::Rc;
 
@@ -13,16 +14,20 @@ use materiant::icon::{Icon, IconSource};
 use materiant::select::Select;
 use materiant::theme::{ActiveTheme, Neutral};
 
+use super::devices::needs_reconnect;
+
 pub fn device_header(
     i18n: &I18n,
     paired: &[DeviceView],
     selected: Option<usize>,
     on_select: Rc<dyn Fn(usize, &mut Window, &mut App)>,
     on_add: Rc<dyn Fn(&mut Window, &mut App)>,
+    on_reconnect: Rc<dyn Fn(&mut Window, &mut App)>,
     cx: &App,
 ) -> impl IntoElement {
     let c = cx.theme().colors().clone();
     let current = selected.and_then(|i| paired.get(i));
+    let reconnect = current.is_some_and(|d| needs_reconnect(d.state));
     let dot = |state: DeviceState| match state {
         DeviceState::Online => c.success,
         DeviceState::NeedsRepair => c.warning,
@@ -66,12 +71,17 @@ pub fn device_header(
         .border_b_1()
         .border_color(c.border)
         .child(left)
-        .child(
+        .child(if reconnect {
+            Button::new("reconnect-phone", i18n.t("main.reconnect"))
+                .size(Size::Sm)
+                .tonal()
+                .on_click(move |_, window, cx| on_reconnect(window, cx))
+        } else {
             Button::new("add-phone", i18n.t("main.add_phone"))
                 .size(Size::Sm)
                 .tonal()
-                .on_click(move |_, window, cx| on_add(window, cx)),
-        )
+                .on_click(move |_, window, cx| on_add(window, cx))
+        })
 }
 
 fn status(i18n: &I18n, state: DeviceState, color: materiant::gpui_kit::Hsla) -> impl IntoElement {

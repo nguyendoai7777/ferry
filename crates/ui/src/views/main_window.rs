@@ -1,7 +1,8 @@
-//! Cửa sổ chính, vỏ như Groovex: cột điều hướng trái ([`SideNav`]: Gửi, Thư viện điện thoại, Cài đặt ở đáy), thanh trên
+//! Cửa sổ chính, vỏ như Groovex: cột điều hướng trái ([`SideNav`]: Gửi, Danh sách thiết bị, Cài đặt ở đáy), thanh trên
 //! kéo được với ba nút cửa sổ ([`AppBar`]), nội dung bên phải. Trang Gửi (PROTOCOL 4.2): đầu thiết bị + vùng thả + khay chờ +
 //! hàng đợi; "Gửi sang điện thoại…" chuyển sang trình duyệt điện thoại (4.6) ở chế độ chọn đích rồi quay lại; "Thêm điện
-//! thoại" (4.4) là trang con của trang Gửi. Thư viện (4.3) và Cài đặt (4.5) là mục của cột trái. Giữ trạng thái người dùng
+//! thoại" (4.4) là trang con của trang Gửi / Danh sách thiết bị. Danh sách thiết bị và Cài đặt (4.5) là mục của cột trái;
+//! thư viện của một điện thoại (4.3) là trang con của Danh sách thiết bị ("Duyệt tệp"). Giữ trạng thái người dùng
 //! chọn (khay, lô đang mở); trạng thái daemon nằm ở [`Model`].
 
 use std::collections::HashSet;
@@ -25,6 +26,7 @@ use materiant::window::DragRegionExt;
 use super::add_phone::{AddPhoneEvent, AddPhoneView};
 use super::app_bar::{self, AppBar, CaptionLabels};
 use super::device_header::device_header;
+use super::devices::{DevicesEvent, DevicesPage};
 use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
 use super::phone_library::{LibraryEvent, PhoneLibrary};
@@ -41,12 +43,20 @@ enum Page {
         browser: Entity<PhoneBrowser>,
         _sub: Subscription,
     },
-    /// `None`: chưa chọn / chưa ghép điện thoại nào.
-    Library {
-        library: Option<(Entity<PhoneLibrary>, Subscription)>,
+    /// Danh sách thiết bị (mục cột trái).
+    Devices {
+        view: Entity<DevicesPage>,
+        _sub: Subscription,
     },
+    /// Thư viện của một điện thoại — trang con của Danh sách thiết bị.
+    Library {
+        library: Entity<PhoneLibrary>,
+        _sub: Subscription,
+    },
+    /// `origin`: trang mở luồng này (Gửi hoặc Danh sách thiết bị) — xong / quay lại thì về đó.
     AddPhone {
         view: Entity<AddPhoneView>,
+        origin: NavItem,
         _sub: Subscription,
     },
     Settings {
@@ -58,8 +68,9 @@ enum Page {
 impl Page {
     fn active(&self) -> Active {
         match self {
-            Page::Main | Page::Browse { .. } | Page::AddPhone { .. } => Active::Item(NavItem::Send),
-            Page::Library { .. } => Active::Item(NavItem::Library),
+            Page::Main | Page::Browse { .. } => Active::Item(NavItem::Send),
+            Page::AddPhone { origin, .. } => Active::Item(*origin),
+            Page::Devices { .. } | Page::Library { .. } => Active::Item(NavItem::Devices),
             Page::Settings { .. } => Active::Settings,
         }
     }
@@ -110,13 +121,14 @@ impl MainWindow {
 
     /// Mục của cột trái.
     fn navigate(&mut self, item: NavItem, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page.active() == Active::Item(item) && !matches!(self.page, Page::Browse { .. } | Page::AddPhone { .. })
+        if self.page.active() == Active::Item(item)
+            && !matches!(self.page, Page::Browse { .. } | Page::AddPhone { .. } | Page::Library { .. })
         {
             return;
         }
         match item {
             NavItem::Send => self.back_to_main(window, cx),
-            NavItem::Library => self.open_library(window, cx),
+            NavItem::Devices => self.open_devices(window, cx),
         }
     }
 
@@ -209,22 +221,41 @@ impl MainWindow {
         }
     }
 
-    /// Mở thư viện của điện thoại đang chọn (PROTOCOL 4.3); chưa có điện thoại ⇒ trang báo cần ghép.
-    fn open_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let library = self.model.read(cx).current().map(|d| d.id.clone()).map(|device| {
-            let (model, i18n) = (self.model.clone(), self.i18n.clone());
-            let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
-            let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
-                LibraryEvent::Back => this.back_to_main(window, cx),
-            });
-            (library, sub)
+    /// Danh sách thiết bị (mục cột trái).
+    fn open_devices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (model, i18n) = (self.model.clone(), self.i18n.clone());
+        let view = cx.new(|cx| DevicesPage::new(model, i18n, window, cx));
+        let sub = cx.subscribe_in(&view, window, |this, _, ev: &DevicesEvent, window, cx| match ev {
+            DevicesEvent::AddPhone => this.open_add_phone(None, NavItem::Devices, window, cx),
+            DevicesEvent::Repair(id) => this.open_add_phone(Some(id.clone()), NavItem::Devices, window, cx),
+            DevicesEvent::Browse(id) => this.open_library(id.clone(), window, cx),
         });
-        self.page = Page::Library { library };
+        self.page = Page::Devices { view, _sub: sub };
         cx.notify();
     }
 
-    /// "Thêm điện thoại" (PROTOCOL 4.4). `repair`: mở thẳng bước PIN cho máy cần ghép lại.
-    fn open_add_phone(&mut self, repair: Option<DeviceId>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Thư viện của một điện thoại (PROTOCOL 4.3), mở từ Danh sách thiết bị. Chọn luôn máy đó: bộ nhớ đệm danh sách và
+    /// trang Gửi theo máy đang chọn.
+    fn open_library(&mut self, device: DeviceId, window: &mut Window, cx: &mut Context<Self>) {
+        self.model.update(cx, |m, cx| m.select(device.clone(), cx));
+        let (model, i18n) = (self.model.clone(), self.i18n.clone());
+        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
+        let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
+            LibraryEvent::Back => this.open_devices(window, cx),
+        });
+        self.page = Page::Library { library, _sub: sub };
+        cx.notify();
+    }
+
+    /// "Thêm điện thoại" (PROTOCOL 4.4). `repair`: mở thẳng bước PIN cho máy cần ghép lại / kết nối lại. `origin`: trang
+    /// về khi xong hoặc quay lại.
+    fn open_add_phone(
+        &mut self,
+        repair: Option<DeviceId>,
+        origin: NavItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let model = self.model.clone();
         let send: super::add_phone::SendPhoneOp =
             Rc::new(move |op: PhoneOp, cx: &mut materiant::gpui_kit::App| model.update(cx, |m, _| m.phone(op)));
@@ -236,14 +267,17 @@ impl MainWindow {
             v.set_firewall(firewall, window, cx);
             v
         });
-        let sub = cx.subscribe_in(&view, window, |this, _, ev: &AddPhoneEvent, window, cx| {
+        let sub = cx.subscribe_in(&view, window, move |this, _, ev: &AddPhoneEvent, window, cx| {
             if let AddPhoneEvent::Paired(id) = ev {
                 let id = id.clone();
                 this.model.update(cx, |m, cx| m.select(id, cx));
             }
-            this.back_to_main(window, cx);
+            match origin {
+                NavItem::Devices => this.open_devices(window, cx),
+                NavItem::Send => this.back_to_main(window, cx),
+            }
         });
-        self.page = Page::AddPhone { view, _sub: sub };
+        self.page = Page::AddPhone { view, origin, _sub: sub };
         cx.notify();
     }
 
@@ -358,7 +392,7 @@ impl MainWindow {
         SharedString::from(self.i18n.t(key).to_owned())
     }
 
-    /// Chưa có điện thoại: chữ giữa vùng (trang Gửi, trang Thư viện).
+    /// Chưa có điện thoại: chữ giữa vùng (trang Gửi).
     fn no_phone(&self, cx: &Context<Self>) -> AnyElement {
         let muted = cx.theme().colors().muted;
         div()
@@ -409,6 +443,7 @@ impl MainWindow {
         let header = {
             let w1 = weak.clone();
             let w2 = weak.clone();
+            let w3 = weak.clone();
             let ids: Vec<DeviceId> = paired.iter().map(|d| d.id.clone()).collect();
             device_header(
                 &i18n,
@@ -420,7 +455,13 @@ impl MainWindow {
                     }
                 }),
                 Rc::new(move |window, cx| {
-                    let _ = w2.update(cx, |this, cx| this.open_add_phone(None, window, cx));
+                    let _ = w2.update(cx, |this, cx| this.open_add_phone(None, NavItem::Send, window, cx));
+                }),
+                Rc::new(move |window, cx| {
+                    let _ = w3.update(cx, |this, cx| {
+                        let id = this.model.read(cx).current().map(|d| d.id.clone());
+                        this.open_add_phone(id, NavItem::Send, window, cx);
+                    });
                 }),
                 cx,
             )
@@ -592,8 +633,8 @@ impl Render for MainWindow {
         let content = match &self.page {
             Page::Main => self.render_send(cx),
             Page::Browse { browser, .. } => browser.clone().into_any_element(),
-            Page::Library { library: Some((library, _)) } => library.clone().into_any_element(),
-            Page::Library { library: None } => self.no_phone(cx),
+            Page::Devices { view, .. } => view.clone().into_any_element(),
+            Page::Library { library, .. } => library.clone().into_any_element(),
             Page::AddPhone { view, .. } => view.clone().into_any_element(),
             Page::Settings { view, .. } => view.clone().into_any_element(),
         };

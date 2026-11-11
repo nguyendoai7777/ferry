@@ -75,6 +75,9 @@ fn header_cell(
         .on_click(cx.listener(move |this, _, _, cx| this.sort_by(key, cx)))
 }
 
+/// Trần bề ngang của dòng báo khi bảng trống — chữ dài xuống dòng thay vì tràn mép.
+const EMPTY_TEXT_MAX_W: f32 = 380.;
+
 pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materiant::gpui_kit::AnyElement {
     let c = cx.theme().colors().clone();
     let entries = std::rc::Rc::new(this.entries.clone());
@@ -116,16 +119,24 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
             } else {
                 "browser.no_match"
             };
+            // Chữ xuống dòng trong khối có trần bề ngang (con trực tiếp của hàng flex không tự xuống dòng ⇒ tràn mép).
             div()
                 .flex_1()
+                .min_h(px(0.))
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
                 .px_6()
-                .text_center()
-                .text_sm()
-                .text_color(c.muted)
-                .child(SharedString::from(i18n.t(msg).to_owned()))
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(EMPTY_TEXT_MAX_W))
+                        .text_center()
+                        .text_sm()
+                        .text_color(c.muted)
+                        .child(SharedString::from(i18n.t(msg).to_owned())),
+                )
                 .into_any_element()
         } else {
             let sel_rows = selected.clone();
@@ -211,6 +222,8 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                 .into_any_element()
         };
     let _ = weak_select;
+    // Chưa có danh sách (đang tải, chưa nối được, thư mục trống): không vẽ đầu bảng rỗng, chỉ dòng báo giữa vùng.
+    let show_header = count > 0 || (!this.items.is_empty() && !this.query.is_empty());
     div()
         .flex_1()
         .min_w_0()
@@ -218,7 +231,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
         .flex()
         .flex_col()
         .bg(c.layer(Neutral::N50).opacity(0.0))
-        .child(header)
+        .when(show_header, |d| d.child(header))
         .child(body)
         .into_any_element()
 }

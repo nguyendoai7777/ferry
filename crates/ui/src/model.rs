@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::ipc::{
-    DaemonToUi, DeviceView, LibraryOp, Outcome, PhoneOp, ProgressDelta, QueueOp, Sender, Snapshot, UiToDaemon,
+    DaemonToUi, DeviceView, LibraryOp, Outcome, PhoneOp, ProgressDelta, QueueOp, Sender, SettingsOp, Snapshot,
+    UiToDaemon,
 };
 use ferry_core::protocol::LibraryItem;
 use materiant::gpui_kit::{Context, EventEmitter};
@@ -79,6 +80,11 @@ impl Model {
 
     pub fn library(&mut self, op: LibraryOp) -> Option<u64> {
         self.send(|req| UiToDaemon::Library { req, op })
+    }
+
+    /// Lệnh cài đặt qua kết nối chính (màn Danh sách thiết bị: đọc bí danh, đổi tên).
+    pub fn settings(&mut self, op: SettingsOp) -> Option<u64> {
+        self.send(|req| UiToDaemon::Settings { req, op })
     }
 
     fn send(&mut self, make: impl FnOnce(u64) -> UiToDaemon) -> Option<u64> {

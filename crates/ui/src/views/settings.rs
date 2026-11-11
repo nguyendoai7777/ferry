@@ -3,27 +3,26 @@
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
-//! hiện dưới đúng mục bằng câu nói việc cần làm.
+//! hiện dưới đúng mục bằng câu nói việc cần làm. Điện thoại đã ghép (đổi tên, xoá) ở màn Danh sách thiết bị
+//! (`views/devices.rs`), không ở đây.
 
 use std::time::Duration;
 
 use ferry_core::config::{MAX_SPEED_LIMIT_MB_PER_SEC, ThemeChoice, WatchFolder};
-use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::i18n::{I18n, Language, LanguagePref};
-use ferry_core::ipc::{CommandError, DeviceSetting, PhoneOp, SettingsOp, SettingsView};
+use ferry_core::ipc::{CommandError, SettingsOp, SettingsView};
 use materiant::button::segmented::SegmentedButtons;
 use materiant::button::{Button, Size};
-use materiant::card::{Card, CardGroup, CardItem};
+use materiant::card::Card;
 use materiant::field::FieldLabel;
 use materiant::field::input::TextField;
 use materiant::field::number::NumberField;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, Focusable, FontWeight, IntoElement,
-    PathPromptOptions, Render, SharedString, WeakEntity, Window, div, px,
+    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, PathPromptOptions,
+    Render, SharedString, WeakEntity, Window, div, px,
 };
-use materiant::overlay::dialog::{Dialog, DialogHandle};
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
 use materiant::switch::Switch;
@@ -45,7 +44,6 @@ const SPEED_DEBOUNCE: Duration = Duration::from_millis(700);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
     Appearance,
-    Devices,
     Files,
     Network,
     System,
@@ -53,7 +51,7 @@ enum Section {
 }
 
 impl Section {
-    const COUNT: usize = 6;
+    const COUNT: usize = 5;
 
     fn ix(self) -> usize {
         self as usize
@@ -104,7 +102,6 @@ fn error_key(section: Section, error: &CallError) -> (&'static str, Option<Strin
             Section::Files => "settings.error.invalid_path",
             Section::Advanced => "settings.error.invalid_address",
             Section::Network => "settings.error.invalid_speed",
-            Section::Devices => "settings.error.invalid_name",
             Section::System | Section::Appearance => "settings.error.internal",
         },
         _ => "settings.error.internal",
@@ -136,18 +133,6 @@ fn theme_choice_key(choice: ThemeChoice) -> &'static str {
     }
 }
 
-fn device_state_key(state: DeviceState) -> &'static str {
-    match state {
-        DeviceState::Online => "settings.devices.state_online",
-        DeviceState::NeedsRepair => "settings.devices.state_needs_repair",
-        DeviceState::Paired => "settings.devices.state_paired",
-        DeviceState::Offline | DeviceState::Discovered | DeviceState::Unknown => "settings.devices.state_offline",
-    }
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// View
-
 /// Trang báo cửa sổ chính: ngôn ngữ vừa đổi ⇒ dựng lại chữ của cột trái, thanh trên.
 pub enum SettingsEvent {
     LanguageChanged(Language),
@@ -162,11 +147,6 @@ pub struct SettingsPage {
     errors: [Option<SharedString>; Section::COUNT],
     speed: Entity<NumberField>,
     address: Entity<TextField>,
-    rename_field: Entity<TextField>,
-    rename_dialog: DialogHandle,
-    rename_target: Option<DeviceId>,
-    forget_dialog: DialogHandle,
-    forget_target: Option<(DeviceId, String)>,
     /// Tăng mỗi lần gõ ô tốc độ — bộ đếm trễ chỉ chạy nếu còn là lần gõ cuối.
     speed_gen: u64,
     /// Ô tốc độ đổi lúc lệnh trước còn chạy ⇒ gửi lại ngay khi xong.
@@ -198,12 +178,6 @@ impl SettingsPage {
                 },
             )
         });
-        let rename_field = cx.new(|cx| {
-            let this = this.clone();
-            TextField::new("settings-rename", window, cx).on_submit(move |_, window, cx| {
-                this.update(cx, |page, cx| page.confirm_rename(window, cx)).ok();
-            })
-        });
         let mut page = SettingsPage {
             client: SettingsClient::new(),
             i18n,
@@ -213,11 +187,6 @@ impl SettingsPage {
             errors: Default::default(),
             speed,
             address,
-            rename_field,
-            rename_dialog: DialogHandle::new(cx),
-            rename_target: None,
-            forget_dialog: DialogHandle::new(cx),
-            forget_target: None,
             speed_gen: 0,
             speed_dirty: false,
             appearance_dirty: false,
@@ -380,45 +349,6 @@ impl SettingsPage {
             move |c| {
                 c.call(Request::Settings(SettingsOp::SetTheme { theme }))?;
                 c.call(Request::Settings(SettingsOp::SetThemePreset { preset })).and_then(expect_settings)
-            },
-            window,
-            cx,
-        );
-    }
-
-    // ----- thiết bị -----
-
-    fn open_rename(&mut self, device: &DeviceSetting, window: &mut Window, cx: &mut Context<Self>) {
-        self.rename_target = Some(device.id.clone());
-        let name = device.display_name().to_owned();
-        self.rename_field.update(cx, |field, cx| field.set_value(name, window, cx));
-        self.rename_dialog.open(window, cx);
-        window.focus(&self.rename_field.focus_handle(cx), cx);
-        cx.notify();
-    }
-
-    fn confirm_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(device) = self.rename_target.take() else { return };
-        let name = self.rename_field.read(cx).value(cx).trim().to_owned();
-        self.rename_dialog.close(window, cx);
-        self.run_op(Section::Devices, SettingsOp::RenameDevice { device, name }, window, cx);
-    }
-
-    fn open_forget(&mut self, device: &DeviceSetting, window: &mut Window, cx: &mut Context<Self>) {
-        self.forget_target = Some((device.id.clone(), device.display_name().to_owned()));
-        self.forget_dialog.open(window, cx);
-        cx.notify();
-    }
-
-    fn confirm_forget(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((device, _)) = self.forget_target.take() else { return };
-        self.forget_dialog.close(window, cx);
-        self.run(
-            Section::Devices,
-            After::Nothing,
-            move |c| {
-                c.call(Request::Phone(PhoneOp::Forget { device }))?;
-                c.get()
             },
             window,
             cx,
@@ -595,53 +525,6 @@ impl SettingsPage {
                     .child(labeled(self.t("settings.appearance.theme_preset"), picker.into_any_element())),
             )
             .children(self.error_line(Section::Appearance, cx))
-    }
-
-    fn render_devices(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
-        let busy = self.busy[Section::Devices.ix()];
-        let muted = cx.theme().colors().muted;
-        let mut card = Card::new("settings-devices")
-            .title(self.t("settings.devices.title"))
-            .description(self.t("settings.devices.description"));
-        if data.devices.is_empty() {
-            card = card.child(div().py_2().text_color(muted).child(self.t("settings.devices.empty")));
-        } else {
-            let items = data.devices.iter().enumerate().map(|(ix, device)| {
-                let rename_device = device.clone();
-                let forget_device = device.clone();
-                let mut item =
-                    CardItem::new(device.display_name().to_owned()).line(self.i18n.t(device_state_key(device.state)));
-                if device.alias.is_some() {
-                    item = item.line(self.i18n.t_args("settings.devices.phone_name", &[("name", &device.name)]));
-                }
-                item.trailing(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new(("settings-rename", ix), self.t("settings.devices.rename"))
-                                .outlined()
-                                .size(Size::Sm)
-                                .disabled(busy)
-                                .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
-                                    page.open_rename(&rename_device, window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(("settings-forget", ix), self.t("settings.devices.forget"))
-                                .text()
-                                .danger()
-                                .size(Size::Sm)
-                                .disabled(busy)
-                                .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
-                                    page.open_forget(&forget_device, window, cx);
-                                })),
-                        ),
-                )
-            });
-            card = card.child(CardGroup::new().children(items));
-        }
-        card.children(self.error_line(Section::Devices, cx))
     }
 
     fn render_files(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
@@ -847,56 +730,6 @@ impl SettingsPage {
             .child(list)
             .children(self.error_line(Section::Advanced, cx))
     }
-
-    fn render_dialogs(&self, cx: &mut Context<Self>) -> (Dialog, Dialog) {
-        let muted = cx.theme().colors().muted;
-        let caption = cx.theme().caption_size();
-        let rename = Dialog::new("settings-rename-dialog", &self.rename_dialog)
-            .title(self.t("settings.rename.title"))
-            .max_width(px(400.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(div().child(self.t("settings.rename.label")))
-                    .child(self.rename_field.clone())
-                    .child(div().text_size(caption).text_color(muted).child(self.t("settings.rename.hint"))),
-            )
-            .actions([
-                Button::new("settings-rename-cancel", self.t("settings.rename.cancel"))
-                    .text()
-                    .base()
-                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                        page.rename_target = None;
-                        page.rename_dialog.close(window, cx);
-                    }))
-                    .into_any_element(),
-                Button::new("settings-rename-save", self.t("settings.rename.save"))
-                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.confirm_rename(window, cx)))
-                    .into_any_element(),
-            ]);
-        let name = self.forget_target.as_ref().map(|(_, n)| n.as_str()).unwrap_or_default();
-        let forget = Dialog::new("settings-forget-dialog", &self.forget_dialog)
-            .title(self.i18n.t_args("settings.forget.title", &[("name", name)]))
-            .max_width(px(400.))
-            .child(div().text_color(muted).child(self.t("settings.forget.body")))
-            .actions([
-                Button::new("settings-forget-cancel", self.t("settings.forget.cancel"))
-                    .text()
-                    .base()
-                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                        page.forget_target = None;
-                        page.forget_dialog.close(window, cx);
-                    }))
-                    .into_any_element(),
-                Button::new("settings-forget-confirm", self.t("settings.forget.confirm"))
-                    .danger()
-                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.confirm_forget(window, cx)))
-                    .into_any_element(),
-            ]);
-        (rename, forget)
-    }
 }
 
 /// Một dòng cài đặt: nhãn (+ dòng phụ mờ, cắt `…` khi dài) bên trái, điều khiển bên phải.
@@ -926,7 +759,6 @@ impl Render for SettingsPage {
                     .gap_4()
                     .py_5()
                     .child(self.render_appearance(&data, cx))
-                    .child(self.render_devices(&data, cx))
                     .child(self.render_files(&data, cx))
                     .child(self.render_network(&data, cx))
                     .child(self.render_system(&data, cx))
@@ -942,8 +774,7 @@ impl Render for SettingsPage {
             (Load::Failed(text), _) => self.render_message(text.clone(), true, cx).into_any_element(),
             _ => self.render_message(self.t("settings.loading"), false, cx).into_any_element(),
         };
-        let (rename, forget) = self.render_dialogs(cx);
-        root.child(body).child(rename).child(forget)
+        root.child(body)
     }
 }
 
@@ -974,7 +805,6 @@ mod tests {
             error_key(Section::Advanced, &failed(UnknownInterface { name: "en9".into() })),
             ("settings.error.unknown_interface", Some("en9".into()))
         );
-        assert_eq!(error_key(Section::Devices, &failed(UnknownDevice)).0, "settings.error.unknown_device");
         assert_eq!(error_key(Section::System, &failed(Internal)).0, "settings.error.internal");
         assert_eq!(error_key(Section::System, &CallError::NoDaemon).0, "settings.error.no_daemon");
     }
@@ -1014,12 +844,5 @@ mod tests {
         );
         let keys: Vec<_> = ThemeChoice::ALL.iter().map(|c| theme_choice_key(*c)).collect();
         assert_eq!(keys.len(), 3);
-    }
-
-    #[test]
-    fn device_states_map_to_keys() {
-        assert_eq!(device_state_key(DeviceState::Online), "settings.devices.state_online");
-        assert_eq!(device_state_key(DeviceState::NeedsRepair), "settings.devices.state_needs_repair");
-        assert_eq!(device_state_key(DeviceState::Offline), "settings.devices.state_offline");
     }
 }

@@ -33,24 +33,24 @@ const ICON_SIZE: f32 = 18.;
 pub enum NavItem {
     /// Vùng thả + khay chờ + hàng đợi (PROTOCOL 4.2).
     Send,
-    /// Thư viện điện thoại (4.3).
-    Library,
+    /// Danh sách thiết bị: điện thoại đã ghép, ghép lại / đổi tên / xoá, duyệt tệp trên máy (4.3).
+    Devices,
 }
 
 impl NavItem {
-    pub const ALL: [NavItem; 2] = [NavItem::Send, NavItem::Library];
+    pub const ALL: [NavItem; 2] = [NavItem::Send, NavItem::Devices];
 
     pub fn icon(self) -> FerryIcon {
         match self {
             NavItem::Send => FerryIcon::Send,
-            NavItem::Library => FerryIcon::Phone,
+            NavItem::Devices => FerryIcon::Phone,
         }
     }
 
     pub fn label_key(self) -> &'static str {
         match self {
             NavItem::Send => "nav.send",
-            NavItem::Library => "nav.library",
+            NavItem::Devices => "nav.devices",
         }
     }
 }

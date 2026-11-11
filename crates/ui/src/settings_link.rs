@@ -9,14 +9,13 @@ use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ferry_core::ipc::{
-    ClientConnection, CommandError, DaemonToUi, Outcome, PhoneOp, Role, SettingsOp, SettingsView, UiToDaemon,
+    ClientConnection, CommandError, DaemonToUi, Outcome, Role, SettingsOp, SettingsView, UiToDaemon,
 };
 
-/// Lệnh màn cài đặt gửi được: cài đặt + quên điện thoại.
+/// Lệnh màn cài đặt gửi được (quên / đổi tên điện thoại ở màn Danh sách thiết bị, qua kết nối chính).
 #[derive(Debug, Clone)]
 pub enum Request {
     Settings(SettingsOp),
-    Phone(PhoneOp),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +58,6 @@ impl SettingsClient {
             let req = inner.next_req;
             let msg = match &request {
                 Request::Settings(op) => UiToDaemon::Settings { req, op: op.clone() },
-                Request::Phone(op) => UiToDaemon::Phone { req, op: op.clone() },
             };
             let conn = inner.conn.as_mut().expect("connected above");
             match exchange(conn, &msg, req) {
