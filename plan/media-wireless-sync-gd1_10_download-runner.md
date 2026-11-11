@@ -11,6 +11,16 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/core/src/transfer/download.rs`, `crates/core/tests/download.rs`; SỬA `crates/core/src/config.rs` (`downloadDir`) |
 
+## 0. Bàn giao từ gd1_03 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_03 -->
+
+- Máy trạng thái tải về có sẵn: `queue::state::DownloadMachine` (`Queued, Fetching{offset, etag}, Waiting, Done,
+  Failed, Cancelled`), effect `Get{offset, etag}` / `Truncate` (nhận `200` khi đang tải tiếp) / `DiscardPartial` /
+  `Wait`. Lưu: `QueueStore::add_download(device, &NewDownload, now)`, `next_download`, `apply_download` — cùng bảng
+  `items` với upload (`kind = 'download'`), mở lại thì `Fetching` ⇒ `Waiting`. Báo `Progress{offset}` theo chặng
+  (vài MB), không mỗi gói.
+
 ## 1. Làm gì (PROTOCOL 6.4)
 - Mục download trong cùng hàng đợi thiết bị (tuần tự với upload): ghi `<tên>.part` trong `downloadDir` (mặc định thư mục Video / Downloads của OS), lưu `ETag` + offset.
 - Tiếp: `Range: bytes=<đã có>-` + `If-Range`; `200` ⇒ ghi lại từ đầu; `416` ⇒ coi như xong nếu cỡ khớp.

@@ -52,7 +52,8 @@ bash ../start.sh media-wireless-sync   # cùng việc, gọi từ gốc workspac
   `target/dev`. Mức log `MWS_LOG=debug`, bản release ghi stderr khi có `MWS_LOG_STDERR`.
 - Soát xanh mỗi task: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check licenses`.
   Đổi mã theo OS ⇒ thêm `cargo clippy -p mws-core -p mws-daemon --all-targets --target x86_64-pc-windows-msvc` (và
-  `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`.
+  `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`; đặt `LIBSQLITE3_SYS_USE_PKG_CONFIG=1`
+  cho lệnh chéo (bẫy SQLite bên dưới).
 - `mws` lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `mws-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
 
 Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb forward tcp:18080 tcp:8080`, nhập tay `127.0.0.1:18080`).
@@ -65,4 +66,9 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   Tới lúc đó Linux mở cửa sổ bằng cách chạy `mws` lần nữa.
 - macOS: thử menu khay tự động bằng AppleScript không được (status item không lộ menu qua AX) ⇒ bấm bằng sự kiện chuột
   `CGEvent` (vị trí icon: `position of menu bar item 1 of menu bar 1` của tiến trình `mws`).
+- **Clippy chéo hỏng ở `libsqlite3-sys`** (`rusqlite` `bundled`, gd1_03): build script biên dịch C SQLite cho target
+  kia ⇒ thiếu header (`stdlib.h` not found). Clippy chỉ soát mã Rust nên tắt biên dịch C bằng
+  `LIBSQLITE3_SYS_USE_PKG_CONFIG=1 cargo clippy … --target …`. Không đặt biến này cho build thật.
+- **Hàng đợi** (`queue`, gd1_03): `<data_dir>/queue.sqlite3`, WAL. Đổi schema ⇒ thêm phần tử cuối vào `MIGRATIONS`
+  của `queue/store.rs`, không sửa bản cũ; DB của bản mới hơn ⇒ `StoreError::NewerSchema`, không đụng.
 - RSS của `mws` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).

@@ -11,6 +11,23 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/core/src/transfer/{mod,upload,throttle}.rs`, `crates/core/tests/upload.rs` |
 
+## 0. Bàn giao từ gd1_03 (11/11/2026)
+
+<!-- handoff: media-wireless-sync-gd1_03 -->
+
+- **Có sẵn** (`mws-core::queue`): `QueueStore::open_default(now)` (mở = migrate + đưa mục đang bay về `Waiting` + dọn
+  7 ngày), `next_upload(device, now)` (đầu hàng FIFO; `None` khi đầu hàng còn chờ ⇒ ngủ tới `next_wake()`),
+  `apply_upload(id, &UploadEvent, now) -> Option<UploadEffect>` (ghi ngay), `apply_batch`, `batch_progress`,
+  `retry_upload`. Runner: lấy mục ⇒ `Queued` gửi `Start`, `Waiting` gửi `WakeUp` ⇒ thực thi `UploadEffect`
+  (`CheckRemote`, `Create`, `Patch{uid, offset}`, `Head{uid}`, `Delete{uid}`, `Wait{until}`) ⇒ báo kết quả bằng
+  `UploadEvent` (bảng ánh xạ mã HTTP ở doc của từng biến thể trong `queue/state.rs`).
+- Mục mang `dir` (đã chuẩn hoá `/`, `""` = gốc) cho `X-File-Dir`, `name` cho `X-File-Name`, `size` cho `Upload-Length`.
+  `Committed{remote_name, remote_dir}` lưu tên + `dir` thật điện thoại trả.
+- Kiểm nguồn trước mỗi khúc: `queue::batch::source_matches(path, size, mtime)` (`Err(NotFound)` ⇒ `SourceMissing`).
+- `BatchProgress::is_settled()` ⇒ phát `BatchFinished`. Đuôi video: `queue::batch::VIDEO_EXTENSIONS` (gộp với
+  `protocol` nếu gd1_02 cũng khai).
+- **Bẫy**: clippy chéo cần `LIBSQLITE3_SYS_USE_PKG_CONFIG=1` (`CLAUDE.md` mục Bẫy).
+
 ## 1. Làm gì
 - `transfer::Runner` cho một thiết bị: lấy mục kế, chạy effect của `queue` bằng `PhoneClient`, đẩy sự kiện ngược lại vào máy trạng thái.
 - Checking: `list` một lần mỗi lô (không mỗi tệp), trùng tên + cỡ ⇒ Skipped.
