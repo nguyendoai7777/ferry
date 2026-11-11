@@ -30,6 +30,10 @@ use materiant::progress::ProgressCircular;
 use materiant::style::Accent;
 use materiant::theme::ActiveTheme;
 
+/// Dò chừng này chưa thấy điện thoại nào ⇒ chỉ sang đường nhập địa chỉ tay (WiFi công ty / AP isolation hay lọc mDNS: chờ
+/// thêm cũng không thấy, kể cả sau khi đã mở tường lửa).
+pub const SLOW_SEARCH: Duration = Duration::from_secs(20);
+
 /// Số chữ số PIN (PROTOCOL 6.3).
 pub const PIN_LEN: usize = 6;
 /// Điện thoại không gửi `Retry-After` ⇒ daemon đã đổi thành 60 s; đây chỉ là trần chống số vô lý.
@@ -102,6 +106,10 @@ pub struct AddPhoneView {
     firewall_status: FirewallStatus,
     /// Câu lệnh của lần gợi ý gần nhất — giữ để hiện khi không hỏi được quyền (gợi ý có thể đã tắt).
     firewall_command: Option<String>,
+    /// Mở màn lúc này — dò quá [`SLOW_SEARCH`] mà danh sách trống ⇒ gợi ý nhập tay.
+    opened_at: Instant,
+    /// Lúc người dùng cho phép ở tường lửa (W-6).
+    allowed_at: Option<Instant>,
     focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -127,6 +135,11 @@ pub fn pairable(devices: &[DeviceView]) -> Vec<&DeviceView> {
         devices.iter().filter(|d| matches!(d.state, DeviceState::Discovered | DeviceState::NeedsRepair)).collect();
     list.sort_by_key(|d| !d.visible);
     list
+}
+
+/// Đã dò quá [`SLOW_SEARCH`] kể từ `since`.
+pub fn search_slow(since: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(since) >= SLOW_SEARCH
 }
 
 /// Số giây còn phải chờ, làm tròn lên (0 = hết khoá).
@@ -214,9 +227,12 @@ impl AddPhoneView {
             firewall: None,
             firewall_status: FirewallStatus::Idle,
             firewall_command: None,
+            opened_at: Instant::now(),
+            allowed_at: None,
             focus: cx.focus_handle(),
             _subs: subs,
         };
+        view.redraw_after(SLOW_SEARCH, cx);
         if let Some(id) = repair {
             let name = view.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).unwrap_or_default();
             view.go_pin(id, name, window, cx);
@@ -258,7 +274,13 @@ impl AddPhoneView {
     pub fn on_reply(&mut self, req: u64, outcome: &Outcome, window: &mut Window, cx: &mut Context<Self>) {
         if self.firewall_status == FirewallStatus::Waiting(req) {
             self.firewall_status = match outcome {
-                Outcome::Firewall { result } => FirewallStatus::Done(*result),
+                Outcome::Firewall { result } => {
+                    if *result == AllowResult::Allowed {
+                        self.allowed_at = Some(Instant::now());
+                        self.redraw_after(SLOW_SEARCH, cx);
+                    }
+                    FirewallStatus::Done(*result)
+                }
                 _ => FirewallStatus::Done(AllowResult::Failed),
             };
             cx.notify();
@@ -296,6 +318,26 @@ impl AddPhoneView {
         self.pin.update(cx, |f, cx| f.set_value("", window, cx));
         {
             let h = self.pin.focus_handle(cx);
+            window.focus(&h, cx);
+        }
+        cx.notify();
+    }
+
+    /// Vẽ lại một lần sau `wait` (hết hạn chờ dò ⇒ hiện gợi ý nhập tay).
+    fn redraw_after(&self, wait: Duration, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            executor.timer(wait).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
+    fn go_manual(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.step = Step::Manual;
+        self.error = None;
+        {
+            let h = self.address.focus_handle(cx);
             window.focus(&h, cx);
         }
         cx.notify();
@@ -400,9 +442,17 @@ impl AddPhoneView {
         let can_prompt = self.firewall.as_ref().is_none_or(|h| h.can_prompt);
         let show_command =
             !can_prompt || matches!(status, FirewallStatus::Done(AllowResult::NoPrompt | AllowResult::Failed));
-        let status_line = firewall_status_key(status).map(|k| {
+        let still_none =
+            self.allowed_at.is_some_and(|t| search_slow(t, Instant::now())) && pairable(&self.devices).is_empty();
+        let status_key = if allowed && still_none {
+            Some("add_phone.firewall_allowed_still_none")
+        } else {
+            firewall_status_key(status)
+        };
+        let status_line = status_key.map(|k| {
             let color = match status {
-                FirewallStatus::Done(AllowResult::Allowed) => c.success,
+                FirewallStatus::Done(AllowResult::Allowed) if !still_none => c.success,
+                FirewallStatus::Done(AllowResult::Allowed) => c.warning,
                 FirewallStatus::Done(AllowResult::Failed | AllowResult::NoPrompt) => c.danger,
                 _ => c.muted,
             };
@@ -463,13 +513,21 @@ impl AddPhoneView {
         let list = pairable(&self.devices);
         let firewall = self.render_firewall(cx);
         let body = if list.is_empty() {
-            div()
+            let searching = div()
                 .flex()
                 .items_center()
                 .gap_3()
                 .child(ProgressCircular::new("add-phone-searching").scale(0.4))
-                .child(div().text_color(c.muted).child(t("add_phone.empty")))
-                .into_any_element()
+                .child(div().text_color(c.muted).child(t("add_phone.empty")));
+            let slow = search_slow(self.opened_at, Instant::now()).then(|| {
+                div().flex().flex_col().items_start().gap_2().child(div().child(t("add_phone.slow_hint"))).child(
+                    Button::new("add-phone-manual-slow", t("add_phone.manual_link"))
+                        .tonal()
+                        .size(Size::Sm)
+                        .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
+                )
+            });
+            div().flex().flex_col().gap_3().child(searching).children(slow).into_any_element()
         } else {
             CardGroup::new()
                 .children(list.iter().enumerate().map(|(ix, d)| {
@@ -502,19 +560,15 @@ impl AddPhoneView {
                     .child(div().flex().flex_col().gap_3().child(self.render_step_enable(cx)).child(body)),
             )
             .children(firewall)
-            .child(div().flex().child(
-                Button::new("add-phone-manual", t("add_phone.manual_link")).text().base().size(Size::Sm).on_click(
-                    cx.listener(|this, _, window, cx| {
-                        this.step = Step::Manual;
-                        this.error = None;
-                        {
-                            let h = this.address.focus_handle(cx);
-                            window.focus(&h, cx);
-                        }
-                        cx.notify();
-                    }),
+            .child(
+                div().flex().child(
+                    Button::new("add-phone-manual", t("add_phone.manual_link"))
+                        .text()
+                        .base()
+                        .size(Size::Sm)
+                        .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
                 ),
-            ))
+            )
             .into_any_element()
     }
 
@@ -674,6 +728,13 @@ mod tests {
     }
 
     #[test]
+    fn manual_hint_after_slow_search() {
+        let t0 = Instant::now();
+        assert!(!search_slow(t0, t0 + SLOW_SEARCH - Duration::from_millis(1)));
+        assert!(search_slow(t0, t0 + SLOW_SEARCH));
+    }
+
+    #[test]
     fn lock_countdown_rounds_up() {
         let now = Instant::now();
         assert_eq!(lock_remaining_secs(now + Duration::from_millis(1500), now), 2);
@@ -700,6 +761,8 @@ mod tests {
                 "add_phone.firewall_allow",
                 "add_phone.firewall_command_hint",
                 "add_phone.firewall_copy",
+                "add_phone.firewall_allowed_still_none",
+                "add_phone.slow_hint",
             ]);
             for k in keys {
                 assert!(!i18n.t(k).contains("add_phone."), "{lang:?} missing {k}");
