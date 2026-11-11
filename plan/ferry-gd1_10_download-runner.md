@@ -18,6 +18,7 @@
 - Download **chưa có** trên IPC: gd1_10 thêm nhánh vào `QueueOp` / `LibraryOp` (không thêm biến thể `UiToDaemon`; trần ≤ 4 biến thể mới). `Library{req, op: list{device}}` ⇒ `library{items}` đã chạy (engine gọi `client::list` với token).
 - Móc vào engine (`crates/daemon/src/engine.rs`): `Op` ⇒ `handle_request`; việc chậm chạy task con trả `Internal` về `select!`; runner theo thiết bị nằm ở `runners`, nhận `Link` khi thiết bị Online. Ảnh chụp dựng ở `snapshot_parts` — thêm `downloads` vào `Snapshot` ở cuối (trường mới `#[serde(default)]`). Đẩy chỉ qua `Outbox::push`, không chặn engine.
 - `config.rs`, `transfer/*` không bị gd1_07 đụng.
+- Sau rebase lên lõi gd1_10: `on_transfer` có nhánh tạm `DownloadChanged` ⇒ `dirty = true` (chỉ log). `Progress` của mục tải về hiện rơi vào cùng bảng `progress` theo `id` với upload — hai bảng SQLite có thể trùng `id`, nên khi nối phải tách khoá (vd `Progress` mang chiều, hoặc `ItemProgress` thêm `kind`).
 
 ## 0. Bàn giao từ ferry-gd1_04 (11/11/2026)
 

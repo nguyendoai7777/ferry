@@ -699,6 +699,11 @@ impl Engine {
                     }
                 }
             }
+            TransferEvent::DownloadChanged { id, state } => {
+                // Hàng chiều về chưa vào `Snapshot` (gd1_10 nối): chỉ đánh dấu đổi để ảnh chụp kế đọc lại store.
+                log::debug!("engine: download {id} -> {state:?}");
+                self.dirty = true;
+            }
             TransferEvent::BatchFinished { batch, sent, skipped, failed } => {
                 self.dirty = true;
                 self.notify_batch(&batch, sent, skipped, failed);
