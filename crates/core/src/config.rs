@@ -23,6 +23,10 @@ pub struct Config {
     /// Điện thoại đã ghép (task gd1_06 thêm / xoá). Nhận theo `id`, địa chỉ chỉ là gợi ý lần nối sau.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<PairedDevice>,
+    /// Thư mục nhận tệp "Tải về máy" (PROTOCOL 6.4, gd1_10). Vắng ⇒ [`default_download_dir`]; dùng
+    /// [`Config::download_dir`] thay vì đọc thẳng.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_dir: Option<PathBuf>,
 }
 
 /// Một điện thoại đã ghép (W-3, `PROTOCOL.md` 6.8): `id` + **tập** địa chỉ cuối cùng thấy được, IPv4 lẫn IPv6.
@@ -37,6 +41,11 @@ pub struct PairedDevice {
 }
 
 impl Config {
+    /// Thư mục tải về đang dùng: `downloadDir` khi đặt (không rỗng), không thì mặc định của OS.
+    pub fn download_dir(&self) -> PathBuf {
+        self.download_dir.clone().filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_download_dir)
+    }
+
     /// Thêm / cập nhật điện thoại vừa ghép (ghép lại ⇒ thay tên + địa chỉ, giữ vị trí trong danh sách). Không token.
     pub fn remember_device(&mut self, device: PairedDevice) {
         match self.devices.iter_mut().find(|d| d.id == device.id) {
@@ -116,6 +125,12 @@ pub fn save(path: &Path, config: &Config) -> io::Result<()> {
     })
 }
 
+/// Thư mục Downloads của OS (app gửi tệp bất kỳ — W-5 — nên không mặc định thư mục Video), thiếu thì Video, rồi thư
+/// mục nhà, cuối cùng thư mục hiện tại.
+pub fn default_download_dir() -> PathBuf {
+    dirs::download_dir().or_else(dirs::video_dir).or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// Tên máy, bỏ đuôi `.local` của macOS; không đọc được ⇒ "PC".
 pub fn default_client_name() -> String {
     let host = gethostname::gethostname().to_string_lossy().into_owned();
@@ -170,6 +185,7 @@ mod tests {
                 name: "Pixel".into(),
                 addresses: vec!["192.168.1.20:8080".into(), "[fe80::1%en0]:8080".into()],
             }],
+            download_dir: None,
         };
         save(&path, &config).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -191,6 +207,18 @@ mod tests {
         assert!(c.forget_device(&DeviceId("a".into())));
         assert!(!c.forget_device(&DeviceId("a".into())));
         assert_eq!(c.devices.len(), 1);
+    }
+
+    #[test]
+    fn download_dir_defaults_and_round_trips() {
+        let mut c = Config::default();
+        assert_eq!(c.download_dir(), default_download_dir());
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("downloadDir").is_none(), "unset stays out of the file");
+        c.download_dir = Some(PathBuf::from(""));
+        assert_eq!(c.download_dir(), default_download_dir(), "empty string means default");
+        let back: Config = serde_json::from_str(r#"{"downloadDir":"/tmp/phim"}"#).unwrap();
+        assert_eq!(back.download_dir(), PathBuf::from("/tmp/phim"));
     }
 
     #[test]

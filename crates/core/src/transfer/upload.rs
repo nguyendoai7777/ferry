@@ -1,4 +1,5 @@
-//! Runner upload của một điện thoại (`PROTOCOL.md` 5, 6.5, 6.8, 6.9) — task gd1_04.
+//! Runner upload của một điện thoại (`PROTOCOL.md` 5, 6.5, 6.8, 6.9) — task gd1_04. Cùng vòng chạy cả mục tải về
+//! (`super::download`, gd1_10): một tệp một lúc mỗi điện thoại, theo thứ tự thả vào.
 //!
 //! Vòng chạy: lấy đầu hàng của thiết bị ⇒ áp sự kiện mở đầu (`Start` / `WakeUp`) ⇒ thực thi `UploadEffect` bằng
 //! `PhoneClient` của [`Link`] hiện tại ⇒ báo `UploadEvent` ⇒ effect kế … tới khi mục kết thúc, chờ, hoặc tạm dừng.
@@ -28,8 +29,8 @@ use crate::device::DeviceId;
 use crate::protocol::{self, LibraryItem};
 use crate::queue::batch::source_matches;
 use crate::queue::state::{FailReason, PauseReason};
-use crate::queue::store::UploadItem;
-use crate::queue::{BatchId, ItemId, QueueStore, UploadEffect, UploadEvent, UploadState, now_ms, store};
+use crate::queue::store::{DownloadItem, UploadItem};
+use crate::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadEffect, UploadEvent, UploadState, now_ms, store};
 
 /// Tham số runner. Mặc định đúng PROTOCOL; test hạ khúc / nhịp.
 #[derive(Debug, Clone)]
@@ -76,7 +77,7 @@ fn target_dir(item: &UploadItem, dirs: bool) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Flow {
+pub(super) enum Flow {
     Continue,
     Stop,
 }
@@ -96,24 +97,34 @@ enum InFlight {
     Stop,
 }
 
+/// Việc kế tiếp của vòng chạy.
+enum Work {
+    Idle,
+    Sleep(i64),
+    Upload(UploadItem),
+    Download(DownloadItem),
+}
+
 enum Idle {
     Command(Option<Command>),
     LinkChanged(bool),
     Timer,
 }
 
-/// Runner upload của một thiết bị. Dựng bằng [`UploadRunner::new`], chạy bằng `tokio::spawn(runner.run())`.
+/// Runner của một thiết bị: upload (gd1_04) **và** tải về (gd1_10, `super::download`) chung một hàng tuần tự — đầu
+/// hàng là mục có `id` nhỏ nhất đang sẵn sàng của cả hai chiều. Dựng bằng [`UploadRunner::new`], chạy bằng
+/// `tokio::spawn(runner.run())`.
 pub struct UploadRunner {
-    device: DeviceId,
-    store: SharedStore,
+    pub(super) device: DeviceId,
+    pub(super) store: SharedStore,
     link: LinkWatch,
-    commands: mpsc::UnboundedReceiver<Command>,
-    events: mpsc::UnboundedSender<TransferEvent>,
-    throttle: Arc<Throttle>,
-    cfg: RunnerConfig,
+    pub(super) commands: mpsc::UnboundedReceiver<Command>,
+    pub(super) events: mpsc::UnboundedSender<TransferEvent>,
+    pub(super) throttle: Arc<Throttle>,
+    pub(super) cfg: RunnerConfig,
     index: Option<RemoteIndex>,
     /// Sau `401`: hàng dừng tới khi có `Link` mới (đã ghép lại).
-    repair_blocked: bool,
+    pub(super) repair_blocked: bool,
     /// `Link` đổi từ lần chạy mục trước ⇒ mục đang backoff thức ngay.
     link_dirty: bool,
     /// Đã phát `PhoneNeedsUpdate` cho `Link` hiện tại.
@@ -177,25 +188,52 @@ impl UploadRunner {
                 }
                 continue;
             }
-            let head = self.with_store(|s| s.pending_upload(&self.device)).flatten();
-            let flow = match head {
-                None => {
+            let flow = match self.next_work() {
+                Work::Idle => {
                     self.link_dirty = false;
                     self.idle(None).await
                 }
-                Some(item) => match item.state {
-                    UploadState::Waiting { until, .. } if until > now_ms() && !self.link_dirty => {
-                        self.idle(Some(until)).await
-                    }
-                    _ => {
-                        self.link_dirty = false;
-                        self.run_item(item).await
-                    }
-                },
+                Work::Sleep(until) => self.idle(Some(until)).await,
+                Work::Upload(item) => {
+                    self.link_dirty = false;
+                    self.run_item(item).await
+                }
+                Work::Download(item) => {
+                    self.link_dirty = false;
+                    self.run_download(item).await
+                }
             };
             if flow == Flow::Stop {
                 return self.stopped();
             }
+        }
+    }
+
+    /// Đầu hàng chung của thiết bị: mục sẵn sàng (không đang chờ backoff, hoặc `Link` vừa đổi) có `id` nhỏ nhất của
+    /// hai chiều; không có ⇒ ngủ tới đồng hồ sớm nhất.
+    fn next_work(&self) -> Work {
+        let now = now_ms();
+        let up = self.with_store(|s| s.pending_upload(&self.device)).flatten();
+        let down = self.with_store(|s| s.pending_download(&self.device)).flatten();
+        let wait = |until: i64| (until > now && !self.link_dirty).then_some(until);
+        let up_wait = up.as_ref().and_then(|i| match i.state {
+            UploadState::Waiting { until, .. } => wait(until),
+            _ => None,
+        });
+        let down_wait = down.as_ref().and_then(|i| match i.state {
+            DownloadState::Waiting { until, .. } => wait(until),
+            _ => None,
+        });
+        let up_ready = up.filter(|_| up_wait.is_none());
+        let down_ready = down.filter(|_| down_wait.is_none());
+        match (up_ready, down_ready) {
+            (Some(u), Some(d)) if d.id < u.id => Work::Download(d),
+            (Some(u), _) => Work::Upload(u),
+            (None, Some(d)) => Work::Download(d),
+            (None, None) => match up_wait.into_iter().chain(down_wait).min() {
+                Some(until) => Work::Sleep(until),
+                None => Work::Idle,
+            },
         }
     }
 
@@ -250,7 +288,7 @@ impl UploadRunner {
         }
     }
 
-    fn current_link(&self) -> Option<Link> {
+    pub(super) fn current_link(&self) -> Option<Link> {
         if self.repair_blocked { None } else { self.link.borrow().clone() }
     }
 
@@ -372,10 +410,11 @@ impl UploadRunner {
 
     // ------------------------------------------------------------ lệnh
 
-    async fn handle_command(&mut self, cmd: Command) -> Flow {
+    pub(super) async fn handle_command(&mut self, cmd: Command) -> Flow {
         match cmd {
             Command::Stop => return Flow::Stop,
             Command::Wake => {}
+            Command::Item { id, action } if self.download_command(id, action) => {}
             Command::Item { id, action } => {
                 let mine = self.with_store(|s| s.upload(id)).flatten().is_some_and(|i| i.device_id == self.device);
                 if !mine {
@@ -430,7 +469,7 @@ impl UploadRunner {
 
     // ------------------------------------------------------------ store + sự kiện
 
-    fn with_store<T>(&self, f: impl FnOnce(&mut QueueStore) -> store::Result<T>) -> Option<T> {
+    pub(super) fn with_store<T>(&self, f: impl FnOnce(&mut QueueStore) -> store::Result<T>) -> Option<T> {
         let mut s = self.store.lock().unwrap_or_else(|p| p.into_inner());
         match f(&mut s) {
             Ok(v) => Some(v),
@@ -481,7 +520,7 @@ impl UploadRunner {
         }
     }
 
-    fn emit(&self, ev: TransferEvent) {
+    pub(super) fn emit(&self, ev: TransferEvent) {
         let _ = self.events.send(ev);
     }
 }

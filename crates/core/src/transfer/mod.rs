@@ -1,7 +1,9 @@
 //! Chạy hàng đợi: upload nối tiếp (`PROTOCOL.md` 6.5) — task gd1_04; tải về `Range` (6.4) — task gd1_10.
 //!
 //! Một [`upload::UploadRunner`] cho mỗi điện thoại (một tệp một lúc, PROTOCOL 2.8): lấy đầu hàng của thiết bị trong
-//! [`QueueStore`], thực thi `UploadEffect` của máy trạng thái bằng [`PhoneClient`], báo kết quả bằng `UploadEvent`.
+//! [`QueueStore`] — upload hay tải về, mục nào thả trước chạy trước — thực thi effect của máy trạng thái bằng
+//! [`PhoneClient`], báo kết quả bằng sự kiện kế tiếp. Xếp hàng tải về: `QueueStore::add_download` với
+//! `dest = download::default_dest(config.download_dir(), tên)` rồi [`Command::Wake`].
 //!
 //! **Cắm vào tầng trên** (gd1_05 discovery, gd1_07 daemon):
 //! - Địa chỉ đi vào qua [`LinkSender`] (`tokio::sync::watch`): `Some(Link)` = điện thoại Online ở địa chỉ đã chọn (đã
@@ -13,6 +15,7 @@
 //! - Kết quả ra kênh [`TransferEvent`]: đổi trạng thái mục, tiến độ (theo nhịp, không mỗi gói), lô xong, cần ghép lại,
 //!   địa chỉ hỏng (discovery chọn lại), điện thoại cần cập nhật (không có `dirs`).
 
+pub mod download;
 pub mod throttle;
 pub mod upload;
 
@@ -21,13 +24,13 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, watch};
 
-pub use throttle::{SpeedMeter, Throttle};
+pub use throttle::{MeteredWriter, SpeedMeter, Throttle};
 pub use upload::{RunnerConfig, UploadRunner};
 
 use crate::client::PhoneClient;
 use crate::device::DeviceId;
 use crate::protocol::{Info, feature};
-use crate::queue::{BatchId, ItemId, QueueStore, UploadState};
+use crate::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState};
 
 /// Hàng đợi dùng chung giữa các runner + lệnh IPC `AddFiles` (gd1_07). Mỗi thao tác SQLite ngắn, không giữ khoá qua
 /// `await`.
@@ -93,7 +96,10 @@ pub enum Command {
 pub enum TransferEvent {
     /// Trạng thái mục vừa đổi (đã ghi vào store).
     ItemChanged { id: ItemId, state: UploadState },
-    /// Tiến độ trong khúc, mỗi `RunnerConfig::progress_interval`. `bytes_per_sec`: trung bình trượt 5 s.
+    /// Trạng thái mục tải về vừa đổi (đã ghi vào store; `Done` ⇒ `DownloadItem.dest` là tệp thật).
+    DownloadChanged { id: ItemId, state: DownloadState },
+    /// Tiến độ trong khúc, mỗi `RunnerConfig::progress_interval`. `bytes_per_sec`: trung bình trượt 5 s. Mục tải về:
+    /// `sent` = byte đã nhận (offset tuyệt đối trong tệp).
     Progress { id: ItemId, sent: u64, size: u64, bytes_per_sec: u64 },
     /// Cả lô không còn mục nào chạy (PROTOCOL 2.6: một thông báo khi cả lô xong).
     BatchFinished { batch: BatchId, sent: u64, skipped: u64, failed: u64 },

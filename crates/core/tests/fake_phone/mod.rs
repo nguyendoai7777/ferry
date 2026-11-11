@@ -88,6 +88,18 @@ struct State {
     cut_after: Option<u64>,
     fail_next: Option<(u16, Option<u64>)>,
     port: u16,
+    /// gd1_10: `GET /file` kế tiếp gửi đúng chừng này byte thân rồi cắt.
+    cut_get_after: Option<u64>,
+    /// gd1_10: header `Range` / `If-Range` của mọi `GET /file` đã nhận.
+    file_gets: Vec<FileGet>,
+}
+
+/// Một `GET /api/v1/file/<id>` điện thoại giả đã nhận (gd1_10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileGet {
+    pub id: String,
+    pub range: Option<String>,
+    pub if_range: Option<String>,
 }
 
 impl State {
@@ -150,6 +162,8 @@ impl FakePhone {
             cut_after: None,
             fail_next: None,
             port: v4.port(),
+            cut_get_after: None,
+            file_gets: Vec::new(),
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let mut tasks = vec![tokio::spawn(accept_loop(l4, state.clone(), connections.clone()))];
@@ -509,6 +523,7 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
                 _ => Reply::status(405),
             }
         }
+        ("GET", p) if p.starts_with("/api/v1/file/") => return get_file(&mut sock, &state, &req, p).await,
         (m @ ("GET" | "HEAD"), p) if p.starts_with("/api/v1/file/") => {
             let id = decode(&p["/api/v1/file/".len()..]);
             let file = state.lock().unwrap().files.iter().find(|f| f.id == id).cloned();
@@ -815,10 +830,64 @@ impl FakePhone {
             cut_after: None,
             fail_next: None,
             port: v6.port(),
+            cut_get_after: None,
+            file_gets: Vec::new(),
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let tasks = vec![tokio::spawn(accept_loop(l6, state.clone(), connections.clone()))];
         let v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), v6.port());
         Some(Self { state, v4, v6: Some(v6), tasks, connections })
+    }
+}
+
+// ---------------------------------------------------------------- gd1_10: tải về
+
+impl FakePhone {
+    /// `GET /file` kế tiếp: gửi header đủ (`Content-Length` cả thân) + đúng `n` byte thân rồi cắt kết nối.
+    pub fn cut_next_get_after(&self, n: u64) {
+        self.st().cut_get_after = Some(n);
+    }
+
+    /// Mọi `GET /file` đã nhận, theo thứ tự.
+    pub fn file_gets(&self) -> Vec<FileGet> {
+        self.st().file_gets.clone()
+    }
+
+    /// `ETag` hiện tại của tệp.
+    pub fn etag_of(&self, id: &str) -> Option<String> {
+        self.st().files.iter().find(|f| f.id == id).map(StoredFile::etag)
+    }
+}
+
+/// `GET /api/v1/file/<id>`: như `file_reply`, ghi lại `Range` / `If-Range`, cắt giữa thân khi được dặn.
+async fn get_file(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, path: &str) {
+    let id = decode(&path["/api/v1/file/".len()..]);
+    let (file, cut) = {
+        let mut s = state.lock().unwrap();
+        s.file_gets.push(FileGet {
+            id: id.clone(),
+            range: req.header("range").map(str::to_owned),
+            if_range: req.header("if-range").map(str::to_owned),
+        });
+        let file = s.files.iter().find(|f| f.id == id).cloned();
+        let cut = if file.is_some() { s.cut_get_after.take() } else { None };
+        (file, cut)
+    };
+    let Some(f) = file else { return send(sock, Reply::status(404)).await };
+    let reply = file_reply(&f, req, false);
+    match cut {
+        None => send(sock, reply).await,
+        Some(n) => {
+            let mut head = format!("HTTP/1.1 {} {}\r\nConnection: close\r\n", reply.status, reason(reply.status));
+            for (k, v) in &reply.headers {
+                head.push_str(&format!("{k}: {v}\r\n"));
+            }
+            head.push_str(&format!("Content-Length: {}\r\n\r\n", reply.body.len()));
+            let _ = sock.write_all(head.as_bytes()).await;
+            let n = (n as usize).min(reply.body.len());
+            let _ = sock.write_all(&reply.body[..n]).await;
+            let _ = sock.flush().await;
+            // Thả socket: client thấy thân ngắn hơn `Content-Length`.
+        }
     }
 }

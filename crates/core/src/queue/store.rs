@@ -415,13 +415,28 @@ impl QueueStore {
     }
 
     pub fn next_download(&self, device: &DeviceId, now: UnixMs) -> Result<Option<DownloadItem>> {
-        let item = query_downloads(
+        let item = self.pending_download(device)?;
+        Ok(item.filter(|i| !matches!(i.state, DownloadState::Waiting { until, .. } if until > now)))
+    }
+
+    /// Đầu hàng tải về của một thiết bị kể cả khi đang chờ backoff (như [`Self::pending_upload`]; runner gd1_10 chọn
+    /// giữa hai đầu hàng theo `id`).
+    pub fn pending_download(&self, device: &DeviceId) -> Result<Option<DownloadItem>> {
+        Ok(query_downloads(
             &self.conn,
             "device_id = ?1 AND status IN ('queued', 'fetching', 'waiting') ORDER BY id LIMIT 1",
             [&device.0],
         )?
-        .pop();
-        Ok(item.filter(|i| !matches!(i.state, DownloadState::Waiting { until, .. } if until > now)))
+        .pop())
+    }
+
+    /// Tệp đích thật sau khi tải xong (tên từ `Content-Disposition`, đã làm sạch / thêm ` (2)` — gd1_10).
+    pub fn set_download_dest(&mut self, id: ItemId, dest: &Path) -> Result<()> {
+        self.conn.execute(
+            "UPDATE items SET local_path = ?2 WHERE id = ?1 AND kind = 'download'",
+            params![id, path_to_db(dest)],
+        )?;
+        Ok(())
     }
 
     /// Đồng hồ `Waiting` sớm nhất (mọi thiết bị, mọi chiều) — nguồn đánh thức của runner.

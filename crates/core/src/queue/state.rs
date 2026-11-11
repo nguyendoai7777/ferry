@@ -364,10 +364,25 @@ pub enum DownloadFailReason {
 #[serde(tag = "status", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum DownloadState {
     Queued,
-    Fetching { offset: u64, etag: Option<String> },
-    Waiting { attempt: u32, until: UnixMs, offset: u64, etag: Option<String> },
+    Fetching {
+        offset: u64,
+        etag: Option<String>,
+    },
+    Waiting {
+        attempt: u32,
+        until: UnixMs,
+        offset: u64,
+        etag: Option<String>,
+    },
+    /// Người dùng bấm tạm dừng (gd1_10). Giữ `offset` + `etag` để chạy tiếp bằng `Range` + `If-Range`.
+    Paused {
+        offset: u64,
+        etag: Option<String>,
+    },
     Done,
-    Failed { reason: DownloadFailReason },
+    Failed {
+        reason: DownloadFailReason,
+    },
     Cancelled,
 }
 
@@ -377,6 +392,7 @@ impl DownloadState {
             DownloadState::Queued => "queued",
             DownloadState::Fetching { .. } => "fetching",
             DownloadState::Waiting { .. } => "waiting",
+            DownloadState::Paused { .. } => "paused",
             DownloadState::Done => "done",
             DownloadState::Failed { .. } => "failed",
             DownloadState::Cancelled => "cancelled",
@@ -393,7 +409,9 @@ impl DownloadState {
 
     pub fn bytes_done(&self, size: u64) -> u64 {
         match self {
-            DownloadState::Fetching { offset, .. } | DownloadState::Waiting { offset, .. } => (*offset).min(size),
+            DownloadState::Fetching { offset, .. }
+            | DownloadState::Waiting { offset, .. }
+            | DownloadState::Paused { offset, .. } => (*offset).min(size),
             DownloadState::Done => size,
             _ => 0,
         }
@@ -425,6 +443,10 @@ pub enum DownloadEvent {
     WakeUp,
     /// Thử lại sau Failed.
     Retry,
+    /// Người dùng tạm dừng (gd1_10): Queued / Fetching / Waiting ⇒ Paused.
+    Pause,
+    /// Chạy tiếp sau Paused ⇒ Waiting tới hạn ngay (runner `WakeUp` ⇒ `Get` từ offset đã có).
+    Resume,
     Cancel,
     Restore,
 }
@@ -469,6 +491,15 @@ impl DownloadMachine {
             (S::Failed { .. }, Ev::Retry) => to(S::Queued, 0, E::None),
             (s, _) if s.is_terminal() => keep(),
             (_, Ev::Cancel) => to(S::Cancelled, f, E::DiscardPartial),
+            (S::Queued, Ev::Pause) => to(S::Paused { offset: 0, etag: None }, f, E::None),
+            (S::Fetching { offset, etag } | S::Waiting { offset, etag, .. }, Ev::Pause) => {
+                to(S::Paused { offset: *offset, etag: etag.clone() }, f, E::None)
+            }
+            (S::Paused { offset, etag }, Ev::Resume) => to(
+                S::Waiting { attempt: 0, until: now, offset: *offset, etag: etag.clone() },
+                0,
+                E::Wait { until: now },
+            ),
 
             (S::Queued, Ev::Start) => to(S::Fetching { offset: 0, etag: None }, f, E::Get { offset: 0, etag: None }),
             (S::Fetching { offset, .. }, Ev::Responded { etag, full }) => {
@@ -813,5 +844,19 @@ mod tests {
         assert_eq!(dstep(s, DEv::Retry).0, DS::Queued);
         assert_eq!(dstep(f, DEv::Cancel), (DS::Cancelled, DE::DiscardPartial));
         assert_eq!(dstep(DS::Done, DEv::Cancel), (DS::Done, DE::None));
+    }
+
+    #[test]
+    fn download_pause_keeps_offset_and_resumes() {
+        let f = DS::Fetching { offset: 10, etag: Some("e".into()) };
+        let (s, e) = dstep(f, DEv::Pause);
+        assert_eq!((s.clone(), e), (DS::Paused { offset: 10, etag: Some("e".into()) }, DE::None));
+        assert_eq!(s.status(), "paused");
+        assert_eq!(s.bytes_done(100), 10);
+        let (s, e) = dstep(s, DEv::Resume);
+        assert_eq!(e, DE::Wait { until: NOW });
+        assert_eq!(dstep(s, DEv::WakeUp).1, DE::Get { offset: 10, etag: Some("e".into()) });
+        assert_eq!(dstep(DS::Queued, DEv::Pause).0, DS::Paused { offset: 0, etag: None });
+        assert_eq!(dstep(DS::Paused { offset: 3, etag: None }, DEv::Cancel), (DS::Cancelled, DE::DiscardPartial));
     }
 }

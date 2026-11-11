@@ -5,6 +5,8 @@
 //!   đọc thẳng, không đụng khoá.
 //! - [`MeteredReader`]: bọc `AsyncRead` của tệp nguồn — đếm byte đã đọc (tiến độ trong khúc) và xin token trước khi đọc.
 //!   Không có vòng chờ bận: thiếu token ⇒ đặt `tokio::time::Sleep` tới lúc đủ rồi trả `Pending`.
+//! - [`MeteredWriter`]: phía tải về (gd1_10) — bọc `AsyncWrite` của tệp `.part`, cùng xô: ghi chậm ⇒ đọc socket chậm
+//!   (backpressure TCP), không gom vào RAM.
 //! - [`SpeedMeter`]: tốc độ = byte trong cửa sổ trượt 5 s / thời gian, mẫu lấy theo nhịp tiến độ (không mỗi gói).
 
 use std::collections::VecDeque;
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
 use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::time::Sleep;
 
 /// Xô chứa tối đa chừng này thời gian của mức giới hạn (cú dồn sau khi rảnh ≤ 100 ms dữ liệu).
@@ -159,6 +161,64 @@ impl<R: AsyncRead> AsyncRead for MeteredReader<R> {
     }
 }
 
+/// Bộ ghi tệp `.part` khi tải về: đếm byte đã ghi vào `counter` (cộng dồn lên giá trị sẵn có — runner đặt sẵn offset
+/// bắt đầu), tôn trọng [`Throttle`].
+pub struct MeteredWriter<W> {
+    inner: Pin<Box<W>>,
+    throttle: Arc<Throttle>,
+    counter: Arc<AtomicU64>,
+    sleep: Option<Pin<Box<Sleep>>>,
+}
+
+impl<W: AsyncWrite> MeteredWriter<W> {
+    pub fn new(inner: W, throttle: Arc<Throttle>, counter: Arc<AtomicU64>) -> MeteredWriter<W> {
+        MeteredWriter { inner: Box::pin(inner), throttle, counter, sleep: None }
+    }
+
+    pub fn into_inner(self) -> Pin<Box<W>> {
+        self.inner
+    }
+}
+
+impl<W: AsyncWrite> AsyncWrite for MeteredWriter<W> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let this = &mut *self;
+        let granted = if this.throttle.rate().is_none() {
+            buf.len()
+        } else {
+            loop {
+                if let Some(sleep) = this.sleep.as_mut() {
+                    ready!(sleep.as_mut().poll(cx));
+                    this.sleep = None;
+                }
+                match this.throttle.take(buf.len().min(SCRATCH)) {
+                    Ok(n) => break n,
+                    Err(wait) => this.sleep = Some(Box::pin(tokio::time::sleep(wait))),
+                }
+            }
+        };
+        match this.inner.as_mut().poll_write(cx, &buf[..granted]) {
+            Poll::Ready(Ok(n)) => {
+                this.throttle.refund(granted - n);
+                this.counter.fetch_add(n as u64, Ordering::Relaxed);
+                Poll::Ready(Ok(n))
+            }
+            other => {
+                this.throttle.refund(granted);
+                other
+            }
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_shutdown(cx)
+    }
+}
+
 /// Cửa sổ của trung bình trượt.
 pub const SPEED_WINDOW: Duration = Duration::from_secs(5);
 
@@ -246,5 +306,20 @@ mod tests {
         assert_eq!(counter.load(Ordering::Relaxed), data.len() as u64);
         // 600 KB ở 2 MB/s ≈ 0,29 s.
         assert!((0.25..0.40).contains(&elapsed), "{elapsed}");
+    }
+
+    #[tokio::test]
+    async fn metered_writer_counts_from_base_and_limits() {
+        use tokio::io::AsyncWriteExt;
+        let data = vec![7u8; 600 * 1024];
+        let counter = Arc::new(AtomicU64::new(100));
+        let mut w = MeteredWriter::new(Vec::new(), Throttle::new(Some(2 * 1024 * 1024)), counter.clone());
+        let start = Instant::now();
+        w.write_all(&data).await.unwrap();
+        let elapsed = start.elapsed().as_secs_f64();
+        assert_eq!(counter.load(Ordering::Relaxed), 100 + data.len() as u64);
+        assert!((0.25..0.40).contains(&elapsed), "{elapsed}");
+        let out = w.into_inner();
+        assert_eq!(out.len(), data.len());
     }
 }

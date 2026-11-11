@@ -351,13 +351,14 @@ impl PhoneClient {
         let hs = resp.headers();
         let etag = header_str(hs, h::ETAG.as_str()).map(str::to_owned);
         let length = header_u64(hs, h::CONTENT_LENGTH.as_str());
+        let file_name = header_str(hs, h::CONTENT_DISPOSITION.as_str()).and_then(disposition_file_name);
         if resp.status() == StatusCode::PARTIAL_CONTENT {
             let (start, total) = header_str(hs, h::CONTENT_RANGE.as_str())
                 .and_then(parse_content_range)
                 .ok_or_else(|| ClientError::InvalidResponse("206 without valid Content-Range".into()))?;
-            Ok(FileDownload { resp, partial: true, start, total, length, etag })
+            Ok(FileDownload { resp, partial: true, start, total, length, etag, file_name })
         } else {
-            Ok(FileDownload { resp, partial: false, start: 0, total: length, length, etag })
+            Ok(FileDownload { resp, partial: false, start: 0, total: length, length, etag, file_name })
         }
     }
 }
@@ -375,6 +376,8 @@ pub struct FileDownload {
     pub length: Option<u64>,
     /// Lưu lại để `If-Range` lần tải tiếp.
     pub etag: Option<String>,
+    /// Từ `Content-Disposition` (`filename*` UTF-8, rồi `filename`) — chưa làm sạch, đừng ghép thẳng vào đường dẫn.
+    pub file_name: Option<String>,
 }
 
 impl FileDownload {
