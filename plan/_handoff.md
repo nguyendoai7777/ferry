@@ -31,7 +31,7 @@ sổ thiết bị (thứ tự địa chỉ, happy eyeballs 250 ms, nhập tay `[
 
 ### Chờ chủ dự án kiểm tay (`[owner-qa]`)
 
-- gd1_01: chạy khay + cửa sổ trên Windows và Ubuntu (mới thử macOS). **Linux chưa có khay** — nợ của gd1_07.
+- gd1_01: chạy khay + cửa sổ trên Windows và Ubuntu (mới thử macOS). Khay Linux (SNI) có từ gd1_07.
 - gd1_05 C4: điện thoại thật cùng WiFi hiện trong ≤ 5 s (emulator không phát mDNS ra LAN).
 - gd1_06 C3: khởi động lại máy vẫn Online (Windows, GNOME).
 - Android: URL IPv6 trên màn Sync (emulator không có IPv6 ULA/global — cần điện thoại thật + WiFi có IPv6); đẩy thư mục

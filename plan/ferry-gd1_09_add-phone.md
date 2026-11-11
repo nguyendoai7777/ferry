@@ -11,6 +11,14 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/ui/src/views/add_phone.rs`; SỬA `i18n/{vi,en}.toml` |
 
+## 0. Bàn giao từ ferry-gd1_07 (11/11/2026)
+<!-- handoff: ferry-gd1_07 -->
+
+- Hợp đồng IPC đã chốt ở `ferry_core::ipc` (doc module + test `command_and_reply_wire_format` là mẫu dây). Mỗi lệnh UI mang `req: u64` tự tăng, daemon trả đúng một `Reply{req, outcome}`; `outcome` = `done` · `added{…}` · `paired{device, name}` · `found{device, name}` · `library{items}` · `failed{error: CommandError}` (`code`).
+- Lệnh: `Phone{req, op}` với `pair{device, pin}` (PIN 6 số; `Pin` không lộ ra Debug / log) ⇒ `paired{device, name}`; `add_address{address}` (`ip:port`, `[v6]:port`, `[fe80::x%iface]:port`) ⇒ `found{device, name}` — sau đó điện thoại hiện trong `Snapshot.devices`, chưa ghép thì gọi tiếp `pair`; `forget{device}` ⇒ `done` (gỡ sổ + config ngay, kho khoá + hàng đợi dọn ở nền).
+- Lỗi cần chữ người dùng (§2.6): `wrong_pin`, `rate_limited{retryAfterSecs}`, `other_phone` (điện thoại đang ghép với máy khác), `offline`, `unreachable`, `unknown_interface{name}`, `invalid_input`, `keyring`, `unknown_device`, `internal`.
+- `DeviceView{id, name, state, visible, newerApi, features, address}` trong `Snapshot.devices`; `state` = máy trạng thái §5 (`needs_repair` ⇒ màn này mở ở bước PIN cho đúng máy).
+
 ## 0. Bàn giao từ ferry-gd1_06 (11/11/2026)
 
 <!-- handoff: ferry-gd1_06 -->

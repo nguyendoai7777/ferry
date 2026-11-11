@@ -11,6 +11,14 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/core/src/transfer/download.rs`, `crates/core/tests/download.rs`; SỬA `crates/core/src/config.rs` (`downloadDir`), `transfer/{mod,upload,throttle}.rs`, `queue/{state,store}.rs`, `client.rs` (`FileDownload.file_name`), `tests/fake_phone/mod.rs` (thêm); còn lại sau gd1_07: `crates/daemon/src/engine.rs` (lệnh `Download`, snapshot) |
 
+## 0. Bàn giao từ ferry-gd1_07 (11/11/2026)
+<!-- handoff: ferry-gd1_07 -->
+
+- Hợp đồng IPC đã chốt ở `ferry_core::ipc` (doc module + test `command_and_reply_wire_format` là mẫu dây). Mỗi lệnh UI mang `req: u64` tự tăng, daemon trả đúng một `Reply{req, outcome}`; `outcome` = `done` · `added{…}` · `paired{device, name}` · `found{device, name}` · `library{items}` · `failed{error: CommandError}` (`code`).
+- Download **chưa có** trên IPC: gd1_10 thêm nhánh vào `QueueOp` / `LibraryOp` (không thêm biến thể `UiToDaemon`; trần ≤ 4 biến thể mới). `Library{req, op: list{device}}` ⇒ `library{items}` đã chạy (engine gọi `client::list` với token).
+- Móc vào engine (`crates/daemon/src/engine.rs`): `Op` ⇒ `handle_request`; việc chậm chạy task con trả `Internal` về `select!`; runner theo thiết bị nằm ở `runners`, nhận `Link` khi thiết bị Online. Ảnh chụp dựng ở `snapshot_parts` — thêm `downloads` vào `Snapshot` ở cuối (trường mới `#[serde(default)]`). Đẩy chỉ qua `Outbox::push`, không chặn engine.
+- `config.rs`, `transfer/*` không bị gd1_07 đụng.
+
 ## 0. Bàn giao từ ferry-gd1_04 (11/11/2026)
 
 <!-- handoff: ferry-gd1_04 -->

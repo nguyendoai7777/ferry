@@ -11,6 +11,13 @@
 | Phụ thuộc mới | — |
 | File đụng tới | MỚI `crates/ui/src/views/settings.rs`, `crates/daemon/src/autostart.rs`; SỬA `crates/core/src/config.rs`, `i18n/{vi,en}.toml` |
 
+## 0. Bàn giao từ ferry-gd1_07 (11/11/2026)
+<!-- handoff: ferry-gd1_07 -->
+
+- `EngineConfig` mang `config_path`, `config`, `throttle: Arc<Throttle>` (giới hạn tốc độ dùng chung mọi runner — đổi lúc chạy qua `Throttle` là có hiệu lực ngay) và `i18n`. Engine chỉ ghi `config.json` khi danh sách thiết bị khác (`save_config`); cài đặt cần thêm lệnh IPC thì thêm `SettingsOp` dưới một biến thể `Settings{req, op}` (giống `Queue` / `Phone` / `Library`) và cho engine ghi config tuần tự trong `select!` — tránh hai nơi ghi.
+- Đổi ngôn ngữ: chữ khay / thông báo lấy từ `i18n` của engine + `Tray::apply(&status, &i18n)`; cần đẩy `I18n` mới vào engine và luồng khay (hiện nạp một lần lúc khởi động).
+- Tự chạy cùng máy (autostart) chưa làm ở gd1_07.
+
 ## 1. Làm gì (PROTOCOL mục 4.5)
 - Thiết bị đã ghép: đổi tên hiển thị, "Quên" (hộp xác nhận nói rõ hàng đợi của máy đó bị xoá).
 - Thư mục lưu tệp tải về, thư mục theo dõi (bật / tắt, task 13 dùng).

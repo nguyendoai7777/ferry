@@ -16,3 +16,7 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_06 C3 — kho khoá thật sau khởi động lại máy** (Windows / macOS / GNOME) — lý do: cần daemon gd1_07 + UI ghép,
   và máy Windows / Ubuntu. Ghép một điện thoại, khởi động lại máy, mở `ferry` ⇒ thiết bị Online không hỏi PIN.
 - **Keychain macOS hỏi quyền sau khi cập nhật bản chưa ký** (gd1_06 mục 10) — lý do: cần chứng chỉ ký (trả phí, D-21).
+- **gd1_07 C5 `[owner-qa]` — icon khay trên nền sáng / tối cả 3 OS** — lý do: cần mắt chủ dự án + máy Windows / macOS (KDE
+  nền sáng). Icon Linux gần trắng (`#f2f2f2`) có thể mất trên thanh sáng; Windows xanh + chấm cam; macOS template. Xem 3
+  trạng thái Rảnh / Đang gửi / Cần chú ý. Thiết kế icon thật chờ mục "Tên hiển thị + icon".
+- **gd1_07 C4 trên macOS** — đo `footprint -p <pid>` lúc rảnh (mốc gd1_01 ≈ 10 MB); Linux đã đo: RssAnon 1,9 MB, 0 CPU.

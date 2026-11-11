@@ -11,6 +11,14 @@
 | Phụ thuộc mới | — (hộp chọn tệp: dùng của GPUI / materiant) |
 | File đụng tới | MỚI `crates/ui/src/views/{main_window,device_header,drop_zone,send_tray,queue_list}.rs`, `crates/ui/src/views/phone_browser/{mod,tree,table,breadcrumb}.rs`, hàm thuần dựng cây `crates/core/src/browse.rs`; SỬA `i18n/{vi,en}.toml` |
 
+## 0. Bàn giao từ ferry-gd1_07 (11/11/2026)
+<!-- handoff: ferry-gd1_07 -->
+
+- Hợp đồng IPC đã chốt ở `ferry_core::ipc` (doc module + test `command_and_reply_wire_format` là mẫu dây). Mỗi lệnh UI mang `req: u64` tự tăng, daemon trả đúng một `Reply{req, outcome}`; `outcome` = `done` · `added{…}` · `paired{device, name}` · `found{device, name}` · `library{items}` · `failed{error: CommandError}` (`code`).
+- Sau `Hello{role: ui}` daemon đẩy ngay một `Snapshot` đầy đủ, rồi `Snapshot` mỗi khi mục / lô / thiết bị đổi, `Progress{items:[{id, sent, size, bytesPerSec}]}` khi chỉ tiến độ đổi; gộp ≤ 10 / s. Store UI: thay toàn bộ bằng `Snapshot`, vá tiến độ bằng `Progress` (id lạ ⇒ bỏ qua, chờ snapshot kế). `Snapshot.uploads` ≤ 1000 mục chưa xong đầu hàng + ≤ 300 mục xong mới nhất (`queuedOmitted`, `finishedOmitted` để hiện "… và N tệp nữa"); `batches` = `{info, progress}`; `canPauseAll` / `canResumeAll` cho nút chung.
+- Lệnh của màn: `Queue{req, op}` với `add_files{device, paths, destDir}` (thả / dán / Chọn tệp / Chọn thư mục; daemon tự lọc không phải video, trả `added{batch?, files, skippedNonVideo, unreadable}`), `item{id, action}`, `batch{batch, action}`, `all{action}` — `action` = `pause|resume|cancel|retry` (`all` chỉ pause/resume). Chọn thư mục đích (W-4) dùng `Library{req, op: list{device}}` ⇒ `library{items}`.
+- `crates/ui/src/daemon_link.rs` hiện chỉ log `Snapshot` / `Progress` / `Reply` — gd1_08 dựng store + bảng chờ `req` ở đó. Client đọc chậm (≥ 8 thông điệp chờ) bị bỏ lượt rồi nhận snapshot đầy đủ: UI không cần tự xin lại.
+
 ## 1. Làm gì (PROTOCOL mục 4.2)
 - Đầu cửa sổ: thiết bị đang chọn (tên, chấm xanh / xám), nhiều máy ⇒ Select; chưa ghép máy nào ⇒ nút "Thêm điện thoại" (mở màn gd1_09).
 - Vùng thả lớn + nút "Chọn tệp…" (chọn nhiều) + "Chọn thư mục…" ⇒ khay chờ gửi; nút "Gửi sang điện thoại…" mở component
