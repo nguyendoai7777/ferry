@@ -496,10 +496,20 @@ fn render_row(
         .when(nested, |d| d.pl_6())
         .when(matches!(row.kind, RowKind::Item { nested: false, .. } | RowKind::More), |d| d.pl(px(32.)))
         .children(chevron)
-        .child(body)
-        .child(buttons)
-        .border_b_1()
-        .border_color(c.layer(Neutral::N100))
+        // Kẻ kiểu bảng cài đặt iOS: đường mảnh bắt đầu từ chữ (thụt theo icon / cấp lồng), không chạy dưới mũi tên gập.
+        .child(
+            div()
+                .h_full()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_2()
+                .border_b_1()
+                .border_color(c.layer(Neutral::N100))
+                .child(body)
+                .child(buttons),
+        )
         .into_any_element()
 }
 

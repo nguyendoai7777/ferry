@@ -93,34 +93,50 @@ pub fn send_tray(
     if let Some(total) = known_size(tray) {
         head = format!("{head} ({})", fmt::size(total, lang));
     }
+    let shown = tray.len().min(SHOWN);
+    let rule = c.layer(Neutral::N100);
     let rows = tray.iter().take(SHOWN).enumerate().map(|(ix, e)| {
         let remove = on_remove.clone();
+        // Kẻ kiểu bảng cài đặt iOS: đường mảnh thụt vào sau icon, dòng cuối không kẻ (trừ khi còn dòng "… và N mục").
+        let ruled = ix + 1 < shown || tray.len() > SHOWN;
         let name =
             e.path.file_name().map_or_else(|| e.path.display().to_string(), |n| n.to_string_lossy().into_owned());
         div()
-            .h(px(28.))
+            .h(px(32.))
             .flex()
             .items_center()
             .gap_2()
             .child(Icon::new(if e.is_dir { assets::folder() } else { assets::video() }).size(px(16.)).color(c.muted))
-            .child(div().flex_1().min_w_0().truncate().text_sm().child(SharedString::from(name)))
-            .when(!e.is_dir, |d| {
-                d.child(div().text_xs().text_color(c.muted).child(SharedString::from(fmt::size(e.size, lang))))
-            })
             .child(
-                IconButton::new(ElementId::Name(format!("tray-x-{ix}").into()), IconName::CloseThin)
-                    .size(Size::Sm)
-                    .accessibility_label(i18n.t("main.tray_remove"))
-                    .on_click(move |_, window, cx| remove(ix, window, cx)),
+                div()
+                    .h_full()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when(ruled, |d| d.border_b_1().border_color(rule))
+                    .child(div().flex_1().min_w_0().truncate().text_sm().child(SharedString::from(name)))
+                    .when(!e.is_dir, |d| {
+                        d.child(div().text_xs().text_color(c.muted).child(SharedString::from(fmt::size(e.size, lang))))
+                    })
+                    .child(
+                        IconButton::new(ElementId::Name(format!("tray-x-{ix}").into()), IconName::CloseThin)
+                            .size(Size::Sm)
+                            .accessibility_label(i18n.t("main.tray_remove"))
+                            .on_click(move |_, window, cx| remove(ix, window, cx)),
+                    ),
             )
     });
     let more = (tray.len() > SHOWN).then(|| {
-        div().h(px(24.)).text_xs().text_color(c.muted).child(SharedString::from(fmt::plural(
-            i18n,
-            "main.tray_more",
-            (tray.len() - SHOWN) as u64,
-            &[("count", &(tray.len() - SHOWN).to_string())],
-        )))
+        div().h(px(28.)).flex().items_center().pl(px(24.)).text_xs().text_color(c.muted).child(SharedString::from(
+            fmt::plural(
+                i18n,
+                "main.tray_more",
+                (tray.len() - SHOWN) as u64,
+                &[("count", &(tray.len() - SHOWN).to_string())],
+            ),
+        ))
     });
     div()
         .mx_4()
@@ -173,10 +189,11 @@ pub fn send_tray(
                     .child(SharedString::from(i18n.t("main.tray_no_dirs").to_owned())),
             )
         })
+        .when(!tray.is_empty(), |d| d.child(div().h(px(1.)).bg(rule)))
         .child(
             ScrollArea::new("tray-scroll")
                 .vertical()
-                .max_h(px(112.))
+                .max_h(px(136.))
                 .padding_x(px(12.).max(TRACK_THICKNESS))
                 .child(div().flex().flex_col().children(rows).children(more)),
         )
