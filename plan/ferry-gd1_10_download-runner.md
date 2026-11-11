@@ -2,14 +2,14 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Trạng thái | 🔄 |
+| Trạng thái | ✅ (11/11/2026) |
 | Repo | ferry |
 | Model | opus |
 | Cỡ | S — ~400 dòng |
 | Phụ thuộc | gd1_03, gd1_07 |
 | Quyết định áp dụng | W-1 |
 | Phụ thuộc mới | — |
-| File đụng tới | MỚI `crates/core/src/transfer/download.rs`, `crates/core/tests/download.rs`; SỬA `crates/core/src/config.rs` (`downloadDir`), `transfer/{mod,upload,throttle}.rs`, `queue/{state,store}.rs`, `client.rs` (`FileDownload.file_name`), `tests/fake_phone/mod.rs` (thêm); còn lại sau gd1_07: `crates/daemon/src/engine.rs` (lệnh `Download`, snapshot) |
+| File đụng tới | MỚI `crates/core/src/transfer/download.rs`, `crates/core/tests/download.rs`; SỬA `crates/core/src/config.rs` (`downloadDir`), `transfer/{mod,upload,throttle}.rs`, `queue/{state,store}.rs`, `client.rs` (`FileDownload.file_name`), `tests/fake_phone/mod.rs` (thêm); sau gd1_07: `crates/core/src/ipc.rs` (chỉ thêm), `crates/daemon/src/engine.rs` (lệnh `Download`, snapshot) |
 
 ## 0. Bàn giao từ ferry-gd1_07 (11/11/2026)
 <!-- handoff: ferry-gd1_07 -->
@@ -57,11 +57,15 @@
 - C2. Cho đứt giữa chừng rồi tệp trên điện thoại đổi (ETag mới) · Khi tải tiếp với `If-Range` cũ · Thì nhận `200`, ghi lại từ 0, ra đúng bản mới. `[opus-unit]` ✅ `c2_etag_change_restarts_from_zero`
 - C3. Cho tên `Chuyến đi: ngày 1?.mp4` và tệp trùng sẵn có · Thì ra `Chuyến đi_ ngày 1_ (2).mp4`, tệp cũ còn nguyên. `[opus-unit]` ✅ `c3_forbidden_chars_and_duplicate_name` (+ unit `sanitize_*`: `\ / * " < > |`, điều khiển, `.` đầu / cuối, `CON` / `COM1`, cắt 255 byte giữ đuôi)
 - Nhánh lỗi thêm `[opus-unit]` ✅: `404` ⇒ Failed + xoá `.part`; `503` + `Retry-After` ⇒ Waiting rồi xong; `401` ⇒ `DeviceNeedsRepair`, hàng dừng tới `Link` mới; `416` với `.part` đủ cỡ ⇒ xong không tải lại; tạm dừng / chạy tiếp (`Range`) / huỷ (xoá `.part`); upload + tải về chung hàng, theo thứ tự thả.
-- C4. Lệnh IPC `Download` ⇒ mục vào hàng, snapshot thấy tiến độ. `[opus-run]` — **chờ gd1_07**
+- C4. Lệnh IPC `Download` ⇒ mục vào hàng, snapshot thấy tiến độ. `[opus-unit]` mức engine ✅ `download_command_queues_and_fetches_into_download_dir` (daemon + fake_phone: `DownloadsAdded{added 1, alreadyQueued 1, missing 1}`, tệp ra `downloadDir` khớp byte, `downloads[0]` tới `Done`); trần dòng ✅ `huge_queue_snapshot_stays_under_the_line_limit` (+1000 mục tải về). Bấm qua UI: gd1_11.
 
-## 8. Còn lại — nối engine sau khi gd1_07 gộp
+## 8. Nợ chuyển task khác
 
-Phần lõi đã ở `master` (11/11/2026); task 🔄 tới khi xong phần này:
+- gd1_11: nút "Tải về máy" + hàng chiều về trong UI (hợp đồng IPC ở khối bàn giao của gd1_11).
+- Khay chỉ tính upload (`tray_state::summarize`): đang tải về thì khay vẫn Idle — chữ khay "Đang gửi" không hợp với tải về; quyết khi làm gd1_13 hoặc sau.
+
+### Đã xong (11/11/2026) — nối engine sau gd1_07
+
 - `crates/daemon` (engine của gd1_07): lệnh IPC `Download { device, remoteIds }` (gd1_07 mục 1 đã liệt kê) ⇒ với mỗi
   `LibraryItem` từ `list`: `QueueStore::add_download(device, &NewDownload { remote_id, name, remote_dir, size, dest:
   transfer::download::default_dest(&config.download_dir(), &name) }, now)` rồi `RunnerHandle::send(Command::Wake)`.
@@ -98,6 +102,19 @@ Phần lõi đã ở `master` (11/11/2026); task 🔄 tới khi xong phần này
 - `fake_phone`: thêm `cut_next_get_after`, `file_gets` (ghi `Range` / `If-Range`), `etag_of`; route `GET /file` đi qua
   hàm mới `get_file` (thêm một nhánh `match` + 2 trường `State`; hàm cũ không đổi hành vi).
 - Chưa kiểm với điện thoại thật (cần app Android + mạng; `real_phone.rs` chưa có ca tải về).
+- **Nối engine (phần 2, sau gd1_07)** — `ipc.rs` chỉ THÊM: `LibraryOp::Download { device, remoteIds }`,
+  `Outcome::DownloadsAdded { added, alreadyQueued, missing }`, `Snapshot.downloads: Vec<DownloadItem>` +
+  `downloadsOmitted` (cả hai `#[serde(default)]` — ảnh chụp kiểu cũ vẫn đọc được, có test), hằng `DOWNLOADS_IN_SNAPSHOT`
+  = 300 (chưa xong trước, rồi xong mới nhất; xếp theo `id`). `DownloadItem` thêm `Deserialize`.
+- Engine: `Download` ⇒ `online_client` (Offline ⇒ `Offline`, rỗng ⇒ `InvalidInput`) ⇒ task con hỏi lại `list` (tên / cỡ /
+  `dir` mới nhất; UI có thể cầm danh sách cũ) ⇒ `spawn_blocking` `add_downloads`: trùng trong lệnh hoặc cùng `remoteId`
+  còn trong hàng (chưa xong) ⇒ `alreadyQueued`; không còn trong `list` ⇒ `missing`; mục cũ đã xong / lỗi / huỷ thì tải
+  lại (Opus chọn: người dùng bấm lần nữa là muốn bản nữa) ⇒ `Internal::Added` ⇒ `Wake` khi `added > 0`.
+- `item()` / `item_device()` tìm upload rồi tới download (`id` chung dãy AUTOINCREMENT của bảng `items` ⇒ không trùng
+  khoá `progress` — lo ngại của gd1_07 không xảy ra). `All{Pause|Resume}` gồm cả tải về. `canPauseAll` / `canResumeAll`
+  của snapshot tính thêm tải về; khay (`Summary`) vẫn chỉ upload (mục 8).
+- `DownloadChanged`: `dirty`; `Fetching` giữ tiến độ (nâng `sent` theo offset), trạng thái khác bỏ khỏi `progress`.
+- Lệnh soát phần 2 (11/11/2026, `ferry-w2`): 4 lệnh xanh (core 112 unit, daemon 22).
 ## 10. Đề xuất cải tiến
 - [bảo mật] Đổi tên `.part` ⇒ đích dùng `rename` (đè nếu tệp trùng vừa xuất hiện giữa `unique_path` và `rename`) — cửa sổ
   rất hẹp, chỉ tệp của chính người dùng — có thể dùng `hard_link` + `remove` để không bao giờ đè — S — P3.

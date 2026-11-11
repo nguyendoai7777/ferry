@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,14 +20,15 @@ use ferry_core::discovery::mdns::{Browser, MdnsEvent};
 use ferry_core::discovery::{self, ConnectError, Connected};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
-    Action, BatchView, CommandError, DaemonToUi, DeviceView, FINISHED_IN_SNAPSHOT, ItemProgress, LibraryOp,
-    MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta, QUEUED_IN_SNAPSHOT, QueueOp, Snapshot,
+    Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceView, FINISHED_IN_SNAPSHOT, ItemProgress,
+    LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta, QUEUED_IN_SNAPSHOT, QueueOp, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
 use ferry_core::protocol::{Info, Secret};
 use ferry_core::queue::state::PauseReason;
-use ferry_core::queue::store::UploadItem;
-use ferry_core::queue::{BatchId, ItemId, QueueStore, UploadState, now_ms, plan_batch};
+use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
+use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
+use ferry_core::transfer::download;
 use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
     UploadRunner, link_channel,
@@ -454,14 +455,57 @@ impl Engine {
                 });
                 None
             }
+            LibraryOp::Download { device, remote_ids } => {
+                if remote_ids.is_empty() {
+                    return Some(Err(CommandError::InvalidInput));
+                }
+                let client = match self.online_client(&device) {
+                    Ok(c) => c,
+                    Err(e) => return Some(Err(e)),
+                };
+                let (store, tx, outbox) = (self.store.clone(), self.internal_tx.clone(), outbox.clone());
+                let download_dir = self.config.download_dir();
+                tokio::spawn(async move {
+                    // Hỏi lại `list`: tên / cỡ / thư mục mới nhất (UI có thể cầm danh sách cũ).
+                    let outcome = match client.list().await {
+                        Ok(items) => {
+                            let r = tokio::task::spawn_blocking(move || {
+                                add_downloads(&store, &device, &items, &remote_ids, &download_dir).map(|o| (device, o))
+                            })
+                            .await;
+                            match r {
+                                Ok(Ok((device, outcome))) => {
+                                    let _ = tx.send(Internal::Added { outbox, req, device, outcome });
+                                    return;
+                                }
+                                Ok(Err(e)) => Err(e),
+                                Err(e) => Err(internal(e)),
+                            }
+                        }
+                        Err(e) => {
+                            log::info!("engine: list {device} for download: {e}");
+                            Err(CommandError::Unreachable)
+                        }
+                    };
+                    reply_to(&outbox, req, outcome);
+                });
+                None
+            }
         }
     }
 
     // ---- lệnh hàng đợi ----
 
+    /// Mục upload hoặc tải về (`id` chung dãy, cùng bảng) — runner của thiết bị phân loại.
     fn item(&mut self, id: ItemId, action: Action) -> Result<Outcome, CommandError> {
-        let item = lock(&self.store).upload(id).map_err(internal)?.ok_or(CommandError::InvalidInput)?;
-        let runner = self.runners.get(&item.device_id).ok_or(CommandError::NotPaired)?;
+        let device = {
+            let store = lock(&self.store);
+            match store.upload(id).map_err(internal)? {
+                Some(u) => u.device_id,
+                None => store.download(id).map_err(internal)?.ok_or(CommandError::InvalidInput)?.device_id,
+            }
+        };
+        let runner = self.runners.get(&device).ok_or(CommandError::NotPaired)?;
         runner.handle.send(Command::Item { id, action: item_action(action) });
         Ok(Outcome::Done)
     }
@@ -477,16 +521,26 @@ impl Engine {
     /// Tạm dừng mọi mục đang chờ / chạy, hoặc tiếp tục mọi mục đang tạm dừng (mọi lý do — người dùng vừa giải phóng
     /// chỗ cũng bấm "Tiếp tục tất cả").
     fn all(&mut self, action: Action) -> Result<Outcome, CommandError> {
-        let uploads = lock(&self.store).uploads().map_err(internal)?;
-        for item in uploads {
-            let paused = matches!(item.state, UploadState::Paused { .. });
+        if matches!(action, Action::Cancel | Action::Retry) {
+            return Err(CommandError::InvalidInput);
+        }
+        let (uploads, downloads) = {
+            let store = lock(&self.store);
+            (store.uploads().map_err(internal)?, store.downloads().map_err(internal)?)
+        };
+        let ups = uploads
+            .into_iter()
+            .map(|i| (i.id, i.device_id, matches!(i.state, UploadState::Paused { .. }), i.state.is_terminal()));
+        let downs = downloads
+            .into_iter()
+            .map(|i| (i.id, i.device_id, matches!(i.state, DownloadState::Paused { .. }), i.state.is_terminal()));
+        for (id, device, paused, terminal) in ups.chain(downs) {
             let hit = match action {
-                Action::Pause => !paused && !item.state.is_terminal(),
-                Action::Resume => paused,
-                Action::Cancel | Action::Retry => return Err(CommandError::InvalidInput),
+                Action::Pause => !paused && !terminal,
+                _ => paused,
             };
-            if hit && let Some(r) = self.runners.get(&item.device_id) {
-                r.handle.send(Command::Item { id: item.id, action: item_action(action) });
+            if hit && let Some(r) = self.runners.get(&device) {
+                r.handle.send(Command::Item { id, action: item_action(action) });
             }
         }
         Ok(Outcome::Done)
@@ -656,9 +710,9 @@ impl Engine {
                 reply_to(&outbox, req, r);
             }
             Internal::Added { outbox, req, device, outcome } => {
-                if matches!(outcome, Outcome::Added { batch: Some(_), .. })
-                    && let Some(r) = self.runners.get(&device)
-                {
+                let wake = matches!(outcome, Outcome::Added { batch: Some(_), .. })
+                    || matches!(outcome, Outcome::DownloadsAdded { added, .. } if added > 0);
+                if wake && let Some(r) = self.runners.get(&device) {
                     r.handle.send(Command::Wake);
                 }
                 self.dirty = true;
@@ -700,9 +754,18 @@ impl Engine {
                 }
             }
             TransferEvent::DownloadChanged { id, state } => {
-                // Hàng chiều về chưa vào `Snapshot` (gd1_10 nối): chỉ đánh dấu đổi để ảnh chụp kế đọc lại store.
-                log::debug!("engine: download {id} -> {state:?}");
+                log::debug!("engine: download {id} -> {}", state.status());
                 self.dirty = true;
+                match &state {
+                    DownloadState::Fetching { offset, .. } => {
+                        if let Some(p) = self.progress.get_mut(&id) {
+                            p.sent = p.sent.max(*offset);
+                        }
+                    }
+                    _ => {
+                        self.progress.remove(&id);
+                    }
+                }
             }
             TransferEvent::BatchFinished { batch, sent, skipped, failed } => {
                 self.dirty = true;
@@ -725,7 +788,11 @@ impl Engine {
     }
 
     fn item_device(&self, id: ItemId) -> Option<DeviceId> {
-        lock(&self.store).upload(id).ok().flatten().map(|i| i.device_id)
+        let store = lock(&self.store);
+        match store.upload(id).ok().flatten() {
+            Some(u) => Some(u.device_id),
+            None => store.download(id).ok().flatten().map(|d| d.device_id),
+        }
     }
 
     // ---- thông báo ----
@@ -970,7 +1037,17 @@ fn snapshot_parts(
                 .map(|a| address::format_address(&a, locals)),
         })
         .collect();
-    let progress = uploads.iter().filter_map(|u| progress.get(&u.id).copied()).collect();
+    let downloads = lock(store).downloads().unwrap_or_else(|e| {
+        log::warn!("engine: read downloads: {e}");
+        Vec::new()
+    });
+    let (downloads, downloads_omitted) = cap_downloads(downloads);
+    let dl_running =
+        downloads.iter().any(|d| !d.state.is_terminal() && !matches!(d.state, DownloadState::Paused { .. }));
+    let dl_paused = downloads.iter().any(|d| matches!(d.state, DownloadState::Paused { .. }));
+    let ids = uploads.iter().map(|u| u.id).chain(downloads.iter().map(|d| d.id));
+    let progress = ids.filter_map(|id| progress.get(&id).copied()).collect();
+    let can_pause_all = summary.can_pause_all() || dl_running;
     Snapshot {
         devices,
         batches,
@@ -978,9 +1055,69 @@ fn snapshot_parts(
         progress,
         finished_omitted,
         queued_omitted,
-        can_pause_all: summary.can_pause_all(),
-        can_resume_all: summary.can_resume_all(),
+        can_pause_all,
+        can_resume_all: !can_pause_all && (summary.can_resume_all() || dl_paused),
+        downloads,
+        downloads_omitted,
     }
+}
+
+/// Mục tải về chưa xong (đầu hàng trước) + xong mới nhất, tối đa [`DOWNLOADS_IN_SNAPSHOT`], xếp theo `id`.
+fn cap_downloads(all: Vec<DownloadItem>) -> (Vec<DownloadItem>, u64) {
+    let total = all.len();
+    let (mut live, mut finished): (Vec<DownloadItem>, Vec<DownloadItem>) =
+        all.into_iter().partition(|d| !d.state.is_terminal());
+    live.sort_by_key(|d| d.id);
+    live.truncate(DOWNLOADS_IN_SNAPSHOT);
+    finished.sort_by_key(|d| std::cmp::Reverse((d.updated, d.id)));
+    finished.truncate(DOWNLOADS_IN_SNAPSHOT - live.len());
+    let mut out = live;
+    out.extend(finished);
+    out.sort_by_key(|d| d.id);
+    let omitted = (total - out.len()) as u64;
+    (out, omitted)
+}
+
+/// Xếp `remote_ids` (theo `list` mới nhất) vào hàng tải về của `device`. Mục cùng `remoteId` đang có trong hàng (chưa
+/// xong) bỏ qua; mục đã xong / lỗi / huỷ thì tải lại (người dùng bấm lần nữa).
+fn add_downloads(
+    store: &SharedStore,
+    device: &DeviceId,
+    items: &[ferry_core::protocol::LibraryItem],
+    remote_ids: &[String],
+    download_dir: &Path,
+) -> Result<Outcome, CommandError> {
+    let mut store = lock(store);
+    let queued: HashSet<String> = store
+        .downloads()
+        .map_err(internal)?
+        .into_iter()
+        .filter(|d| d.device_id == *device && !d.state.is_terminal())
+        .map(|d| d.remote_id)
+        .collect();
+    let (mut added, mut already_queued, mut missing) = (0, 0, 0);
+    let mut seen = HashSet::new();
+    let now = now_ms();
+    for rid in remote_ids {
+        if !seen.insert(rid.as_str()) || queued.contains(rid) {
+            already_queued += 1;
+            continue;
+        }
+        let Some(item) = items.iter().find(|i| i.id == *rid) else {
+            missing += 1;
+            continue;
+        };
+        let d = NewDownload {
+            remote_id: item.id.clone(),
+            name: item.name.clone(),
+            remote_dir: item.dir.clone(),
+            size: item.size,
+            dest: download::default_dest(download_dir, &item.name),
+        };
+        store.add_download(device, &d, now).map_err(internal)?;
+        added += 1;
+    }
+    Ok(Outcome::DownloadsAdded { added, already_queued, missing })
 }
 
 fn add_files(
@@ -1060,8 +1197,6 @@ mod fake_phone;
 mod tests {
     //! Engine thật + điện thoại giả trong tiến trình (`ferry-core/tests/fake_phone`), kho khoá trong RAM, không mDNS.
 
-    use std::path::Path;
-
     use ferry_core::config::PairedDevice;
     use ferry_core::i18n::Language;
     use ferry_core::pairing::MemoryKeyring;
@@ -1106,6 +1241,7 @@ mod tests {
                 name: fake_phone::NAME.into(),
                 addresses: vec![phone.v4().to_string()],
             }],
+            download_dir: Some(dir.join("dl")),
             ..Config::default()
         };
         let store = Arc::new(std::sync::Mutex::new(QueueStore::open(&dir.join("queue.sqlite3"), now_ms()).unwrap()));
@@ -1256,6 +1392,49 @@ mod tests {
         rig.engine.shutdown();
     }
 
+    /// gd1_10: `Library{Download}` ⇒ trả `DownloadsAdded` (trùng / mất được đếm), runner tải về `downloadDir`, ảnh chụp
+    /// có `downloads` tới `Done`; tải lại khi đang có trong hàng thì bỏ qua.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn download_command_queues_and_fetches_into_download_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let data: Vec<u8> = (0..700_000u32).map(|i| (i % 251) as u8).collect();
+        let rid = phone.add_file("clip.mp4", Some("Trips"), data.clone());
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, is_online).await;
+
+        let op = LibraryOp::Download { device: device(), remote_ids: vec![rid.clone(), rid.clone(), "gone".into()] };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 9, op: Op::Library(op) });
+        let (rx, got) = collect(rx, |m| {
+            matches!(m, DaemonToUi::Snapshot(s)
+                if s.downloads.len() == 1 && s.downloads[0].state == DownloadState::Done)
+        })
+        .await;
+        let reply = got.iter().find_map(|(_, m)| match m {
+            DaemonToUi::Reply { req: 9, outcome } => Some(outcome.clone()),
+            _ => None,
+        });
+        assert_eq!(reply, Some(Outcome::DownloadsAdded { added: 1, already_queued: 1, missing: 1 }));
+        let dest = tmp.path().join("dl").join("clip.mp4");
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        let DaemonToUi::Snapshot(snap) = &got.last().unwrap().1 else { unreachable!() };
+        assert_eq!(snap.downloads[0].dest, dest);
+        assert_eq!(snap.downloads[0].remote_dir.as_deref(), Some("Trips"));
+        assert!(!snap.can_pause_all);
+
+        // Danh sách rỗng ⇒ InvalidInput.
+        let bad = LibraryOp::Download { device: device(), remote_ids: vec![] };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 10, op: Op::Library(bad) });
+        let (_rx, got) = collect(rx, |m| matches!(m, DaemonToUi::Reply { req: 10, .. })).await;
+        assert!(matches!(
+            &got.last().unwrap().1,
+            DaemonToUi::Reply { outcome: Outcome::Failed { error: CommandError::InvalidInput }, .. }
+        ));
+        rig.engine.shutdown();
+    }
+
     /// C3 (mức engine): tắt giữa khúc rồi mở lại trên cùng hàng đợi ⇒ gửi tiếp từ offset điện thoại đã có, tệp đúng.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn c3_restart_mid_chunk_resumes() {
@@ -1314,10 +1493,28 @@ mod tests {
         let done = || UploadState::Done { remote_name: "x.mp4".into(), remote_dir: Some("a/b".into()) };
         let mut uploads: Vec<UploadItem> = (1..=5000).map(|i| item(i, UploadState::Queued)).collect();
         uploads.extend((5001..=6000).map(|i| item(i, done())));
+        {
+            let mut st = lock(&store);
+            for i in 0..1000 {
+                let d = NewDownload {
+                    remote_id: format!("content://media/external/video/media/{i:08}"),
+                    name: format!("VID_{i:08}_a rather long phone file name.mp4"),
+                    remote_dir: Some(format!("DCIM/Camera/a rather long folder name {i}")),
+                    size: 123_456_789,
+                    dest: PathBuf::from(format!(
+                        "/home/someone/Downloads/VID_{i:08}_a rather long phone file name.mp4"
+                    )),
+                };
+                st.add_download(&device(), &d, i).unwrap();
+            }
+        }
         let snap = snapshot_parts(&store, &Devices::default(), &[], &Summary::default(), &HashMap::new(), uploads);
         assert_eq!(snap.uploads.len(), QUEUED_IN_SNAPSHOT + FINISHED_IN_SNAPSHOT);
         assert_eq!(snap.queued_omitted, 5000 - QUEUED_IN_SNAPSHOT as u64);
         assert_eq!(snap.finished_omitted, 1000 - FINISHED_IN_SNAPSHOT as u64);
+        assert_eq!(snap.downloads.len(), DOWNLOADS_IN_SNAPSHOT);
+        assert_eq!(snap.downloads_omitted, 1000 - DOWNLOADS_IN_SNAPSHOT as u64);
+        assert!(snap.downloads.windows(2).all(|w| w[0].id < w[1].id));
         assert_eq!(snap.uploads[0].id, 1, "head of the queue first");
         assert_eq!(snap.uploads.last().unwrap().id, 6000, "newest finished kept");
         let line = serde_json::to_string(&DaemonToUi::Snapshot(snap)).unwrap();

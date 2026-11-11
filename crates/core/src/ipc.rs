@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::device::{DeviceId, DeviceState};
 use crate::protocol::LibraryItem;
-use crate::queue::store::{BatchInfo, BatchProgress, UploadItem};
+use crate::queue::store::{BatchInfo, BatchProgress, DownloadItem, UploadItem};
 use crate::queue::{BatchId, ItemId};
 
 /// Một dòng JSON tối đa — chặn client hỏng / độc gửi dòng vô tận làm daemon phình RAM. Tệp không đi qua IPC (chỉ đường
@@ -108,6 +108,10 @@ pub enum PhoneOp {
 pub enum LibraryOp {
     /// `GET /list` của điện thoại đang Online. Trả [`Outcome::Library`]; Offline ⇒ `Offline`.
     List { device: DeviceId },
+    /// "Tải về máy" (gd1_10): `remoteIds` = `id` của mục trong `library{items}`. Daemon hỏi lại `list` (cỡ / tên mới
+    /// nhất), xếp mỗi video vào hàng của điện thoại đó (chung hàng với upload), đích `config.downloadDir`. Trả
+    /// [`Outcome::DownloadsAdded`]; Offline ⇒ `Offline`; danh sách rỗng ⇒ `InvalidInput`.
+    Download { device: DeviceId, remote_ids: Vec<String> },
 }
 
 /// PIN ghép: chỉ đi UI → daemon, không bao giờ vào snapshot / log (`Debug` che). Daemon bọc ngay `protocol::Secret`.
@@ -156,6 +160,9 @@ pub const FINISHED_IN_SNAPSHOT: usize = 300;
 /// dưới [`MAX_LINE`] (~1 300 mục × vài trăm byte).
 pub const QUEUED_IN_SNAPSHOT: usize = 1000;
 
+/// Mục tải về tối đa trong một ảnh chụp (chưa xong trước, rồi xong mới nhất) — gd1_10.
+pub const DOWNLOADS_IN_SNAPSHOT: usize = 300;
+
 /// Trạng thái daemon cho cửa sổ (PROTOCOL 4.2, 4.4, 4.5). Không token, không PIN.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -176,6 +183,13 @@ pub struct Snapshot {
     /// Có mục đang chạy ⇒ khay / nút hiện "Tạm dừng tất cả"; không mà có mục tạm dừng ⇒ "Tiếp tục tất cả".
     pub can_pause_all: bool,
     pub can_resume_all: bool,
+    /// Hàng chiều về (gd1_10): mục chưa xong + mục xong mới nhất, tối đa [`DOWNLOADS_IN_SNAPSHOT`], xếp theo `id`.
+    /// `id` chung dãy với `uploads` (cùng bảng) nên `progress` dùng chung khoá; `Done` ⇒ `dest` là tệp thật trên máy.
+    #[serde(default)]
+    pub downloads: Vec<DownloadItem>,
+    /// Mục tải về không đưa vào `downloads` (vượt trần).
+    #[serde(default)]
+    pub downloads_omitted: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -240,6 +254,13 @@ pub enum Outcome {
     },
     Library {
         items: Vec<LibraryItem>,
+    },
+    /// `Download` (gd1_10): `added` mục mới vào hàng; `alreadyQueued` đang có trong hàng (chưa xong) nên bỏ qua;
+    /// `missing` không còn trong `list` của điện thoại.
+    DownloadsAdded {
+        added: u64,
+        already_queued: u64,
+        missing: u64,
     },
     Failed {
         error: CommandError,
@@ -743,6 +764,13 @@ mod tests {
                 UiToDaemon::Library { req: 6, op: LibraryOp::List { device: dev.clone() } },
                 r#"{"type":"library","req":6,"op":{"op":"list","device":"3f9a"}}"#,
             ),
+            (
+                UiToDaemon::Library {
+                    req: 7,
+                    op: LibraryOp::Download { device: dev.clone(), remote_ids: vec!["v1".into(), "v2".into()] },
+                },
+                r#"{"type":"library","req":7,"op":{"op":"download","device":"3f9a","remoteIds":["v1","v2"]}}"#,
+            ),
         ];
         for (msg, wire) in cases {
             assert_eq!(serde_json::to_string(&msg).unwrap(), wire);
@@ -759,6 +787,13 @@ mod tests {
                     outcome: Outcome::Failed { error: CommandError::RateLimited { retry_after_secs: 30 } },
                 },
                 r#"{"type":"reply","req":4,"outcome":{"kind":"failed","error":{"code":"rate_limited","retryAfterSecs":30}}}"#,
+            ),
+            (
+                DaemonToUi::Reply {
+                    req: 7,
+                    outcome: Outcome::DownloadsAdded { added: 1, already_queued: 1, missing: 0 },
+                },
+                r#"{"type":"reply","req":7,"outcome":{"kind":"downloads_added","added":1,"alreadyQueued":1,"missing":0}}"#,
             ),
             (
                 DaemonToUi::Progress(ProgressDelta {
@@ -795,7 +830,11 @@ mod tests {
             "{wire}"
         );
         assert!(wire.contains(r#""canPauseAll":true"#) && wire.contains(r#""finishedOmitted":0"#), "{wire}");
-        assert_eq!(serde_json::from_str::<DaemonToUi>(&wire).unwrap(), DaemonToUi::Snapshot(snap));
+        assert_eq!(serde_json::from_str::<DaemonToUi>(&wire).unwrap(), DaemonToUi::Snapshot(snap.clone()));
+        // Ảnh chụp kiểu gd1_07 (chưa có `downloads`) vẫn đọc được.
+        let old = wire.replace(r#","downloads":[],"downloadsOmitted":0"#, "");
+        assert_ne!(old, wire);
+        assert_eq!(serde_json::from_str::<DaemonToUi>(&old).unwrap(), DaemonToUi::Snapshot(snap));
     }
 
     #[test]
