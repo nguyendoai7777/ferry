@@ -13,6 +13,8 @@ use crate::device::DeviceId;
 
 /// Phiên bản giao thức PC hiểu (`info.api`, TXT `api=`).
 pub const API_VERSION: u32 = 1;
+/// `info.app` của app điện thoại (§6.3) — quét LAN (§6.2) chỉ nhận máy trả đúng giá trị này.
+pub const APP: &str = "xmobile.videoplayer";
 
 /// Đường dẫn route (PROTOCOL 6.3–6.5).
 pub mod path {

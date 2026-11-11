@@ -18,7 +18,7 @@ chỉ mở vài lần.
 
 | Crate | Loại | Việc | Không được mang |
 | --- | --- | --- | --- |
-| `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
+| `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + quét LAN dự phòng + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
 | `crates/daemon` — bin `ferry` | bin | runtime tokio của lõi, khay (3 trạng thái), IPC server, bật tiến trình UI, một instance, thông báo hệ thống, autostart | GPUI, materiant |
 | `crates/ui` — bin `ferry-ui` | bin | một cửa sổ vỏ Groovex: cột trái (Gửi tệp, Thư viện điện thoại; Cài đặt ở góc dưới) + trang bên phải (vùng thả + hàng đợi, thư viện, thêm điện thoại, cài đặt) — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
 | `crates/core/tests/fake_phone` | test | server giả trong tiến trình đúng hợp đồng §6 (đứt giữa khúc, `409`, `404`, `507`, `401`, `423`, `503`) | — |
@@ -103,6 +103,19 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
 - **App điện thoại chưa có `dirs`** (§6.9; bản `xmobile.videoplayer` 11/2026 vẫn chưa có `features`): không có hộp chọn nơi lưu — `send_tray::lacks_dirs` (chỉ khi online) ⇒ nút "Gửi sang điện thoại" gửi thẳng vào gốc, khay báo cần cập nhật app điện thoại; offline thì vẫn mở hộp chọn. Thử hộp chọn cần điện thoại có `dirs` (hoặc `fake_phone`).
 - **Duyệt bộ nhớ trong (`features: browse`, §6.11, W-7)**: `PhoneBrowser` đổi nguồn từ `list` sang `GET /dirs` (`LibraryOp::Dirs`, đọc từng thư mục khi mở / mở rộng cây, gom ở `browse::FsCache`, giữ ở `Model::storage`). Có `browse` thì **mọi `dir` tính từ gốc bộ nhớ dùng chung**, không còn từ nơi lưu của app ⇒ thư mục đích lần trước nhớ theo khoá `<id>#browse` (`Model::dest_key`); điện thoại bật / tắt `browse` lúc trình duyệt đang mở ⇒ về gốc, đọc lại. Tệp ngoài thư viện không có `id` ⇒ không tải về.
 - **App điện thoại cài lại đổi `id`** (gặp 11/11/2026: `cdf3…` ⇒ `91b0…`, cùng IP, cùng tên): `discovery::connect` theo mã cũ coi địa chỉ là hỏng. Ghép lại bằng PIN (`PhoneOp::Pair`) ⇒ `discovery::find_replacement` lấy máy đang trả lời ở địa chỉ cũ, PIN đúng mới nhận; engine `replace_device` bỏ mã cũ (sổ, config, kho khoá) như Quên nhưng **chuyển** hàng đợi (`QueueStore::move_device`) + tên đặt trên PC sang mã mới. Ghép như máy mới (màn Thêm điện thoại) mà `Devices::superseded_by` thấy máy cũ cùng tên + chung địa chỉ + không Online ⇒ cũng thay máy cũ (không để hai dòng). Không tự gộp khi chưa ghép bằng PIN. Bẫy: đừng `config.forget_device` trước `save_config` — nó thấy config đã khớp sổ nên không ghi tệp, máy đã quên sống lại lần chạy sau.
+- **mDNS im dù HTTP thông ⇒ quét LAN dự phòng** (`discovery::scan`, PROTOCOL §6.2; gặp 11/11/2026 trên Mac, WiFi nhà
+  `192.168.4.0/24`): hai lỗi chồng nhau — (a) router không chuyển multicast từ máy WiFi khác tới Mac (`dns-sd -B
+  _services._dns-sd._udp` chỉ thấy dịch vụ của chính Mac; gói mDNS nhóm `224.0.0.251` từ máy khác không tới, còn trả lời
+  **unicast** thì tới), (b) điện thoại chỉ quảng bá `_adb._tcp`, không có `_vpsync._tcp` (lỗi phía app, backlog). Cách
+  phân biệt không cần sudo / adb: gửi truy vấn legacy unicast (socket UDP cổng ngẫu nhiên → `224.0.0.251:5353` và thẳng IP
+  điện thoại, hỏi PTR `_services._dns-sd._udp.local`) ⇒ máy nào trả lời là còn thấy được dịch vụ nó khai; `tcpdump` cần
+  root. Quét: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần khi danh sách trống (`RESCAN_EVERY`),
+  daemon gộp lệnh trùng + cách nhau ≥ 10 s; /24 quanh IP của PC, nối TCP 600 ms, 64 cùng lúc, chỉ nhận `info.app` =
+  `protocol::APP` (~2,4 s cho /24). Máy quét thấy đi đường như địa chỉ tay (`apply_untrusted_info`: máy có token thì
+  nối lại kèm token, không thành NeedsRepair). Thử tay: `FERRY_SCAN=1 cargo run -p ferry-core --example discover`.
+  Điện thoại đã ghép mà đổi IP trên mạng chặn mDNS thì vẫn chỉ thử địa chỉ cũ (chưa quét nền — §6.2 cấm quét ngoài màn Thêm).
+- **Vòng "đang dò" có vòng nền** (`add_phone::searching_spinner`): cung không xác định của `ProgressCircular` có khung chỉ
+  ~10° — ở 24 px (hoặc lúc cửa sổ không vẽ lại) trông như gạch hồng lệch; chồng một `ProgressCircular` `value(0)` làm track.
 - **Tường lửa chặn mDNS** (W-6, `ferry_core::firewall`): Linux `ufw` bật (`/etc/ufw/ufw.conf` `ENABLED=yes`, đọc không cần root)
   và chưa có dấu đã cho phép ⇒ `Snapshot::mdnsFirewall` ngay từ ảnh chụp đầu (tắt khi mDNS thấy điện thoại) ⇒ vào màn Thêm điện
   thoại là tự mở hộp thoại xin quyền (một lần mỗi lần mở màn; "Để sau" còn nút mở lại) ⇒ `PhoneOp::AllowMdnsFirewall` ⇒ `pkexec /bin/sh -c "<ufw> allow in proto udp to 224.0.0.251 port 5353 comment 'ferry mDNS'

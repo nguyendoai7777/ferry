@@ -35,3 +35,8 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
     `X-Batch-*` / chưa xử lý `410` — làm khi điện thoại khai `batch`.
   - **Mã thiết bị bền qua cài lại app** (HMAC của `ANDROID_ID`): cài lại app đổi `id` ⇒ PC đang dò thay thế qua địa chỉ
     (`discovery::find_replacement`).
+  - **Điện thoại không quảng bá `_vpsync._tcp`** (gặp 11/11/2026, vivo V2425A, Sync WiFi bật, HTTP `:8080` trả `info`):
+    hỏi mDNS kiểu legacy unicast (cổng nguồn ngẫu nhiên, điện thoại trả unicast) thì `_services._dns-sd._udp` của máy
+    chỉ có `_adb._tcp` ⇒ `NsdManager.registerService` của app chưa chạy / hỏng (soát log `VpSync`, `onRegistrationFailed`,
+    service đăng ký lại sau khi server bật lại). PC đã có quét LAN dự phòng (PROTOCOL §6.2) nên vẫn thấy máy trên mạng
+    cùng /24; mDNS vẫn cần cho mạng rộng hơn /24 và IPv6-only.

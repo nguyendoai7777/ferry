@@ -30,7 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 sys-locale = "0.3"
 # Runner upload (`transfer`, gd1_04) + happy eyeballs (`discovery`, gd1_05): đọc tệp nguồn, `watch` / `mpsc`, đồng hồ backoff + nhịp tiến độ, `select!`.
-tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
 # Thư mục theo dõi (`watch`, gd1_13): inotify / ReadDirectoryChangesW / FSEvents trên một luồng riêng. CC0-1.0.
 notify = "8"
 # `ReaderStream`: thân PATCH đọc từng khúc nhỏ từ tệp, không đọc cả khúc 32 MB vào RAM. MIT.

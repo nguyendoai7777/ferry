@@ -173,3 +173,58 @@ async fn reinstalled_phone_is_found_as_replacement() {
     assert_eq!((at, info.id.0.as_str()), (addr, fake_phone::ID));
     assert!(discovery::find_replacement(&DeviceId(fake_phone::ID.into()), &[addr]).await.is_none());
 }
+
+/// HTTP giả trả một phản hồi cố định cho mọi kết nối (máy khác trong LAN có cổng 8080 mở).
+async fn canned_http(body: &'static str, status: &'static str) -> SocketAddr {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = l.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    addr
+}
+
+/// Quét LAN dự phòng (PROTOCOL 6.2): giữa cổng đóng, máy treo, máy HTTP khác (`app` khác, `404`, không phải JSON) chỉ
+/// nhận đúng điện thoại; máy treo không giữ cả lượt quá trần.
+#[tokio::test]
+async fn lan_scan_finds_only_the_phone() {
+    let phone = FakePhone::start().await;
+    let closed = {
+        let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        l.local_addr().unwrap()
+    };
+    let silent = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let silent_addr = silent.local_addr().unwrap();
+    let other_app = canned_http(r#"{"app":"tv.remote","api":1,"id":"aaaaaaaaaaaaaaaa","name":"TV"}"#, "200 OK").await;
+    let not_found = canned_http("nope", "404 Not Found").await;
+    let html = canned_http("<html></html>", "200 OK").await;
+
+    let start = Instant::now();
+    let found =
+        discovery::scan::scan(vec![closed, silent_addr, other_app, not_found, html, phone.v4()]).await;
+    let took = start.elapsed();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, phone.v4());
+    assert_eq!(found[0].1.id, DeviceId(fake_phone::ID.into()));
+    assert!(!found[0].1.paired);
+    assert!(took <= discovery::scan::INFO_TIMEOUT + Duration::from_secs(1), "{took:?}");
+    drop(silent);
+
+    // Điện thoại vừa quét thấy vào sổ như nhập tay: `Discovered`, kèm `info.addresses`.
+    let mut devices = Devices::from_config(&[], Vec::new(), Instant::now());
+    let (addr, info) = &found[0];
+    devices.info_ok(info, *addr, Instant::now());
+    let d = devices.get(&info.id).expect("device");
+    assert_eq!(d.state, DeviceState::Discovered);
+}

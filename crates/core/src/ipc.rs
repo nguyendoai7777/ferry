@@ -112,7 +112,14 @@ pub enum PhoneOp {
     /// W-6: cho phép chiều vào mDNS ở tường lửa (Linux: `pkexec` + `ufw`, hệ thống hỏi mật khẩu). Trả
     /// [`Outcome::Firewall`]; xong ⇒ daemon dò mDNS lại và bỏ [`Snapshot::mdns_firewall`].
     AllowMdnsFirewall,
+    /// Quét LAN dự phòng (`PROTOCOL.md` 6.2): `GET /info` tới subnet IPv4 của PC, máy trả lời vào danh sách như nhập tay.
+    /// Màn Thêm điện thoại gửi lúc mở rồi định kỳ khi danh sách trống. Đang quét ⇒ chờ chung lượt đó; vừa quét xong (<
+    /// [`SCAN_MIN_INTERVAL_SECS`]) ⇒ trả ngay. Trả [`Outcome::Scanned`].
+    ScanLan,
 }
+
+/// Hai lượt quét LAN cách nhau ít nhất chừng này giây (nhiều cửa sổ / lệnh dồn không làm quét dày).
+pub const SCAN_MIN_INTERVAL_SECS: u64 = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", rename_all_fields = "camelCase")]
@@ -383,6 +390,10 @@ pub enum Outcome {
     },
     /// Mọi lệnh `Settings` (gd1_12).
     Settings(SettingsView),
+    /// `ScanLan`: số điện thoại vừa trả lời (`0` khi lượt bị bỏ vì vừa quét).
+    Scanned {
+        found: u32,
+    },
     /// `AllowMdnsFirewall` (W-6).
     Firewall {
         result: AllowResult,

@@ -36,6 +36,9 @@ use materiant::toast::{Toast, ToastKind, ToastSpec};
 /// Dò chừng này chưa thấy điện thoại nào ⇒ chỉ sang đường nhập địa chỉ tay (WiFi công ty / AP isolation hay lọc mDNS: chờ
 /// thêm cũng không thấy, kể cả sau khi đã mở tường lửa).
 pub const SLOW_SEARCH: Duration = Duration::from_secs(20);
+/// Danh sách còn trống ⇒ quét LAN dự phòng lại sau chừng này kể từ lượt trước xong (`PROTOCOL.md` 6.2) — mDNS bị mạng chặn
+/// vẫn thấy điện thoại vừa bật Sync WiFi; không dày hơn để "rảnh không giữ CPU".
+pub const RESCAN_EVERY: Duration = Duration::from_secs(15);
 
 /// Số chữ số PIN (PROTOCOL 6.3).
 pub const PIN_LEN: usize = 6;
@@ -115,6 +118,8 @@ pub struct AddPhoneView {
     firewall_dialog: DialogHandle,
     /// Đã tự mở hộp một lần trong lần mở màn này.
     firewall_asked: bool,
+    /// Lệnh `ScanLan` đang chờ trả lời.
+    scan_req: Option<u64>,
     /// Mở để ghép lại một máy đã biết (`repair`): "Quay lại" ở bước PIN thoát hẳn màn, không tự mở hộp tường lửa (máy đã có
     /// địa chỉ, không cần dò mDNS).
     repair: bool,
@@ -128,6 +133,19 @@ impl Focusable for AddPhoneView {
     fn focus_handle(&self, _cx: &materiant::gpui_kit::App) -> FocusHandle {
         self.focus.clone()
     }
+}
+
+/// Vòng "đang dò" 24 px: vòng nền mờ cố định (`value(0)` chỉ vẽ track) + cung quay chồng lên. Cung không xác định có khung
+/// chỉ dài ~10° — đứng một mình ở cỡ này (hoặc khi cửa sổ không vẽ lại) trông như một gạch lệch, có vòng nền mới đọc ra
+/// là đang quay.
+fn searching_spinner() -> impl IntoElement {
+    const SCALE: f32 = 24.0 / 64.0;
+    div()
+        .relative()
+        .flex_none()
+        .size(px(24.))
+        .child(ProgressCircular::new("add-phone-searching-track").value(0.0).scale(SCALE))
+        .child(div().absolute().top_0().left_0().child(ProgressCircular::new("add-phone-searching").scale(SCALE)))
 }
 
 // ---- Hàm thuần (test được, không cần GPUI) ----
@@ -239,10 +257,14 @@ impl AddPhoneView {
             firewall_dialog: DialogHandle::new(cx),
             firewall_asked: repair.is_some(),
             repair: repair.is_some(),
+            scan_req: None,
             focus: cx.focus_handle(),
             _subs: subs,
         };
         view.redraw_after(SLOW_SEARCH, cx);
+        if repair.is_none() {
+            view.scan_lan(cx);
+        }
         if let Some(id) = repair {
             let name = view.devices.iter().find(|d| d.id == id).map(|d| d.name.clone()).unwrap_or_default();
             view.go_pin(id, name, window, cx);
@@ -285,8 +307,40 @@ impl AddPhoneView {
         cx.notify();
     }
 
+    /// Quét LAN dự phòng (PROTOCOL 6.2) — máy trả lời tới qua snapshot như máy mDNS thấy. Không chồng lệnh.
+    fn scan_lan(&mut self, cx: &mut Context<Self>) {
+        if self.scan_req.is_none() {
+            self.scan_req = (self.send)(PhoneOp::ScanLan, cx);
+        }
+    }
+
+    /// Hẹn lượt quét kế sau [`RESCAN_EVERY`]: tới giờ mà còn ở bước đầu và danh sách trống thì quét, không thì hẹn tiếp.
+    /// Màn đóng ⇒ view bị thả, hẹn tự huỷ.
+    fn schedule_rescan(&self, cx: &mut Context<Self>) {
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            executor.timer(RESCAN_EVERY).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.step == Step::Pick && pairable(&this.devices).is_empty() {
+                    this.scan_lan(cx);
+                } else {
+                    // Đang nhập tay / PIN, hoặc đã thấy máy: chưa quét, hẹn lại (chỉ một đồng hồ, không tốn CPU).
+                    this.schedule_rescan(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     /// `Reply` từ daemon; bỏ qua nếu không phải của lệnh đang chờ.
     pub fn on_reply(&mut self, req: u64, outcome: &Outcome, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scan_req == Some(req) {
+            self.scan_req = None;
+            if !matches!(outcome, Outcome::Failed { .. }) {
+                self.schedule_rescan(cx);
+            }
+            return;
+        }
         if self.firewall_status == FirewallStatus::Waiting(req) {
             self.firewall_status = match outcome {
                 Outcome::Firewall { result } => {
@@ -531,14 +585,16 @@ impl AddPhoneView {
         let c = cx.theme().colors().clone();
         let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
         let list = pairable(&self.devices);
+        // Gợi ý "vẫn chưa thấy" đã có nút nhập tay ⇒ không vẽ thêm nút cùng chữ bên dưới.
+        let slow_shown = list.is_empty() && search_slow(self.opened_at, Instant::now());
         let body = if list.is_empty() {
             let searching = div()
                 .flex()
                 .items_center()
                 .gap_3()
-                .child(ProgressCircular::new("add-phone-searching").scale(0.4))
+                .child(searching_spinner())
                 .child(div().text_color(c.muted).child(t("add_phone.empty")));
-            let slow = search_slow(self.opened_at, Instant::now()).then(|| {
+            let slow = slow_shown.then(|| {
                 div().flex().flex_col().items_start().gap_2().child(div().child(t("add_phone.slow_hint"))).child(
                     Button::new("add-phone-manual-slow", t("add_phone.manual_link"))
                         .tonal()
@@ -583,13 +639,15 @@ impl AddPhoneView {
                     .flex()
                     .flex_wrap()
                     .gap_2()
-                    .child(
-                        Button::new("add-phone-manual", t("add_phone.manual_link"))
-                            .text()
-                            .base()
-                            .size(Size::Sm)
-                            .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
-                    )
+                    .when(!slow_shown, |row| {
+                        row.child(
+                            Button::new("add-phone-manual", t("add_phone.manual_link"))
+                                .text()
+                                .base()
+                                .size(Size::Sm)
+                                .on_click(cx.listener(|this, _, window, cx| this.go_manual(window, cx))),
+                        )
+                    })
                     .when(self.firewall.is_some(), |row| {
                         let h = self.firewall_dialog.clone();
                         row.child(

@@ -18,13 +18,13 @@ use ferry_core::config::{self, Config, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
 use ferry_core::discovery::mdns::{Browser, MdnsEvent};
-use ferry_core::discovery::{self, ConnectError, Connected};
+use ferry_core::discovery::{self, ConnectError, Connected, scan};
 use ferry_core::firewall::{self, AllowResult};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
     Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView,
     FINISHED_IN_SNAPSHOT, ItemProgress, LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta,
-    QUEUED_IN_SNAPSHOT, QueueOp, SettingsOp, SettingsView, Snapshot,
+    QUEUED_IN_SNAPSHOT, QueueOp, SCAN_MIN_INTERVAL_SECS, SettingsOp, SettingsView, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
 use ferry_core::protocol::{Info, Secret};
@@ -217,6 +217,10 @@ enum Internal {
         device: DeviceId,
         files: u64,
     },
+    /// Quét LAN dự phòng xong (`discovery::scan`).
+    Scanned {
+        found: Vec<(SocketAddr, Info)>,
+    },
     /// `pkexec ufw allow …` xong (W-6).
     FirewallAllowed {
         outbox: Outbox,
@@ -287,6 +291,10 @@ struct Engine {
     fw_allowing: bool,
     /// Vòng chính dựng lại `Browser` ở lượt kế (sau khi mở tường lửa).
     restart_mdns: bool,
+    /// Quét LAN dự phòng đang chạy (`PhoneOp::ScanLan`, PROTOCOL 6.2): các lệnh chờ chung lượt này.
+    scan_waiters: Option<Vec<(Outbox, u64)>>,
+    /// Lượt quét LAN xong gần nhất — lệnh tới sớm hơn `SCAN_MIN_INTERVAL_SECS` trả ngay.
+    last_scan: Option<Instant>,
 }
 
 struct Subscriber {
@@ -349,6 +357,8 @@ impl Engine {
             mdns_found: false,
             fw_allowing: false,
             restart_mdns: false,
+            scan_waiters: None,
+            last_scan: None,
         };
         if browser.is_some() {
             engine.firewall = firewall::detect(&engine.firewall_marker());
@@ -552,6 +562,25 @@ impl Engine {
                 tokio::task::spawn_blocking(move || {
                     let result = firewall::allow_with_prompt(&detected);
                     let _ = tx.send(Internal::FirewallAllowed { outbox, req, result });
+                });
+                None
+            }
+            PhoneOp::ScanLan => {
+                if let Some(waiters) = self.scan_waiters.as_mut() {
+                    waiters.push((outbox.clone(), req));
+                    return None;
+                }
+                if self.last_scan.is_some_and(|t| Instant::now().saturating_duration_since(t) < Duration::from_secs(SCAN_MIN_INTERVAL_SECS)) {
+                    return Some(Ok(Outcome::Scanned { found: 0 }));
+                }
+                self.refresh_locals();
+                let targets = scan::targets(&self.locals, address::DEFAULT_PORT);
+                log::info!("engine: LAN scan of {} hosts", targets.len());
+                self.scan_waiters = Some(vec![(outbox.clone(), req)]);
+                let tx = self.internal_tx.clone();
+                tokio::spawn(async move {
+                    let found = scan::scan(targets).await;
+                    let _ = tx.send(Internal::Scanned { found });
                 });
                 None
             }
@@ -814,6 +843,20 @@ impl Engine {
                 Ok(addr) => self.spawn_probe(None, 0, addr, None),
                 Err(e) => log::warn!("engine: skip manual address {text:?}: {e}"),
             }
+        }
+    }
+
+    /// `info` hỏi không token (địa chỉ tay, quét LAN) trả lời từ `addr`.
+    fn apply_untrusted_info(&mut self, info: &Info, addr: SocketAddr, now: Instant) {
+        let has_token = self.devices.get(&info.id).is_some_and(|d| d.state.has_token());
+        if has_token {
+            // `info` không token luôn `paired: false` — không cho máy trạng thái nhầm thành NeedsRepair:
+            // nối lại kèm token, địa chỉ mới thử trước.
+            self.probing.remove(&info.id);
+            self.probe_device(&info.id, Some(addr));
+        } else {
+            let ev = self.devices.info_ok(info, addr, now);
+            self.on_device_events(ev);
         }
     }
 
@@ -1087,19 +1130,21 @@ impl Engine {
                 });
                 reply_to(&outbox, req, r);
             }
+            Internal::Scanned { found } => {
+                self.last_scan = Some(Instant::now());
+                log::info!("engine: LAN scan found {} phone(s)", found.len());
+                let count = u32::try_from(found.len()).unwrap_or(u32::MAX);
+                for (addr, info) in found {
+                    self.apply_untrusted_info(&info, addr, now);
+                }
+                for (outbox, req) in self.scan_waiters.take().unwrap_or_default() {
+                    reply_to(&outbox, req, Ok(Outcome::Scanned { found: count }));
+                }
+            }
             Internal::Probed { outbox, req, addr, result, remember } => {
                 let remembered = remember.is_some();
                 let r = result.map(|info| {
-                    let has_token = self.devices.get(&info.id).is_some_and(|d| d.state.has_token());
-                    if has_token {
-                        // `info` không token luôn `paired: false` — không cho máy trạng thái nhầm thành NeedsRepair:
-                        // nối lại kèm token, địa chỉ mới thử trước.
-                        self.probing.remove(&info.id);
-                        self.probe_device(&info.id, Some(addr));
-                    } else {
-                        let ev = self.devices.info_ok(&info, addr, now);
-                        self.on_device_events(ev);
-                    }
+                    self.apply_untrusted_info(&info, addr, now);
                     if let Some(text) = remember
                         && !self.config.manual_addresses.contains(&text)
                     {

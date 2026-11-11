@@ -2,6 +2,7 @@
 //!
 //! - [`address`]: thứ tự thử địa chỉ, đọc / ghi địa chỉ nhập tay (hàm thuần).
 //! - [`mdns`]: [`mdns::Browser`] đổi sự kiện của `mdns-sd` thành [`crate::device::Announcement`] / gỡ instance.
+//! - [`scan`]: quét LAN dự phòng khi mDNS bị mạng chặn (§6.2) — `GET /info` tới subnet IPv4 của PC.
 //! - [`race`] + [`connect`] / [`probe`]: nối kiểu happy eyeballs (thử kế sau [`HAPPY_EYEBALLS_DELAY`]), soát `info.id`.
 //!
 //! Sổ thiết bị và máy trạng thái ở [`crate::device`]; daemon (gd1_07) nối các mảnh: tin của `Browser` ⇒
@@ -9,6 +10,7 @@
 
 pub mod address;
 pub mod mdns;
+pub mod scan;
 
 use std::future::Future;
 use std::net::SocketAddr;

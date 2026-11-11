@@ -3,6 +3,7 @@
 //! ```bash
 //! cargo run -p ferry-core --example discover            # Ctrl+C để thoát
 //! FERRY_NO_MDNS=1 cargo run -p ferry-core --example discover   # mốc so sánh: chỉ runtime, không mDNS
+//! FERRY_SCAN=1 cargo run -p ferry-core --example discover      # quét LAN dự phòng một lượt (PROTOCOL 6.2) rồi thoát
 //! ```
 //!
 //! Vòng lặp đúng kiểu daemon sẽ chạy (gd1_07): chờ tin mDNS hoặc mốc `Devices::next_deadline`, không poll.
@@ -16,6 +17,15 @@ use ferry_core::discovery::{self, address, mdns};
 async fn main() {
     let t0 = Instant::now();
     let mut devices = Devices::from_config(&[], address::local_interfaces(), t0);
+    if std::env::var_os("FERRY_SCAN").is_some() {
+        let targets = discovery::scan::targets(&address::local_interfaces(), address::DEFAULT_PORT);
+        eprintln!("scanning {} hosts", targets.len());
+        for (addr, info) in discovery::scan::scan(targets).await {
+            println!("{addr} {} id={} features={:?}", info.name, info.id, info.features);
+        }
+        eprintln!("done in {:.2}s", t0.elapsed().as_secs_f64());
+        return;
+    }
     if std::env::var_os("FERRY_NO_MDNS").is_some() {
         eprintln!("FERRY_NO_MDNS: idle runtime only (pid {})", std::process::id());
         std::future::pending::<()>().await;

@@ -78,7 +78,7 @@ pc-app/
 3. **Thư viện điện thoại** (tab phụ): trình duyệt kiểu Explorer (mục 4.6) ở chế độ thư viện. Chọn video → "Tải về máy"
    (vào hàng đợi chiều ngược lại, tải tiếp bằng `Range`). Không có nút xoá (giao thức v1 không có).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
-   điện thoại dò thấy (chưa ghép). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
+   điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
    thông, khởi động cùng hệ thống, địa chỉ tay (nâng cao).
 
@@ -158,6 +158,13 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
   2. IPv6 global / ULA (`fc00::/7`) cùng prefix /64 với PC;
   3. IPv6 link-local `fe80::/10` kèm **scope id = interface PC đã nhận bản ghi mDNS đó**;
   4. mọi địa chỉ còn lại.
+- **Quét LAN dự phòng** (khi mạng không chuyển multicast giữa các máy WiFi — router / AP isolation, gặp 11/11/2026 — hoặc
+  điện thoại không quảng bá được): PC gọi `GET /api/v1/info` (§6.3, route sẵn có, không token) tới mọi IPv4 trong subnet
+  của interface PC, cổng mặc định `8080`. Nhận máy trả JSON đúng §6.3 với `app = "xmobile.videoplayer"` — từ đó như địa
+  chỉ nhập tay (`id`, tên, `addresses`). Nhẹ, có trần: mỗi interface tối đa một /24 quanh IP của PC (prefix ngắn hơn ⇒ chỉ
+  /24 đó), bỏ loopback / link-local `169.254/16`; nối TCP trước (hết giờ 600 ms), cổng mở mới gửi HTTP; tối đa 64 kết nối
+  cùng lúc. Chỉ chạy khi người dùng đang ở màn Thêm điện thoại (§4 mục 4): lúc mở màn rồi 15 s một lần khi danh sách còn trống;
+  không quét nền. IPv6 không quét (/64 quá rộng) — địa chỉ IPv6 lấy từ `info.addresses`. Điện thoại không cần làm gì thêm.
 - Nhập tay: `1.2.3.4:8080`, `[fd12::5]:8080`, `[fe80::5%en0]:8080` (Windows `%12`) — màn điện thoại hiện sẵn IPv4 và
   IPv6; rồi `GET /api/v1/info` để lấy `id`.
 
@@ -263,7 +270,7 @@ một request; server vẫn kiểm (`415`).
   - **Bẫy**: crate `url` (và `reqwest`) không nhận zone id `%en0` trong URL. Đừng ghép IP vào URL: dùng host giả
     `<id>.vpsync.invalid` + `ClientBuilder::resolve(host, SocketAddr)` (link-local: `SocketAddrV6` có `scope_id`) — một
     đường code cho cả IPv4, IPv6, link-local.
-- Mạng chỉ có IPv6 (không DHCPv4) hoặc chỉ IPv4 đều phải chạy. Mạng chặn multicast: nhập tay (§6.2).
+- Mạng chỉ có IPv6 (không DHCPv4) hoặc chỉ IPv4 đều phải chạy. Mạng chặn multicast: quét LAN dự phòng, cuối cùng là nhập tay (§6.2).
 
 ### 6.9 Thư mục — đẩy như copy/paste
 
