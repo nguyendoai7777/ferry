@@ -20,11 +20,17 @@ chỉ mở vài lần.
 | --- | --- | --- | --- |
 | `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
 | `crates/daemon` — bin `ferry` | bin | runtime tokio của lõi, khay (3 trạng thái), IPC server, bật tiến trình UI, một instance, thông báo hệ thống, autostart | GPUI, materiant |
-| `crates/ui` — bin `ferry-ui` | bin | cửa sổ chính (vùng thả + hàng đợi), thư viện điện thoại, thêm điện thoại, cài đặt — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
+| `crates/ui` — bin `ferry-ui` | bin | một cửa sổ vỏ Groovex: cột trái (Gửi tệp, Thư viện điện thoại; Cài đặt ở góc dưới) + trang bên phải (vùng thả + hàng đợi, thư viện, thêm điện thoại, cài đặt) — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
 | `crates/core/tests/fake_phone` | test | server giả trong tiến trình đúng hợp đồng §6 (đứt giữa khúc, `409`, `404`, `507`, `401`, `423`, `503`) | — |
 
 - UI không gọi mạng: mọi lệnh đi IPC sang `ferry`, `ferry` gửi ảnh chụp trạng thái (snapshot) khi đổi, không chia sẻ mutex.
 - Đóng cửa sổ ⇒ tiến trình UI thoát (nhả GPU / RAM); truyền vẫn chạy ở `ferry`.
+- **Vỏ UI bê từ Groovex**: `views/app_bar.rs` (ba nút cửa sổ), `views/side_nav.rs`, `platform/{window_controls,move_loop,
+  resize_edges}.rs` chép từ `groove/crates/groove-app` — sửa bên đó thì soát bên này. Cửa sổ `titlebar: None` +
+  `WindowDecorations::Client` mọi OS; Linux tự vẽ mép đổi cỡ, Windows `move_loop::install` sau khi mở. Cài đặt là trang
+  trong cửa sổ chính (`MainWindow::open_settings`); khay "Cài đặt…" / `ferry-ui --settings` mở thẳng trang đó. Giao diện:
+  `theme` (`light|dark|system`) + `themePreset` (4 bảng của `builtin_presets()`, không tự chỉnh) trong `config.json`,
+  `appearance::apply` lúc khởi động và khi đổi.
 
 ## Luật riêng
 

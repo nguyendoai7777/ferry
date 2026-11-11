@@ -24,5 +24,10 @@ serde_json.workspace = true
 # Ngày sửa theo múi giờ máy (đã có trong cây qua GPUI).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# Nút cửa sổ + kéo cửa sổ trên Windows (`platform`, bê từ Groovex).
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [lints]
 workspace = true

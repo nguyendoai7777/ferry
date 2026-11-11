@@ -24,7 +24,7 @@ const extra = [
     url: 'https://sqlite.org/copyright.html', text: 'sqlite.txt',
   },
   {
-    name: 'Lucide', version: 'icons used by the materiant library', license: 'ISC',
+    name: 'Lucide', version: 'icons used by Ferry and the materiant library', license: 'ISC',
     url: 'https://lucide.dev', text: '../../../materiant/assets/icons/LICENSE-lucide',
   },
   {

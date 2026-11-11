@@ -6,9 +6,10 @@
 use ferry_core::ipc::{ClientConnection, DaemonToUi, Role, Sender, UiToDaemon};
 use futures::StreamExt;
 use futures::channel::mpsc;
-use materiant::gpui_kit::{AnyWindowHandle, App, AppContext, Entity};
+use materiant::gpui_kit::{AnyWindowHandle, App, AppContext, Entity, WeakEntity};
 
 use crate::model::Model;
+use crate::views::main_window::MainWindow;
 
 pub fn connect() -> Option<ClientConnection> {
     match ClientConnection::open(Role::Ui) {
@@ -30,8 +31,14 @@ enum Incoming {
     Closed,
 }
 
-/// `window`: cửa sổ chính để đưa lên trước khi daemon gửi `Focus`; `None` khi chỉ mở cửa sổ cài đặt (`--settings`).
-pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: Option<AnyWindowHandle>, cx: &mut App) {
+/// `window` / `main`: cửa sổ chính — đưa lên trước khi daemon gửi `Focus`, chuyển sang trang Cài đặt khi `OpenSettings`.
+pub fn listen(
+    mut conn: ClientConnection,
+    model: Entity<Model>,
+    window: AnyWindowHandle,
+    main: WeakEntity<MainWindow>,
+    cx: &mut App,
+) {
     let (tx, mut rx) = mpsc::unbounded();
     let spawned = std::thread::Builder::new().name("ipc-recv".into()).spawn(move || {
         loop {
@@ -58,17 +65,19 @@ pub fn listen(mut conn: ClientConnection, model: Entity<Model>, window: Option<A
     cx.spawn(async move |cx| {
         while let Some(incoming) = rx.next().await {
             match incoming {
-                Incoming::Message(DaemonToUi::Focus) => match window {
-                    Some(window) => {
-                        let _ = cx.update_window(window, |_, window, cx| {
-                            cx.activate(true);
-                            window.activate_window();
-                        });
-                    }
-                    None => log::info!("ipc: focus asked, only the settings window is open"),
-                },
+                Incoming::Message(DaemonToUi::Focus) => {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        cx.activate(true);
+                        window.activate_window();
+                    });
+                }
                 Incoming::Message(DaemonToUi::OpenSettings) => {
-                    cx.update(crate::views::settings::open);
+                    let main = main.clone();
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        let _ = main.update(cx, |main, cx| main.open_settings(window, cx));
+                        cx.activate(true);
+                        window.activate_window();
+                    });
                 }
                 Incoming::Message(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
                 Incoming::Message(msg) => {

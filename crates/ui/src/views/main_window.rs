@@ -1,7 +1,8 @@
-//! Cửa sổ chính (PROTOCOL 4.2): đầu thiết bị + vùng thả + khay chờ + hàng đợi; "Gửi sang điện thoại…" chuyển sang
-//! trình duyệt điện thoại (4.6) ở chế độ chọn đích rồi quay lại; "Thư viện điện thoại" (4.3) và "Thêm điện thoại" (4.4)
-//! là trang con thay nội dung cửa sổ. Giữ trạng thái người dùng chọn (khay, lô đang mở);
-//! trạng thái daemon nằm ở [`Model`].
+//! Cửa sổ chính, vỏ như Groovex: cột điều hướng trái ([`SideNav`]: Gửi, Thư viện điện thoại, Cài đặt ở đáy), thanh trên
+//! kéo được với ba nút cửa sổ ([`AppBar`]), nội dung bên phải. Trang Gửi (PROTOCOL 4.2): đầu thiết bị + vùng thả + khay chờ +
+//! hàng đợi; "Gửi sang điện thoại…" chuyển sang trình duyệt điện thoại (4.6) ở chế độ chọn đích rồi quay lại; "Thêm điện
+//! thoại" (4.4) là trang con của trang Gửi. Thư viện (4.3) và Cài đặt (4.5) là mục của cột trái. Giữ trạng thái người dùng
+//! chọn (khay, lô đang mở); trạng thái daemon nằm ở [`Model`].
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -14,27 +15,43 @@ use ferry_core::queue::BatchId;
 use materiant::button::{Button, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement, KeyDownEvent,
-    PathPromptOptions, Render, SharedString, Subscription, WeakEntity, Window, div, px,
+    AnyElement, AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement,
+    KeyDownEvent, PathPromptOptions, Render, SharedString, Subscription, WeakEntity, Window, div, px,
 };
 use materiant::theme::ActiveTheme;
 use materiant::toast::{Toast, ToastKind, ToastSpec, ToastViewport};
+use materiant::window::DragRegionExt;
 
 use super::add_phone::{AddPhoneEvent, AddPhoneView};
+use super::app_bar::{self, AppBar, CaptionLabels};
 use super::device_header::device_header;
 use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
 use super::phone_library::{LibraryEvent, PhoneLibrary};
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
 use super::send_tray::{self, TrayEntry, send_tray};
+use super::settings::{SettingsEvent, SettingsPage};
+use super::side_nav::{self, Active, NavItem, SideNav};
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
 
 enum Page {
     Main,
     Browse { browser: Entity<PhoneBrowser>, _sub: Subscription },
-    Library { library: Entity<PhoneLibrary>, _sub: Subscription },
+    /// `None`: chưa chọn / chưa ghép điện thoại nào.
+    Library { library: Option<(Entity<PhoneLibrary>, Subscription)> },
     AddPhone { view: Entity<AddPhoneView>, _sub: Subscription },
+    Settings { view: Entity<SettingsPage>, _sub: Subscription },
+}
+
+impl Page {
+    fn active(&self) -> Active {
+        match self {
+            Page::Main | Page::Browse { .. } | Page::AddPhone { .. } => Active::Item(NavItem::Send),
+            Page::Library { .. } => Active::Item(NavItem::Library),
+            Page::Settings { .. } => Active::Settings,
+        }
+    }
 }
 
 pub struct MainWindow {
@@ -49,6 +66,8 @@ pub struct MainWindow {
     sending: Option<u64>,
     /// Thư mục đích đang gửi (nhớ khi daemon nhận).
     sending_dest: Option<(DeviceId, String)>,
+    /// Tên cửa sổ đã đặt cho OS (taskbar, Alt+Tab) — không có thanh tiêu đề OS nên đặt bằng `set_window_title`.
+    window_title: SharedString,
     _sub: Subscription,
 }
 
@@ -73,8 +92,37 @@ impl MainWindow {
             focus,
             sending: None,
             sending_dest: None,
+            window_title: SharedString::default(),
             _sub: sub,
         }
+    }
+
+    /// Mục của cột trái.
+    fn navigate(&mut self, item: NavItem, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page.active() == Active::Item(item) && !matches!(self.page, Page::Browse { .. } | Page::AddPhone { .. }) {
+            return;
+        }
+        match item {
+            NavItem::Send => self.back_to_main(window, cx),
+            NavItem::Library => self.open_library(window, cx),
+        }
+    }
+
+    /// Trang Cài đặt (mục đáy cột trái, menu khay "Cài đặt…", `ferry-ui --settings`).
+    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Settings { .. }) {
+            return;
+        }
+        let i18n = I18n::new(self.i18n.language());
+        let view = cx.new(|cx| SettingsPage::new(i18n, window, cx));
+        let sub = cx.subscribe_in(&view, window, |this, _, ev: &SettingsEvent, _, cx| match ev {
+            SettingsEvent::LanguageChanged(language) => {
+                this.i18n = Rc::new(I18n::new(*language));
+                cx.notify();
+            }
+        });
+        self.page = Page::Settings { view, _sub: sub };
+        cx.notify();
     }
 
     fn toast(&self, window: &mut Window, cx: &mut Context<Self>, kind: ToastKind, key: &str) {
@@ -145,15 +193,17 @@ impl MainWindow {
         }
     }
 
-    /// Mở thư viện của điện thoại đang chọn (PROTOCOL 4.3).
+    /// Mở thư viện của điện thoại đang chọn (PROTOCOL 4.3); chưa có điện thoại ⇒ trang báo cần ghép.
     fn open_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(device) = self.model.read(cx).current().map(|d| d.id.clone()) else { return };
-        let (model, i18n) = (self.model.clone(), self.i18n.clone());
-        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
-        let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
-            LibraryEvent::Back => this.back_to_main(window, cx),
+        let library = self.model.read(cx).current().map(|d| d.id.clone()).map(|device| {
+            let (model, i18n) = (self.model.clone(), self.i18n.clone());
+            let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
+            let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
+                LibraryEvent::Back => this.back_to_main(window, cx),
+            });
+            (library, sub)
         });
-        self.page = Page::Library { library, _sub: sub };
+        self.page = Page::Library { library };
         cx.notify();
     }
 
@@ -277,38 +327,48 @@ impl MainWindow {
     }
 }
 
-impl Render for MainWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = cx.theme().colors().clone();
-        // Thanh tiêu đề tự vẽ (GNOME Wayland không cấp viền) nằm trên mọi trang; trang bên dưới chiếm phần còn lại.
-        let bar = super::title_bar::title_bar(
-            "main-close",
-            SharedString::from(self.i18n.t("app.name").to_owned()),
-            SharedString::from(self.i18n.t("main.close").to_owned()),
-            window,
-            cx,
-        );
-        let frame = div()
+impl MainWindow {
+    fn t(&self, key: &str) -> SharedString {
+        SharedString::from(self.i18n.t(key).to_owned())
+    }
+
+    /// Chưa có điện thoại: chữ giữa vùng (trang Gửi, trang Thư viện).
+    fn no_phone(&self, cx: &Context<Self>) -> AnyElement {
+        let muted = cx.theme().colors().muted;
+        div()
+            .flex_1()
             .size_full()
             .flex()
             .flex_col()
-            .bg(c.surface)
-            .text_color(c.text)
-            .font_family(cx.theme().font_family())
-            .children(bar);
-        let root = div().w_full().flex_1().min_h_0().relative().child(ToastViewport::new());
-        match &self.page {
-            Page::Browse { browser, .. } => {
-                return frame.child(root.child(div().size_full().child(browser.clone()))).into_any_element();
-            }
-            Page::Library { library, .. } => {
-                return frame.child(root.child(div().size_full().child(library.clone()))).into_any_element();
-            }
-            Page::AddPhone { view, .. } => {
-                return frame.child(root.child(div().size_full().child(view.clone()))).into_any_element();
-            }
-            Page::Main => {}
-        }
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(div().font_weight(cx.theme().title_weight()).child(self.t("main.no_phone")))
+            .child(div().text_sm().text_color(muted).child(self.t("main.no_phone_hint")))
+            .into_any_element()
+    }
+
+    /// Cột trái. Vùng kéo cửa sổ của đầu cột nằm ở [`Render::render`] (dải sau cột), không trong cột.
+    fn render_nav(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (w1, w2) = (cx.weak_entity(), cx.weak_entity());
+        SideNav::new(
+            self.t("app.name"),
+            self.page.active(),
+            NavItem::ALL.iter().map(|item| self.t(item.label_key())).collect(),
+            self.t("nav.settings"),
+            move |item, window, cx| {
+                let _ = w1.update(cx, |this, cx| this.navigate(item, window, cx));
+            },
+            move |window, cx| {
+                let _ = w2.update(cx, |this, cx| this.open_settings(window, cx));
+            },
+        )
+        .into_any_element()
+    }
+
+    /// Trang Gửi: đầu thiết bị + vùng thả + khay chờ + hàng đợi.
+    fn render_send(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let c = cx.theme().colors().clone();
         let weak = cx.weak_entity();
         let i18n = self.i18n.clone();
         let (paired, selected, connected, device) = {
@@ -386,25 +446,7 @@ impl Render for MainWindow {
         });
 
         let queue = match &device {
-            None => div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .child(
-                    div()
-                        .font_weight(cx.theme().title_weight())
-                        .child(SharedString::from(i18n.t("main.no_phone").to_owned())),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(c.muted)
-                        .child(SharedString::from(i18n.t("main.no_phone_hint").to_owned())),
-                )
-                .into_any_element(),
+            None => self.no_phone(cx),
             Some(dev) => {
                 let (can_pause, can_resume) = {
                     let s = &self.model.read(cx).snapshot;
@@ -417,7 +459,6 @@ impl Render for MainWindow {
                 let empty = rows.is_empty();
                 let w = weak.clone();
                 let w_all = weak.clone();
-                let w_lib = weak.clone();
                 let on_command: Rc<dyn Fn(RowCommand, &mut Window, &mut materiant::gpui_kit::App)> =
                     Rc::new(move |cmd, _, cx| {
                         let _ = w.update(cx, |this, cx| this.command(cmd, cx));
@@ -451,14 +492,6 @@ impl Render for MainWindow {
                                 div()
                                     .flex()
                                     .gap_1()
-                                    .child(
-                                        Button::new("open-library", i18n.t("main.library"))
-                                            .size(Size::Sm)
-                                            .text()
-                                            .on_click(move |_, window, cx| {
-                                                let _ = w_lib.update(cx, |this, cx| this.open_library(window, cx));
-                                            }),
-                                    )
                                     .when(can_pause, |d| d.child(all(Action::Pause, "all-pause", "queue.pause_all")))
                                     .when(can_resume, |d| {
                                         d.child(all(Action::Resume, "all-resume", "queue.resume_all"))
@@ -488,10 +521,7 @@ impl Render for MainWindow {
 
         let w_paste = weak.clone();
         let w_focus = weak;
-        frame
-            .child(
-                root.child(
-                    div()
+        div()
                         .id("main-page")
                         .track_focus(&self.focus)
                         .size_full()
@@ -518,9 +548,79 @@ impl Render for MainWindow {
                         .child(header)
                         .child(zone)
                         .children(tray)
-                        .child(queue),
-                ),
-            )
+                        .child(queue)
             .into_any_element()
+    }
+}
+
+impl Render for MainWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = self.t("app.name");
+        if title != self.window_title {
+            window.set_window_title(&title);
+            self.window_title = title;
+        }
+        let c = cx.theme().colors().clone();
+        let content = match &self.page {
+            Page::Main => self.render_send(cx),
+            Page::Browse { browser, .. } => browser.clone().into_any_element(),
+            Page::Library { library: Some((library, _)) } => library.clone().into_any_element(),
+            Page::Library { library: None } => self.no_phone(cx),
+            Page::AddPhone { view, .. } => view.clone().into_any_element(),
+            Page::Settings { view, .. } => view.clone().into_any_element(),
+        };
+        // Vùng kéo cửa sổ của đầu cột trái: dải phủ sau cột (như Groovex), mục bấm được nằm dưới dải nên không bị che.
+        let nav = div()
+            .relative()
+            .w(px(side_nav::WIDTH))
+            .h_full()
+            .flex_none()
+            .child(div().absolute().top_0().left_0().w_full().h(px(side_nav::HEADER_HEIGHT)).drag_region())
+            .child(div().size_full().child(self.render_nav(cx)));
+        let labels = CaptionLabels {
+            minimize: self.t("app_bar.minimize"),
+            maximize: self.t("app_bar.maximize"),
+            restore: self.t("app_bar.restore"),
+            close: self.t("app_bar.close"),
+        };
+        // Thanh trên: khung bọc là vùng kéo (nhấp đúp phóng to), ba nút `occlude` chặn kéo.
+        let bar = div()
+            .w_full()
+            .h(px(app_bar::HEIGHT))
+            .flex_none()
+            .drag_region()
+            .child(AppBar::new(window.is_maximized(), labels));
+        div()
+            .id("main-window")
+            .relative()
+            .size_full()
+            .flex()
+            .bg(c.surface)
+            .text_color(c.text)
+            .font_family(cx.theme().font_family())
+            .text_size(cx.theme().font_size())
+            .child(nav)
+            // Kiểu lưới của Groovex: các vùng sát nhau, ngăn bằng đường kẻ 1 px.
+            .child(div().w(px(1.)).h_full().flex_none().bg(c.border))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(bar)
+                    .child(div().w_full().h(px(1.)).flex_none().bg(c.border))
+                    .child(
+                        div()
+                            .id("content")
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .child(div().size_full().flex().flex_col().child(content))
+                            .child(ToastViewport::new()),
+                    ),
+            )
+            // Linux: viền tự vẽ không tự đổi cỡ được — dải kéo mép, trên cùng mọi lớp.
+            .children(crate::platform::resize_edges::overlay(window))
     }
 }

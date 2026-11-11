@@ -29,7 +29,7 @@ use interprocess::local_socket::{ListenerOptions, Name, Stream};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::config::WatchFolder;
+use crate::config::{ThemeChoice, WatchFolder};
 use crate::device::{DeviceId, DeviceState};
 use crate::i18n::LanguagePref;
 use crate::protocol::LibraryItem;
@@ -161,6 +161,14 @@ pub enum SettingsOp {
     RemoveAddress {
         address: String,
     },
+    /// Nền giao diện (sáng / tối / hệ thống). Chỉ lưu; cửa sổ tự áp ngay khi người dùng chọn.
+    SetTheme {
+        theme: ThemeChoice,
+    },
+    /// Bảng màu theo khoá preset materiant; rỗng ⇒ mặc định. Khoá lạ vẫn lưu (UI về mặc định khi vẽ).
+    SetThemePreset {
+        preset: String,
+    },
 }
 
 /// Cài đặt cho màn hình (PROTOCOL 4.5). Không token.
@@ -183,6 +191,12 @@ pub struct SettingsView {
     pub manual_addresses: Vec<String>,
     /// Điện thoại đã ghép, thứ tự ghép.
     pub devices: Vec<DeviceSetting>,
+    /// Nền giao diện (thêm sau gd1_14; vắng ⇒ hệ thống).
+    #[serde(default)]
+    pub theme: ThemeChoice,
+    /// Khoá bảng màu đã giải mặc định (`default` khi chưa chọn).
+    #[serde(default)]
+    pub theme_preset: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -883,6 +897,14 @@ mod tests {
                 r#"{"type":"settings","req":10,"op":{"op":"set_language","language":"system"}}"#,
             ),
             (
+                UiToDaemon::Settings { req: 12, op: SettingsOp::SetTheme { theme: ThemeChoice::Light } },
+                r#"{"type":"settings","req":12,"op":{"op":"set_theme","theme":"light"}}"#,
+            ),
+            (
+                UiToDaemon::Settings { req: 13, op: SettingsOp::SetThemePreset { preset: "rose-red".into() } },
+                r#"{"type":"settings","req":13,"op":{"op":"set_theme_preset","preset":"rose-red"}}"#,
+            ),
+            (
                 UiToDaemon::Settings {
                     req: 11,
                     op: SettingsOp::RenameDevice { device: dev.clone(), name: "Mẹ".into() },
@@ -910,6 +932,8 @@ mod tests {
                 alias: Some("Mẹ".into()),
                 state: DeviceState::Online,
             }],
+            theme: ThemeChoice::Dark,
+            theme_preset: "deeppink".into(),
         };
         let replies: Vec<(DaemonToUi, &str)> = vec![
             (
@@ -918,7 +942,8 @@ mod tests {
                     r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
                     r#""downloadDirCustom":true,"speedLimitMbPerSec":null,"autostart":true,"autostartError":null,"#,
                     r#""watchFolder":{"enabled":false},"manualAddresses":[],"#,
-                    r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}]}}"#
+                    r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}],"#,
+                    r#""theme":"dark","themePreset":"deeppink"}}"#
                 ),
             ),
             (DaemonToUi::OpenSettings, r#"{"type":"open_settings"}"#),

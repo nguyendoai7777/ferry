@@ -39,7 +39,31 @@ pub struct Config {
     /// để điện thoại vẫn hiện khi mạng chặn mDNS (gd1_12).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub manual_addresses: Vec<String>,
+    /// Nền giao diện của cửa sổ: sáng / tối / theo hệ thống (mặc định). Chỉ `ferry-ui` đọc để vẽ.
+    pub theme: ThemeChoice,
+    /// Bảng màu: khoá preset của materiant (`default`, `deeppink`, `rose-red`, `rebecca-purple`); vắng / rỗng ⇒
+    /// [`DEFAULT_THEME_PRESET`], khoá lạ ⇒ UI về mặc định. Dùng [`Config::theme_preset`].
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub theme_preset: String,
 }
+
+/// Nền giao diện (`"theme": "light" | "dark" | "system"`), độc lập với bảng màu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+impl ThemeChoice {
+    /// Thứ tự hiện trong Cài đặt → Giao diện.
+    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::Light, ThemeChoice::Dark, ThemeChoice::System];
+}
+
+/// Bảng màu mặc định (theme gốc của materiant).
+pub const DEFAULT_THEME_PRESET: &str = "default";
 
 /// Một thư mục theo dõi: tệp mới ổn định trong đó tự gửi sang điện thoại (gd1_13).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -69,6 +93,11 @@ pub struct PairedDevice {
 }
 
 impl Config {
+    /// Khoá bảng màu đang dùng: rỗng ⇒ [`DEFAULT_THEME_PRESET`].
+    pub fn theme_preset(&self) -> &str {
+        if self.theme_preset.trim().is_empty() { DEFAULT_THEME_PRESET } else { &self.theme_preset }
+    }
+
     /// Thư mục tải về đang dùng: `downloadDir` khi đặt (không rỗng), không thì mặc định của OS.
     pub fn download_dir(&self) -> PathBuf {
         self.download_dir.clone().filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_download_dir)
@@ -269,11 +298,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let defaults = serde_json::to_value(Config::default()).unwrap();
-        for key in ["speedLimitMbPerSec", "manualAddresses", "downloadDir"] {
+        for key in ["speedLimitMbPerSec", "manualAddresses", "downloadDir", "themePreset"] {
             assert!(defaults.get(key).is_none(), "{key} stays out of the file when unset");
         }
         assert_eq!(defaults["autostart"], false);
         assert_eq!(defaults["watchFolder"], serde_json::json!({ "enabled": false }));
+        assert_eq!(defaults["theme"], "system");
+        assert_eq!(Config::default().theme_preset(), DEFAULT_THEME_PRESET);
 
         let config = Config {
             client_id: "c".into(),
@@ -283,6 +314,8 @@ mod tests {
             autostart: true,
             watch_folder: WatchFolder { enabled: true, path: Some(PathBuf::from("/tmp/theo dõi")) },
             manual_addresses: vec!["192.168.1.9:8080".into(), "[fd12::5]:8080".into()],
+            theme: ThemeChoice::Dark,
+            theme_preset: "rose-red".into(),
             devices: vec![PairedDevice {
                 id: DeviceId("a1".into()),
                 name: "Pixel 8".into(),
@@ -300,6 +333,7 @@ mod tests {
         assert_eq!(v["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(v["downloadDir"], "/tmp/nhận");
         assert_eq!(v["language"], "en");
+        assert_eq!((v["theme"].as_str(), v["themePreset"].as_str()), (Some("dark"), Some("rose-red")));
         assert_eq!(load(&path).unwrap(), config);
         assert_eq!(config.speed_limit_bytes(), Some(5 * 1024 * 1024));
         assert_eq!(Config { speed_limit_mb_per_sec: Some(0), ..Config::default() }.speed_limit_bytes(), None);

@@ -1,4 +1,5 @@
-//! Cửa sổ cài đặt (gd1_12, PROTOCOL 4.5) — dựng theo `plan/ferry-gd1_12_settings.md` mục 7.
+//! Trang Cài đặt (gd1_12, PROTOCOL 4.5) — dựng theo `plan/ferry-gd1_12_settings.md` mục 7. Nằm trong cửa sổ chính, mở
+//! bằng mục Cài đặt ở đáy cột trái (hoặc menu khay "Cài đặt…"); mục Giao diện (nền + bảng màu) như Groovex.
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
@@ -6,80 +7,36 @@
 
 use std::time::Duration;
 
-use ferry_core::config::{self, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
+use ferry_core::config::{MAX_SPEED_LIMIT_MB_PER_SEC, ThemeChoice, WatchFolder};
 use ferry_core::device::{DeviceId, DeviceState};
-use ferry_core::i18n::{I18n, LanguagePref};
+use ferry_core::i18n::{I18n, Language, LanguagePref};
 use ferry_core::ipc::{CommandError, DeviceSetting, PhoneOp, SettingsOp, SettingsView};
-use ferry_core::paths;
+use materiant::button::segmented::SegmentedButtons;
 use materiant::button::{Button, Size};
 use materiant::card::{Card, CardGroup, CardItem};
+use materiant::field::FieldLabel;
 use materiant::field::input::TextField;
 use materiant::field::number::NumberField;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, AnyWindowHandle, App, AppContext, Bounds, ClickEvent, Context, Entity, Focusable, Global, IntoElement,
-    PathPromptOptions, Render, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div, px,
-    size,
+    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, Focusable, FontWeight, IntoElement,
+    PathPromptOptions, Render, SharedString, WeakEntity, Window, div, px,
 };
 use materiant::overlay::dialog::{Dialog, DialogHandle};
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
 use materiant::switch::Switch;
 use materiant::theme::ActiveTheme;
+use materiant::theme::picker::ThemePicker;
 use std::path::PathBuf;
 
 use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
 
-const WINDOW_SIZE: (f32, f32) = (560., 640.);
-const WINDOW_MIN_SIZE: (f32, f32) = (480., 420.);
 /// Tốc độ gợi ý khi bật giới hạn mà ô số còn trống / sai.
 const DEFAULT_SPEED_MB_PER_SEC: u32 = 10;
 /// Gõ xong chừng này mới gửi giới hạn tốc độ (không gửi từng ký tự).
 const SPEED_DEBOUNCE: Duration = Duration::from_millis(700);
-
-/// Handle cửa sổ cài đặt đang mở — gọi `open` lần hai thì kích hoạt cửa sổ này thay vì mở thêm.
-struct OpenWindow(AnyWindowHandle);
-impl Global for OpenWindow {}
-
-/// Mở cửa sổ cài đặt, hoặc đưa lên trước nếu đang mở.
-pub fn open(cx: &mut App) {
-    if let Some(handle) = cx.try_global::<OpenWindow>().map(|g| g.0)
-        && cx.update_window(handle, |_, window, _| window.activate_window()).is_ok()
-    {
-        cx.activate(true);
-        return;
-    }
-    let i18n = initial_i18n();
-    let title: SharedString = i18n.t("settings.window_title").to_owned().into();
-    let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
-        window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
-        app_id: Some("ferry".into()),
-        window_decorations: super::title_bar::requested_decorations(),
-        ..materiant::window::window_options()
-    };
-    match gpui_kit::open_window(options, cx, move |window, cx| cx.new(|cx| SettingsPage::new(i18n, window, cx))) {
-        Ok((handle, _)) => {
-            cx.set_global(OpenWindow(handle));
-            cx.activate(true);
-        }
-        Err(err) => log::error!("cannot open the settings window: {err:#}"),
-    }
-}
-
-/// Ngôn ngữ trước khi daemon trả lời: đọc `config.json` (chỉ đọc), giống cửa sổ chính.
-fn initial_i18n() -> I18n {
-    let language = paths::config_file()
-        .and_then(|p| config::load(&p))
-        .map_err(|e| log::warn!("settings: config: {e}; using defaults"))
-        .unwrap_or_default()
-        .language
-        .resolve();
-    I18n::new(language)
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Logic thuần (test được)
@@ -87,6 +44,7 @@ fn initial_i18n() -> I18n {
 /// Mục của màn: mỗi mục có cờ `busy` và dòng lỗi riêng.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
+    Appearance,
     Devices,
     Files,
     Network,
@@ -95,7 +53,7 @@ enum Section {
 }
 
 impl Section {
-    const COUNT: usize = 5;
+    const COUNT: usize = 6;
 
     fn ix(self) -> usize {
         self as usize
@@ -147,7 +105,7 @@ fn error_key(section: Section, error: &CallError) -> (&'static str, Option<Strin
             Section::Advanced => "settings.error.invalid_address",
             Section::Network => "settings.error.invalid_speed",
             Section::Devices => "settings.error.invalid_name",
-            Section::System => "settings.error.internal",
+            Section::System | Section::Appearance => "settings.error.internal",
         },
         _ => "settings.error.internal",
     };
@@ -170,6 +128,14 @@ fn language_from_index(ix: usize) -> LanguagePref {
     }
 }
 
+fn theme_choice_key(choice: ThemeChoice) -> &'static str {
+    match choice {
+        ThemeChoice::Light => "settings.appearance.mode_light",
+        ThemeChoice::Dark => "settings.appearance.mode_dark",
+        ThemeChoice::System => "settings.appearance.mode_system",
+    }
+}
+
 fn device_state_key(state: DeviceState) -> &'static str {
     match state {
         DeviceState::Online => "settings.devices.state_online",
@@ -182,7 +148,12 @@ fn device_state_key(state: DeviceState) -> &'static str {
 // ---------------------------------------------------------------------------------------------------------------
 // View
 
-struct SettingsPage {
+/// Trang báo cửa sổ chính: ngôn ngữ vừa đổi ⇒ dựng lại chữ của cột trái, thanh trên.
+pub enum SettingsEvent {
+    LanguageChanged(Language),
+}
+
+pub struct SettingsPage {
     client: SettingsClient,
     i18n: I18n,
     load: Load,
@@ -200,10 +171,14 @@ struct SettingsPage {
     speed_gen: u64,
     /// Ô tốc độ đổi lúc lệnh trước còn chạy ⇒ gửi lại ngay khi xong.
     speed_dirty: bool,
+    /// Giao diện vừa đổi trên cửa sổ, chưa gửi daemon.
+    appearance_dirty: bool,
 }
 
+impl EventEmitter<SettingsEvent> for SettingsPage {}
+
 impl SettingsPage {
-    fn new(i18n: I18n, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
+    pub fn new(i18n: I18n, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
         let this: WeakEntity<SettingsPage> = cx.entity().downgrade();
         let speed = cx.new(|cx| {
             let this = this.clone();
@@ -245,6 +220,7 @@ impl SettingsPage {
             forget_target: None,
             speed_gen: 0,
             speed_dirty: false,
+            appearance_dirty: false,
         };
         page.reload(window, cx);
         page
@@ -288,8 +264,8 @@ impl SettingsPage {
         let language = view.language.resolve();
         if language != self.i18n.language() {
             self.i18n = I18n::new(language);
-            window.set_window_title(self.i18n.t("settings.window_title"));
             self.errors = Default::default();
+            cx.emit(SettingsEvent::LanguageChanged(language));
         }
         if sync_inputs {
             let value = f64::from(view.speed_limit_mb_per_sec.unwrap_or(DEFAULT_SPEED_MB_PER_SEC));
@@ -297,6 +273,12 @@ impl SettingsPage {
                 field.set_value(value, window, cx);
                 field.set_error(None, cx);
             });
+        }
+        // Lựa chọn giao diện chưa lưu xong: giữ cái người dùng đang thấy, không giật về giá trị cũ của daemon.
+        let mut view = view;
+        if let Some(old) = self.data.as_ref().filter(|_| self.busy[Section::Appearance.ix()] || self.appearance_dirty) {
+            view.theme = old.theme;
+            view.theme_preset = old.theme_preset.clone();
         }
         let limited = view.speed_limit_mb_per_sec.is_some();
         self.speed.update(cx, |field, cx| field.set_disabled(!limited, cx));
@@ -356,6 +338,9 @@ impl SettingsPage {
                 self.errors[section.ix()] = Some(text.into());
             }
         }
+        if section == Section::Appearance {
+            self.flush_appearance(window, cx);
+        }
         if section == Section::Network && std::mem::take(&mut self.speed_dirty) {
             self.apply_speed(window, cx);
         }
@@ -364,6 +349,41 @@ impl SettingsPage {
 
     fn run_op(&mut self, section: Section, op: SettingsOp, window: &mut Window, cx: &mut Context<Self>) {
         self.run(section, After::Nothing, move |c| c.call(Request::Settings(op)).and_then(expect_settings), window, cx);
+    }
+
+    // ----- giao diện -----
+
+    /// Áp ngay trên cửa sổ (không chờ daemon), rồi lưu qua IPC. Lưu hỏng thì vẫn giữ giao diện đã chọn tới khi đóng cửa sổ.
+    fn set_appearance(&mut self, theme: ThemeChoice, preset: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(data) = self.data.as_mut() else { return };
+        if data.theme == theme && data.theme_preset == preset {
+            return;
+        }
+        data.theme = theme;
+        data.theme_preset = preset.clone();
+        crate::appearance::apply(theme, &preset, cx);
+        self.appearance_dirty = true;
+        self.flush_appearance(window, cx);
+    }
+
+    /// Lưu lựa chọn giao diện đang hiện. Bấm lúc lệnh trước còn chạy ⇒ lưu tiếp khi nó xong (lựa chọn sau cùng thắng).
+    fn flush_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy[Section::Appearance.ix()] || !self.appearance_dirty {
+            return;
+        }
+        let Some(data) = self.data.as_ref() else { return };
+        self.appearance_dirty = false;
+        let (theme, preset) = (data.theme, data.theme_preset.clone());
+        self.run(
+            Section::Appearance,
+            After::Nothing,
+            move |c| {
+                c.call(Request::Settings(SettingsOp::SetTheme { theme }))?;
+                c.call(Request::Settings(SettingsOp::SetThemePreset { preset })).and_then(expect_settings)
+            },
+            window,
+            cx,
+        );
     }
 
     // ----- thiết bị -----
@@ -538,6 +558,43 @@ impl SettingsPage {
             )));
         }
         div().flex_1().flex().items_center().justify_center().p_6().child(column)
+    }
+
+    /// Nền (Sáng / Tối / Theo hệ thống) + bảng màu (bốn preset của materiant), như Cài đặt → Chung của Groovex. Hai lựa
+    /// chọn độc lập, áp ngay. Không khoá khi đang lưu: bấm liên tiếp chỉ đổi lựa chọn, lệnh lưu sau cùng thắng.
+    fn render_appearance(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
+        let presets = crate::appearance::presets(&self.i18n);
+        let preset_ix = crate::appearance::preset_index(&data.theme_preset);
+        let theme = data.theme;
+        let mode = SegmentedButtons::new("settings-theme-mode")
+            .items(ThemeChoice::ALL.map(|choice| self.t(theme_choice_key(choice))))
+            .selected(ThemeChoice::ALL.iter().position(|c| *c == theme))
+            .on_change(cx.listener(move |page, ix: &usize, window, cx| {
+                let preset = page.data.as_ref().map(|d| d.theme_preset.clone()).unwrap_or_default();
+                page.set_appearance(ThemeChoice::ALL[*ix], preset, window, cx);
+            }));
+        let keys: Vec<String> = presets.iter().map(|p| p.key.to_string()).collect();
+        let picker = ThemePicker::new("settings-theme-preset").items(presets).selected(preset_ix).on_change(
+            cx.listener(move |page, ix: &usize, window, cx| {
+                let theme = page.data.as_ref().map_or(ThemeChoice::System, |d| d.theme);
+                page.set_appearance(theme, keys[*ix].clone(), window, cx);
+            }),
+        );
+        let labeled = |label: SharedString, body: gpui_kit::AnyElement| {
+            div().flex().flex_col().child(FieldLabel::new(label).weight(FontWeight::NORMAL)).child(body)
+        };
+        Card::new("settings-appearance")
+            .title(self.t("settings.appearance.title"))
+            .child(
+                div()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(labeled(self.t("settings.appearance.mode"), mode.into_any_element()))
+                    .child(labeled(self.t("settings.appearance.theme_preset"), picker.into_any_element())),
+            )
+            .children(self.error_line(Section::Appearance, cx))
     }
 
     fn render_devices(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
@@ -791,7 +848,6 @@ impl SettingsPage {
             .children(self.error_line(Section::Advanced, cx))
     }
 
-    /// Linux (Mutter không có SSD): GPUI rơi về CSD ⇒ tự vẽ thanh tiêu đề kéo được + nút đóng.
     fn render_dialogs(&self, cx: &mut Context<Self>) -> (Dialog, Dialog) {
         let muted = cx.theme().colors().muted;
         let caption = cx.theme().caption_size();
@@ -859,19 +915,8 @@ fn setting_row(cx: &App, label: SharedString, hint: Option<SharedString>, contro
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (colors, font_family, font_size) = {
-            let theme = cx.theme();
-            (theme.colors().clone(), theme.font_family(), theme.font_size())
-        };
-        let root = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(colors.surface)
-            .text_color(colors.text)
-            .font_family(font_family)
-            .text_size(font_size);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let root = div().size_full().flex().flex_col();
         let body = match (&self.load, self.data.clone()) {
             (Load::Ready, Some(data)) => {
                 // D-16: khung cuộn chạm mép cửa sổ; đệm ngang nằm trong nội dung, bằng nhau hai bên, ≥ thumb.
@@ -880,6 +925,7 @@ impl Render for SettingsPage {
                     .flex_col()
                     .gap_4()
                     .py_5()
+                    .child(self.render_appearance(&data, cx))
                     .child(self.render_devices(&data, cx))
                     .child(self.render_files(&data, cx))
                     .child(self.render_network(&data, cx))
@@ -897,21 +943,12 @@ impl Render for SettingsPage {
             _ => self.render_message(self.t("settings.loading"), false, cx).into_any_element(),
         };
         let (rename, forget) = self.render_dialogs(cx);
-        let bar = super::title_bar::title_bar(
-            "settings-close",
-            self.t("settings.window_title"),
-            self.t("settings.close"),
-            window,
-            cx,
-        );
-        root.children(bar).child(body).child(rename).child(forget)
+        root.child(body).child(rename).child(forget)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ferry_core::i18n::Language;
-
     use super::*;
 
     #[test]
@@ -967,6 +1004,13 @@ mod tests {
                 assert_ne!(i18n.t(key), key.as_str(), "missing `{key}` for {lang:?}");
             }
         }
+    }
+
+    #[test]
+    fn appearance_errors_and_choices_have_keys() {
+        assert_eq!(error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)).0, "settings.error.internal");
+        let keys: Vec<_> = ThemeChoice::ALL.iter().map(|c| theme_choice_key(*c)).collect();
+        assert_eq!(keys.len(), 3);
     }
 
     #[test]

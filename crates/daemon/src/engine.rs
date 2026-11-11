@@ -640,6 +640,19 @@ impl Engine {
                 self.spawn_probe(Some(outbox.clone()), req, addr, Some(address.trim().to_owned()));
                 return None;
             }
+            SettingsOp::SetTheme { theme } => {
+                if self.config.theme != theme {
+                    self.config.theme = theme;
+                    self.persist();
+                }
+            }
+            SettingsOp::SetThemePreset { preset } => {
+                let preset = preset.trim().to_owned();
+                if self.config.theme_preset != preset {
+                    self.config.theme_preset = preset;
+                    self.persist();
+                }
+            }
             SettingsOp::RemoveAddress { address } => {
                 let before = self.config.manual_addresses.len();
                 self.config.manual_addresses.retain(|a| a != address.trim());
@@ -695,6 +708,8 @@ impl Engine {
                     }
                 })
                 .collect(),
+            theme: c.theme,
+            theme_preset: c.theme_preset().to_owned(),
         }
     }
 
@@ -1895,6 +1910,13 @@ mod tests {
         let zero = ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(0) }).await;
         assert_eq!(zero, Outcome::Failed { error: CommandError::InvalidInput });
         assert!(view(ask(e, SettingsOp::SetAutostart { enabled: true }).await).autostart);
+
+        let v = view(ask(e, SettingsOp::Get).await);
+        assert_eq!((v.theme, v.theme_preset.as_str()), (ferry_core::config::ThemeChoice::System, "default"));
+        let v = view(ask(e, SettingsOp::SetTheme { theme: ferry_core::config::ThemeChoice::Dark }).await);
+        assert_eq!(v.theme, ferry_core::config::ThemeChoice::Dark);
+        let v = view(ask(e, SettingsOp::SetThemePreset { preset: "rose-red".into() }).await);
+        assert_eq!((v.theme, v.theme_preset.as_str()), (ferry_core::config::ThemeChoice::Dark, "rose-red"));
 
         let watch = WatchFolder { enabled: true, path: Some(tmp.path().to_path_buf()) };
         assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: watch.clone() }).await).watch_folder, watch);

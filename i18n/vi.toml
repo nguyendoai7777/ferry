@@ -63,13 +63,28 @@ err_unknown_interface = "Không thấy card mạng {name} trên máy tính"
 err_invalid_address = "Địa chỉ chưa đúng, thử dạng 192.168.1.20:8080"
 err_internal = "Có lỗi, xem nhật ký để biết thêm"
 
+[nav]
+send = "Gửi tệp"
+library = "Thư viện điện thoại"
+settings = "Cài đặt"
+
+[app_bar]
+minimize = "Thu nhỏ"
+maximize = "Phóng to"
+restore = "Khôi phục"
+close = "Đóng"
+
+[theme_preset]
+default = "Mặc định"
+deeppink = "Hồng đậm"
+rose_red = "Hồng & đỏ"
+rebecca_purple = "Tím Rebecca"
+
 [window]
 placeholder = "Thả video vào đây để gửi sang điện thoại"
 
 [main]
 add_phone = "Thêm điện thoại"
-settings = "Cài đặt"
-close = "Đóng cửa sổ"
 no_phone = "Chưa có điện thoại nào"
 no_phone_hint = "Ghép một điện thoại để bắt đầu gửi video."
 phone_online = "Đang kết nối"
@@ -101,7 +116,6 @@ added = "Đã thêm {count} tệp vào hàng đợi."
 added_one = "Đã thêm {count} tệp vào hàng đợi."
 add_failed = "Không thêm được vào hàng đợi."
 no_daemon = "Chưa nối được với Ferry ở khay hệ thống."
-library = "Thư viện điện thoại"
 
 [queue]
 title = "Hàng đợi"
@@ -202,12 +216,18 @@ drop_hint = "Thả hoặc dán tệp để gửi vào thư mục đang mở."
 drop_other = "Không gửi vào nhóm Khác được — mở một thư mục."
 
 [settings]
-window_title = "Cài đặt — Ferry"
-close = "Đóng"
 loading = "Đang tải cài đặt…"
 retry = "Thử lại"
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
 load_failed = "Không đọc được cài đặt — thử lại sau ít phút"
+
+[settings.appearance]
+title = "Giao diện"
+mode = "Nền"
+mode_light = "Sáng"
+mode_dark = "Tối"
+mode_system = "Theo hệ thống"
+theme_preset = "Bảng màu"
 
 [settings.devices]
 title = "Điện thoại đã ghép"

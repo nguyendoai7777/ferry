@@ -63,13 +63,28 @@ err_unknown_interface = "Network card {name} was not found on this computer"
 err_invalid_address = "That address looks wrong, try 192.168.1.20:8080"
 err_internal = "Something went wrong, see the log for details"
 
+[nav]
+send = "Send files"
+library = "Phone library"
+settings = "Settings"
+
+[app_bar]
+minimize = "Minimize"
+maximize = "Maximize"
+restore = "Restore"
+close = "Close"
+
+[theme_preset]
+default = "Default"
+deeppink = "Deeppink"
+rose_red = "Rose & Red"
+rebecca_purple = "Rebecca Purple"
+
 [window]
 placeholder = "Drop videos here to send them to your phone"
 
 [main]
 add_phone = "Add phone"
-settings = "Settings"
-close = "Close window"
 no_phone = "No phone yet"
 no_phone_hint = "Pair a phone to start sending videos."
 phone_online = "Connected"
@@ -101,7 +116,6 @@ added = "Added {count} files to the queue."
 added_one = "Added {count} file to the queue."
 add_failed = "Could not add to the queue."
 no_daemon = "Cannot reach Ferry in the system tray."
-library = "Phone library"
 
 [queue]
 title = "Queue"
@@ -202,12 +216,18 @@ drop_hint = "Drop or paste files to send them into the open folder."
 drop_other = "You cannot send into Other — open a folder."
 
 [settings]
-window_title = "Settings — Ferry"
-close = "Close"
 loading = "Loading settings…"
 retry = "Try again"
 no_daemon = "Ferry isn't running — open Ferry, then try again"
 load_failed = "Couldn't read the settings — try again in a moment"
+
+[settings.appearance]
+title = "Appearance"
+mode = "Background"
+mode_light = "Light"
+mode_dark = "Dark"
+mode_system = "System"
+theme_preset = "Color theme"
 
 [settings.devices]
 title = "Paired phones"

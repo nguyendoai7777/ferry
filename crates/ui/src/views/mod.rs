@@ -2,6 +2,8 @@
 #![allow(clippy::type_complexity)] // callback `Rc<dyn Fn(..)>` của các view con: một kiểu mỗi chỗ, alias không làm rõ hơn
 
 pub mod add_phone;
+/// Thanh trên: vùng kéo + ba nút cửa sổ (bê từ Groovex).
+pub mod app_bar;
 pub mod device_header;
 pub mod drop_zone;
 pub mod main_window;
@@ -9,7 +11,7 @@ pub mod phone_browser;
 pub mod phone_library;
 pub mod queue_list;
 pub mod send_tray;
-/// Cửa sổ cài đặt riêng (gd1_12).
+/// Trang Cài đặt trong cửa sổ chính (gd1_12; vỏ Groovex).
 pub mod settings;
-/// Thanh tiêu đề tự vẽ khi hệ thống không cấp viền (GNOME Wayland).
-pub mod title_bar;
+/// Cột điều hướng trái (theo Groovex).
+pub mod side_nav;
