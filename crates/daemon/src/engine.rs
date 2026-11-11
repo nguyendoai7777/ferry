@@ -27,7 +27,7 @@ use ferry_core::ipc::{
     QUEUED_IN_SNAPSHOT, QueueOp, SCAN_MIN_INTERVAL_SECS, SettingsOp, SettingsView, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
-use ferry_core::protocol::{Info, Secret};
+use ferry_core::protocol::{Info, Secret, feature};
 use ferry_core::queue::state::PauseReason;
 use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
 use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
@@ -155,6 +155,9 @@ struct Replaced {
 
 /// Hai lượt quét thưa cho máy đã ghép Offline cách nhau ít nhất chừng này (PROTOCOL 6.2).
 const OFFLINE_SCAN_EVERY: Duration = Duration::from_secs(300);
+/// Máy Online chỉ đọc `info` lúc nối ⇒ `features` (`browse`, `dirs`) đổi sau đó (bật công tắc, cấp / thu hồi quyền) PC không
+/// biết. Mở / làm mới màn duyệt điện thoại (`LibraryOp::List`, `Dirs`) đọc lại `info`, mỗi máy cách nhau ít nhất chừng này.
+const INFO_REFRESH_EVERY: Duration = Duration::from_secs(3);
 
 enum Internal {
     /// Nối thiết bị có token xong (`probe_device`).
@@ -183,6 +186,12 @@ enum Internal {
     LinkFailed {
         device: DeviceId,
         addr: SocketAddr,
+    },
+    /// `info` đọc lại của máy đang Online (kèm token) — cập nhật `features`, `paired: false` ⇒ cần ghép lại.
+    InfoRefreshed {
+        device: DeviceId,
+        addr: SocketAddr,
+        info: Info,
     },
     /// `info` của địa chỉ nhập tay. `outbox = None` ⇒ địa chỉ đã lưu, hỏi lúc khởi động (không ai chờ trả lời).
     /// `remember` ⇒ lệnh cài đặt `AddAddress`: trả lời được thì lưu chuỗi này vào `manualAddresses`.
@@ -307,6 +316,8 @@ struct Engine {
     last_scan: Option<Instant>,
     /// Lượt thưa (máy Offline) bắt đầu gần nhất — cách nhau ít nhất [`OFFLINE_SCAN_EVERY`].
     last_offline_scan: Option<Instant>,
+    /// Lần đọc lại `info` gần nhất của từng máy Online ([`INFO_REFRESH_EVERY`]).
+    info_refreshed: HashMap<DeviceId, Instant>,
 }
 
 struct Subscriber {
@@ -374,6 +385,7 @@ impl Engine {
             full_scan_wanted: false,
             last_scan: None,
             last_offline_scan: None,
+            info_refreshed: HashMap::new(),
         };
         if browser.is_some() {
             engine.firewall = firewall::detect(&engine.firewall_marker());
@@ -626,6 +638,7 @@ impl Engine {
                     Ok(c) => c,
                     Err(e) => return Some(Err(e)),
                 };
+                self.refresh_info(&device, &client);
                 let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
                     let r = client.list().await.map(|items| Outcome::Library { items });
@@ -639,11 +652,17 @@ impl Engine {
                     Ok(c) => c,
                     Err(e) => return Some(Err(e)),
                 };
+                self.refresh_info(&device, &client);
                 let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
                     let r = client.dirs(&path).await.map(|listing| Outcome::Dirs { listing });
                     let r = r.map_err(|e| match e {
                         ClientError::NotFound | ClientError::BadRequest => CommandError::InvalidInput,
+                        // Công tắc tắt / mất quyền (§6.11): đọc lại `info` ngay để UI về chế độ dựng từ `list`.
+                        ClientError::WrongPin => {
+                            spawn_info_refresh(&tx, &device, &client);
+                            CommandError::InvalidInput
+                        }
                         e => read_error(&tx, &device, &client, "dirs", e),
                     });
                     reply_to(&outbox, req, r);
@@ -1052,6 +1071,16 @@ impl Engine {
         }
     }
 
+    /// Đọc lại `info` của máy Online (nền, không ai chờ), mỗi máy cách nhau ít nhất [`INFO_REFRESH_EVERY`].
+    fn refresh_info(&mut self, device: &DeviceId, client: &Arc<PhoneClient>) {
+        let now = Instant::now();
+        if self.info_refreshed.get(device).is_some_and(|t| now.duration_since(*t) < INFO_REFRESH_EVERY) {
+            return;
+        }
+        self.info_refreshed.insert(device.clone(), now);
+        spawn_info_refresh(&self.internal_tx, device, client);
+    }
+
     fn online_client(&self, device: &DeviceId) -> Result<Arc<PhoneClient>, CommandError> {
         self.require_paired(device)?;
         let runner = &self.runners[device];
@@ -1287,6 +1316,30 @@ impl Engine {
                     log::info!("engine: mDNS allowed in the firewall, browsing again");
                 }
                 reply_to(&outbox, req, Ok(Outcome::Firewall { result }));
+            }
+            Internal::InfoRefreshed { device, addr, info } => {
+                // Đã Offline / quên / đổi địa chỉ trong lúc hỏi ⇒ bỏ; `Connected` lần sau đọc `info` mới.
+                let online = self.devices.get(&device).is_some_and(|d| d.state == DeviceState::Online);
+                if !online || info.id != device {
+                    return;
+                }
+                let before = self.devices.get(&device).map(|d| d.features.clone()).unwrap_or_default();
+                let ev = self.devices.info_ok(&info, addr, now);
+                self.on_device_events(ev);
+                if before != info.features {
+                    log::info!("engine: {device} features {:?} -> {:?}", before, info.features);
+                    let dirs = info.has_feature(feature::DIRS);
+                    if let Some(r) = self.runners.get(&device) {
+                        r.link.send_if_modified(|l| match l {
+                            Some(l) if l.dirs != dirs && l.addr() == addr => {
+                                l.dirs = dirs;
+                                true
+                            }
+                            _ => false,
+                        });
+                    }
+                }
+                self.dirty = true;
             }
             Internal::LinkFailed { device, addr } => {
                 log::info!("engine: lost {device} at {addr} (library), reconnecting");
@@ -1805,6 +1858,20 @@ fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// `GET /info` bằng client kèm token của máy Online ⇒ [`Internal::InfoRefreshed`]. Lỗi mạng bỏ qua: lệnh đang chạy cùng
+/// lúc (`list` / `dirs`) tự báo mất kết nối.
+fn spawn_info_refresh(tx: &mpsc::UnboundedSender<Internal>, device: &DeviceId, client: &Arc<PhoneClient>) {
+    let (tx, device, client) = (tx.clone(), device.clone(), client.clone());
+    tokio::spawn(async move {
+        match client.info().await {
+            Ok(info) => {
+                let _ = tx.send(Internal::InfoRefreshed { device, addr: client.addr(), info });
+            }
+            Err(e) => log::debug!("engine: refresh info {device}: {e}"),
+        }
+    });
+}
+
 /// Lỗi đọc thư viện / thư mục điện thoại cho UI. Điện thoại tắt Sync WiFi giữa chừng (connection refused) ⇒ đừng để
 /// UI tin "Đang kết nối": bỏ địa chỉ, nối lại; UI thấy Offline ngay thay vì "Không đọc được danh sách".
 fn read_error(
@@ -2120,6 +2187,34 @@ mod tests {
             &got.last().unwrap().1,
             DaemonToUi::Reply { outcome: Outcome::Failed { error: CommandError::InvalidInput }, .. }
         ));
+        rig.engine.shutdown();
+    }
+
+    /// W-7: máy đã Online rồi mới bật "Cho máy tính duyệt bộ nhớ" ⇒ mở màn duyệt (`List`) đọc lại `info`, ảnh chụp có
+    /// `browse`; tắt lại ⇒ `Dirs` nhận `403` ⇒ `browse` mất (gặp thật 11/11/2026: PC giữ `features` lúc ghép mãi).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn online_phone_features_refresh_when_browsing() {
+        let has_browse = |m: &DaemonToUi, want: bool| {
+            matches!(m, DaemonToUi::Snapshot(s) if s.devices.iter().any(|d| d.id == device()
+                && d.state == DeviceState::Online && d.features.iter().any(|f| f == feature::BROWSE) == want))
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, move |m| has_browse(m, false)).await;
+
+        phone.set_features(&["ipv6", "dirs", "browse"]);
+        let op = LibraryOp::List { device: device() };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 3, op: Op::Library(op) });
+        let (rx, _) = collect(rx, move |m| has_browse(m, true)).await;
+
+        phone.set_features(&["ipv6", "dirs"]);
+        // Còn trong `INFO_REFRESH_EVERY` của lần trên: chỉ `403` của `dirs` mới đọc lại `info`.
+        let op = LibraryOp::Dirs { device: device(), path: String::new() };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 4, op: Op::Library(op) });
+        let (_rx, _) = collect(rx, move |m| has_browse(m, false)).await;
         rig.engine.shutdown();
     }
 

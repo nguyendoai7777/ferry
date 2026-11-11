@@ -120,6 +120,11 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   Điện thoại sang subnet chưa từng thấy thì chỉ còn nhập tay (không quét cả `172.16/12`).
 - **Vòng "đang dò" có vòng nền** (`add_phone::searching_spinner`): cung không xác định của `ProgressCircular` có khung chỉ
   ~10° — ở 24 px (hoặc lúc cửa sổ không vẽ lại) trông như gạch hồng lệch; chồng một `ProgressCircular` `value(0)` làm track.
+- **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
+  vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
+  chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,
+  cách nhau ≥ 3 s mỗi máy; `Dirs` nhận `403` thì đọc ngay) ⇒ `InfoRefreshed` cập nhật `features` + `Link::dirs`; UI đổi
+  chế độ khi `browses_storage` đổi. Thêm `feature` mới cần PC phản ứng ⇒ đọc theo đường này, đừng tin `features` lúc ghép.
 - **Tường lửa chặn mDNS** (W-6, `ferry_core::firewall`): Linux `ufw` bật (`/etc/ufw/ufw.conf` `ENABLED=yes`, đọc không cần root)
   và chưa có dấu đã cho phép ⇒ `Snapshot::mdnsFirewall` ngay từ ảnh chụp đầu (tắt khi mDNS thấy điện thoại) ⇒ vào màn Thêm điện
   thoại là tự mở hộp thoại xin quyền (một lần mỗi lần mở màn; "Để sau" còn nút mở lại) ⇒ `PhoneOp::AllowMdnsFirewall` ⇒ `pkexec /bin/sh -c "<ufw> allow in proto udp to 224.0.0.251 port 5353 comment 'ferry mDNS'

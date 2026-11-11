@@ -359,6 +359,8 @@ Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **c�
   - Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự) · `404` không có thư mục đó · `403` chưa / hết quyền.
 - **Ghi**: `POST /api/v1/uploads` với `X-File-Dir` trỏ vào `Android` hoặc con của nó, hoặc thư mục điện thoại không
   ghi được ⇒ `403` (PC: Failed, không thử lại). Thư mục chưa có ⇒ tạo khi commit như §6.9.
+- PC đọc lại `info` (kèm Bearer) mỗi lần mở / làm mới trình duyệt điện thoại và khi `dirs` trả `403` ⇒ bật / tắt công
+  tắc hay cấp / thu hồi quyền lúc đã Online có hiệu lực ở lần mở kế, không cần nối lại.
 - PC: có `browse` ⇒ trình duyệt điện thoại (§4) dựng từ `dirs` (mở thư mục nào liệt kê thư mục đó, nhớ các lần đã
   đọc), "Thư mục mới" vẫn là thư mục ảo tới khi có tệp; không `browse` ⇒ dựng từ `list` như cũ. Thư mục đích nhớ theo
   từng chế độ (đổi chế độ ⇒ về gốc), vì cùng một chuỗi `dir` mang nghĩa khác nhau.
