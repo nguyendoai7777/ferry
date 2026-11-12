@@ -250,9 +250,9 @@ mod tests {
         let items = [item(1, "a", 10, UploadState::Queued)];
         let st = status(&summarize(&items, devices(&[], &[])), &HashMap::new(), &en());
         assert_eq!(st.mode, TrayMode::Idle);
-        assert_eq!(st.tooltip, "Turn on Sync WiFi on your phone to send 1 file");
+        assert_eq!(st.tooltip, "Turn on WiFi Sync on your phone to send 1 file");
         let vi = status(&summarize(&items, devices(&[], &[])), &HashMap::new(), &I18n::new(Language::Vi));
-        assert_eq!(vi.tooltip, "Bật Sync WiFi trên điện thoại để gửi 1 tệp");
+        assert_eq!(vi.tooltip, "Bật Đồng bộ WiFi trên điện thoại để gửi 1 tệp");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Nguồn asset của `ferry-ui`: icon của materiant + icon riêng của app (thư mục, video cho trình duyệt điện thoại; nút
 //! cửa sổ, cột điều hướng bê từ Groovex). Icon riêng là SVG một màu `currentColor`, lưới 24×24 như icon materiant; `send`,
-//! `phone`, `settings` theo Lucide (ISC, có trong trang giấy phép).
+//! `phone`, `settings`, `wifi` theo Lucide (ISC, có trong trang giấy phép).
 
 use std::borrow::Cow;
 
@@ -48,7 +48,7 @@ ferry_icons! {
     Settings => "settings",
     Send => "send",
     Phone => "phone",
-    MoreVertical => "more-vertical",
+    Wifi => "wifi",
 }
 
 impl From<FerryIcon> for IconSource {

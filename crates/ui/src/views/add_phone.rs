@@ -1,5 +1,6 @@
-//! Màn "Thêm điện thoại" (PROTOCOL 4.4, ghép PIN mục 6.3): hướng dẫn bật Sync WiFi → danh sách điện thoại dò thấy chưa
-//! ghép (cập nhật trực tiếp từ snapshot) hoặc nhập địa chỉ tay → ô PIN 6 số → `Pair`. Xong ⇒ [`AddPhoneEvent::Paired`].
+//! Màn "Thêm điện thoại" (PROTOCOL 4.4, ghép PIN mục 6.3): hướng dẫn bật “Cho phép nhận” (màn Đồng bộ WiFi) → danh sách
+//! điện thoại dò thấy chưa ghép (cập nhật trực tiếp từ snapshot) hoặc nhập địa chỉ tay → ô PIN 6 số → `Pair`. Xong ⇒
+//! [`AddPhoneEvent::Paired`].
 //!
 //! View không tự nối IPC: chủ (cửa sổ chính) đưa vào `send` (gửi `PhoneOp`, trả `req`), gọi [`AddPhoneView::set_devices`]
 //! mỗi khi có `Snapshot` mới và [`AddPhoneView::on_reply`] với mỗi `Reply`. PIN không giữ lại sau khi gửi (xoá ô ngay).
@@ -665,8 +666,8 @@ impl AddPhoneView {
             .into_any_element()
     }
 
-    /// "Trên điện thoại: mở app → [⋮] → Sync WiFi → Bật": nút menu của app điện thoại vẽ thành phím 32×32 (viền + bo góc)
-    /// để người dùng nhận ra đúng nút cần bấm.
+    /// "Trên điện thoại: mở app → [WiFi] → bật “Cho phép nhận”": icon Đồng bộ WiFi ở thanh điều hướng đáy của app điện
+    /// thoại vẽ thành phím 32×32 (viền + bo góc) để người dùng nhận ra đúng nút cần bấm.
     fn render_step_enable(&self, cx: &mut Context<Self>) -> AnyElement {
         let c = cx.theme().colors().clone();
         let t = |k: &str| SharedString::from(self.i18n.t(k).to_owned());
@@ -681,7 +682,7 @@ impl AddPhoneView {
             .border_b_2()
             .border_color(c.border)
             .bg(c.surface)
-            .child(svg().path(FerryIcon::MoreVertical.path()).size(px(18.)).text_color(c.text));
+            .child(svg().path(FerryIcon::Wifi.path()).size(px(18.)).text_color(c.text));
         div()
             .flex()
             .flex_wrap()
@@ -749,6 +750,9 @@ impl Render for AddPhoneView {
             Step::Pin => self.render_pin(cx),
         };
         let error = self.error.clone().map(|e| div().text_color(c.danger).child(e));
+        // Hàng tiêu đề đệm riêng: nút Lùi có ô 32 px, chevron nằm lùi vào trong ô ⇒ bù để nét chevron thẳng mép trái của
+        // thẻ bên dưới (thân đệm `BODY_PAD`).
+        let back_inset = BACK_BUTTON * (1. - BACK_ICON) / 2. + BACK_ICON * CHEVRON_LEFT_EDGE;
         div()
             .id("add-phone")
             .track_focus(&self.focus)
@@ -757,7 +761,6 @@ impl Render for AddPhoneView {
             .flex_col()
             .gap_4()
             .py_3()
-            .px_4()
             .bg(c.surface)
             .text_color(c.text)
             .child(
@@ -765,6 +768,8 @@ impl Render for AddPhoneView {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .pl(px((BODY_PAD - back_inset).max(0.)))
+                    .pr(px(BODY_PAD))
                     .child(
                         IconButton::new("add-phone-back", IconName::ChevronLeft)
                             .accessibility_label(back_label)
@@ -772,11 +777,18 @@ impl Render for AddPhoneView {
                     )
                     .child(div().text_xl().font_weight(cx.theme().title_weight()).child(title)),
             )
-            .child(content)
-            .children(error)
+            .child(div().flex().flex_col().gap_4().px(px(BODY_PAD)).child(content).children(error))
             .child(self.render_firewall_dialog(cx))
     }
 }
+
+/// Đệm ngang của thân màn (thẻ chạm mép này).
+const BODY_PAD: f32 = 16.;
+/// Cạnh nút Lùi (`IconButton` cỡ `Md`) và tỉ lệ icon trong nút (mặc định 62,5 %).
+const BACK_BUTTON: f32 = 32.;
+const BACK_ICON: f32 = 0.625;
+/// Mép trái nét của `chevron-left` của materiant (lưới 24: đỉnh x = 9, nét 1,5) theo tỉ lệ cạnh icon.
+const CHEVRON_LEFT_EDGE: f32 = 8.25 / 24.;
 
 #[cfg(test)]
 mod tests {

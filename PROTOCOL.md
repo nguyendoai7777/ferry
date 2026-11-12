@@ -79,7 +79,7 @@ pc-app/
 3. **Thư viện điện thoại** (tab phụ): trình duyệt kiểu Explorer (mục 4.6) ở chế độ thư viện. Chọn video → "Tải về máy"
    (vào hàng đợi chiều ngược lại, tải tiếp bằng `Range`). Thư mục mới / đổi tên / xoá qua menu chuột phải khi điện thoại
    khai `edit` (§6.12, W-8).
-4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → menu → Sync WiFi → Bật". Bước 2 danh sách
+4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → [icon WiFi ở thanh điều hướng đáy] → Bật “Cho phép nhận”" (màn Đồng bộ WiFi). Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
    thông, khởi động cùng hệ thống, địa chỉ tay (nâng cao).
@@ -402,7 +402,7 @@ Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai k
 
 - **Không cần điện thoại thật**: Android emulator + `adb forward tcp:18080 tcp:8080` → nhập tay `127.0.0.1:18080`
   (mDNS không qua được `adb forward`; để kiểm dò thì dùng điện thoại thật cùng WiFi).
-- Bật server trên emulator: mở app → menu → Sync WiFi → Bật (hoặc `adb shell am start -n
+- Bật server trên emulator: mở app → icon WiFi ở thanh điều hướng đáy → Bật “Cho phép nhận” (hoặc `adb shell am start -n
   com.xmobile.videoplayer/.sync.ui.SyncActivity` với bản debug). PIN hiện trên màn hình.
 - `curl` mẫu:
   ```bash

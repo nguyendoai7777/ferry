@@ -596,7 +596,7 @@ mod tests {
         snap.uploads[0].state = UploadState::Queued;
         let vi = I18n::new(Language::Vi);
         let rows = build_rows(&vi, &snap, &snap.devices[0].clone(), &HashSet::new());
-        assert_eq!(rows[0].status.split(" · ").next().unwrap(), "Bật Sync WiFi trên điện thoại để gửi tiếp");
+        assert_eq!(rows[0].status.split(" · ").next().unwrap(), "Bật Đồng bộ WiFi trên điện thoại để gửi tiếp");
     }
 
     #[test]
