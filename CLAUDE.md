@@ -126,7 +126,7 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   điện thoại, hỏi PTR `_services._dns-sd._udp.local`) ⇒ máy nào trả lời là còn thấy được dịch vụ nó khai; `tcpdump` cần
   root. **Khác subnet** (WiFi công ty 11/11/2026: `172.16.0.x` ↔ `172.16.4.x`, mỗi bên `/23` — nối thẳng IP + PIN được
   vì qua router, mDNS thì không bao giờ qua router) ⇒ quét subnet của PC cũng không thấy: phải quét `/24` của IP điện thoại
-  từng dùng. Quét đầy đủ: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần khi danh sách trống
+  từng dùng. Quét đầy đủ: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần suốt bước chọn máy, kể cả khi đã thấy máy khác (thêm máy thứ hai; 12/11/2026)
   (`RESCAN_EVERY`), daemon gộp lệnh trùng + cách nhau ≥ 10 s; subnet của PC trọn tới `/22` + `/24` quanh IP điện thoại từng
   dùng (`Engine::phone_hints`: sổ thiết bị, gồm địa chỉ nhập tay ở màn Thêm điện thoại). Quét thưa: máy đã ghép nối hỏng mọi địa chỉ ⇒ `maybe_offline_scan`
   chỉ dải `/24` của máy đó, ≥ 5 phút một lần (`OFFLINE_SCAN_EVERY`). Nối TCP 600 ms, 128 cùng lúc (macOS trần 256 fd),

@@ -37,8 +37,8 @@ use materiant::toast::{Toast, ToastKind, ToastSpec};
 /// Dò chừng này chưa thấy điện thoại nào ⇒ chỉ sang đường nhập địa chỉ tay (WiFi công ty / AP isolation hay lọc mDNS: chờ
 /// thêm cũng không thấy, kể cả sau khi đã mở tường lửa).
 pub const SLOW_SEARCH: Duration = Duration::from_secs(20);
-/// Danh sách còn trống ⇒ quét LAN dự phòng lại sau chừng này kể từ lượt trước xong (`PROTOCOL.md` 6.2) — mDNS bị mạng chặn
-/// vẫn thấy điện thoại vừa bật Sync WiFi; không dày hơn để "rảnh không giữ CPU".
+/// Còn ở bước chọn máy ⇒ quét LAN dự phòng lại sau chừng này kể từ lượt trước xong (`PROTOCOL.md` 6.2), kể cả khi đã thấy
+/// máy khác (thêm điện thoại thứ hai) — mDNS bị mạng chặn vẫn thấy điện thoại vừa bật nhận; không dày hơn để "rảnh không giữ CPU".
 pub const RESCAN_EVERY: Duration = Duration::from_secs(15);
 
 /// Số chữ số PIN (PROTOCOL 6.3).
@@ -319,17 +319,18 @@ impl AddPhoneView {
         }
     }
 
-    /// Hẹn lượt quét kế sau [`RESCAN_EVERY`]: tới giờ mà còn ở bước đầu và danh sách trống thì quét, không thì hẹn tiếp.
+    /// Hẹn lượt quét kế sau [`RESCAN_EVERY`]: tới giờ mà còn ở bước chọn máy thì quét (danh sách có máy rồi vẫn quét — đang thêm
+    /// máy thứ hai), đang nhập tay / PIN thì hẹn tiếp.
     /// Màn đóng ⇒ view bị thả, hẹn tự huỷ.
     fn schedule_rescan(&self, cx: &mut Context<Self>) {
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             executor.timer(RESCAN_EVERY).await;
             let _ = this.update(cx, |this, cx| {
-                if this.step == Step::Pick && pairable(&this.devices).is_empty() {
+                if this.step == Step::Pick {
                     this.scan_lan(cx);
                 } else {
-                    // Đang nhập tay / PIN, hoặc đã thấy máy: chưa quét, hẹn lại (chỉ một đồng hồ, không tốn CPU).
+                    // Đang nhập tay / PIN: chưa quét, hẹn lại (chỉ một đồng hồ, không tốn CPU).
                     this.schedule_rescan(cx);
                 }
             });
@@ -609,7 +610,7 @@ impl AddPhoneView {
             });
             div().flex().flex_col().gap_3().child(searching).children(slow).into_any_element()
         } else {
-            CardGroup::new()
+            let group = CardGroup::new()
                 .children(list.iter().enumerate().map(|(ix, d)| {
                     let mut item = CardItem::new(SharedString::from(d.name.clone()));
                     if d.state == DeviceState::NeedsRepair {
@@ -627,8 +628,15 @@ impl AddPhoneView {
                             .size(Size::Sm)
                             .on_click(cx.listener(move |this, _, window, cx| this.pick(ix, window, cx))),
                     )
-                }))
-                .into_any_element()
+                }));
+            // Đã thấy máy vẫn dò tiếp (thêm máy thứ hai) ⇒ giữ vòng "đang dò" dưới danh sách.
+            let more = div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(searching_spinner())
+                .child(div().text_color(c.muted).child(t("add_phone.searching_more")));
+            div().flex().flex_col().gap_3().child(group).child(more).into_any_element()
         };
         div()
             .flex()
