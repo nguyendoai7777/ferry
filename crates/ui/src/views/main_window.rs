@@ -29,7 +29,7 @@ use super::device_header::device_header;
 use super::devices::{DevicesEvent, DevicesPage};
 use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
-use super::phone_library::{LibraryEvent, PhoneLibrary};
+use super::phone_library::PhoneLibrary;
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
 use super::send_tray::{self, TrayEntry, lacks_dirs, send_tray};
 use super::settings::{SettingsEvent, SettingsPage};
@@ -49,10 +49,7 @@ enum Page {
         _sub: Subscription,
     },
     /// Thư viện của một điện thoại — trang con của Danh sách thiết bị.
-    Library {
-        library: Entity<PhoneLibrary>,
-        _sub: Subscription,
-    },
+    Library { library: Entity<PhoneLibrary>, device: DeviceId },
     /// `origin`: trang mở luồng này (Gửi hoặc Danh sách thiết bị) — xong / quay lại thì về đó.
     AddPhone {
         view: Entity<AddPhoneView>,
@@ -65,7 +62,30 @@ enum Page {
     },
 }
 
+/// Trang ghi được vào lịch sử Lùi (như lịch sử của trình duyệt). Luồng tạm (chọn nơi gửi, Thêm điện thoại) không vào
+/// lịch sử: xong / huỷ là về trang trước nó.
+#[derive(Clone, Debug, PartialEq)]
+enum Route {
+    Main,
+    Devices,
+    Library(DeviceId),
+    Settings,
+}
+
+/// Trần lịch sử Lùi.
+const HISTORY_MAX: usize = 50;
+
 impl Page {
+    fn route(&self) -> Option<Route> {
+        match self {
+            Page::Main => Some(Route::Main),
+            Page::Devices { .. } => Some(Route::Devices),
+            Page::Library { device, .. } => Some(Route::Library(device.clone())),
+            Page::Settings { .. } => Some(Route::Settings),
+            Page::Browse { .. } | Page::AddPhone { .. } => None,
+        }
+    }
+
     fn active(&self) -> Active {
         match self {
             Page::Main | Page::Browse { .. } => Active::Item(NavItem::Send),
@@ -82,6 +102,10 @@ pub struct MainWindow {
     tray: Vec<TrayEntry>,
     expanded: HashSet<BatchId>,
     page: Page,
+    /// Trang đã đi qua, cuối là trang ngay trước — nút Lùi của thanh trên.
+    history: Vec<Route>,
+    /// Đang Lùi: đổi trang không ghi trang đang rời vào lịch sử.
+    going_back: bool,
     focus: FocusHandle,
     /// `req` của `AddFiles` đang chờ trả lời.
     sending: Option<u64>,
@@ -109,12 +133,47 @@ impl MainWindow {
             tray: Vec::new(),
             expanded: HashSet::new(),
             page: Page::Main,
+            history: Vec::new(),
+            going_back: false,
             focus,
             sending: None,
             sending_dest: None,
             window_title: SharedString::default(),
             _sub: sub,
         }
+    }
+
+    /// Đổi trang: trang đang rời vào lịch sử (trừ luồng tạm, trừ lúc Lùi); về đúng trang ở đỉnh lịch sử (huỷ / xong luồng
+    /// tạm) thì bỏ đỉnh đó để Lùi không về chính nó.
+    fn show(&mut self, page: Page) {
+        if !self.going_back
+            && let Some(route) = self.page.route()
+            && page.route().as_ref() != Some(&route)
+        {
+            self.history.push(route);
+            if self.history.len() > HISTORY_MAX {
+                self.history.remove(0);
+            }
+        }
+        self.page = page;
+        let current = self.page.route();
+        while current.is_some() && self.history.last() == current.as_ref() {
+            self.history.pop();
+        }
+    }
+
+    /// Nút Lùi của thanh trên: về trang trước trong lịch sử.
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(route) = self.history.pop() else { return };
+        self.going_back = true;
+        match route {
+            Route::Main => self.back_to_main(window, cx),
+            Route::Devices => self.open_devices(window, cx),
+            Route::Library(device) => self.open_library(device, window, cx),
+            Route::Settings => self.open_settings(window, cx),
+        }
+        self.going_back = false;
+        cx.notify();
     }
 
     /// Mục của cột trái.
@@ -146,7 +205,7 @@ impl MainWindow {
                 cx.notify();
             }
         });
-        self.page = Page::Settings { view, _sub: sub };
+        self.show(Page::Settings { view, _sub: sub });
         cx.notify();
     }
 
@@ -171,7 +230,7 @@ impl MainWindow {
             ModelEvent::Reply { req, outcome } if Some(*req) == self.sending => {
                 self.sending = None;
                 let dest = self.sending_dest.take();
-                self.page = Page::Main;
+                self.show(Page::Main);
                 match outcome {
                     Outcome::Added { batch, files, skipped_non_video, unreadable } => {
                         if batch.is_some() {
@@ -231,7 +290,7 @@ impl MainWindow {
             DevicesEvent::Repair(id) => this.open_add_phone(Some(id.clone()), NavItem::Devices, window, cx),
             DevicesEvent::Browse(id) => this.open_library(id.clone(), window, cx),
         });
-        self.page = Page::Devices { view, _sub: sub };
+        self.show(Page::Devices { view, _sub: sub });
         cx.notify();
     }
 
@@ -240,11 +299,8 @@ impl MainWindow {
     fn open_library(&mut self, device: DeviceId, window: &mut Window, cx: &mut Context<Self>) {
         self.model.update(cx, |m, cx| m.select(device.clone(), cx));
         let (model, i18n) = (self.model.clone(), self.i18n.clone());
-        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device, window, cx));
-        let sub = cx.subscribe_in(&library, window, |this, _, ev: &LibraryEvent, window, cx| match ev {
-            LibraryEvent::Back => this.open_devices(window, cx),
-        });
-        self.page = Page::Library { library, _sub: sub };
+        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device.clone(), window, cx));
+        self.show(Page::Library { library, device });
         cx.notify();
     }
 
@@ -278,12 +334,12 @@ impl MainWindow {
                 NavItem::Send => this.back_to_main(window, cx),
             }
         });
-        self.page = Page::AddPhone { view, origin, _sub: sub };
+        self.show(Page::AddPhone { view, origin, _sub: sub });
         cx.notify();
     }
 
     fn back_to_main(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.page = Page::Main;
+        self.show(Page::Main);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -338,13 +394,13 @@ impl MainWindow {
         let browser = cx.new(|cx| PhoneBrowser::new(model, i18n, device, mode, start, window, cx));
         let sub = cx.subscribe_in(&browser, window, |this, _, ev: &BrowserEvent, window, cx| match ev {
             BrowserEvent::Cancel => {
-                this.page = Page::Main;
+                this.show(Page::Main);
                 window.focus(&this.focus, cx);
                 cx.notify();
             }
             BrowserEvent::Send { dest_dir } => this.send(dest_dir.clone(), window, cx),
         });
-        self.page = Page::Browse { browser, _sub: sub };
+        self.show(Page::Browse { browser, _sub: sub });
         cx.notify();
     }
 
@@ -361,7 +417,7 @@ impl MainWindow {
                 self.sending_dest = Some((device, dest_dir));
             }
             None => {
-                self.page = Page::Main;
+                self.show(Page::Main);
                 self.toast(window, cx, ToastKind::Danger, "main.no_daemon");
             }
         }
@@ -661,7 +717,11 @@ impl Render for MainWindow {
             .h(px(app_bar::HEIGHT))
             .flex_none()
             .drag_region()
-            .child(AppBar::new(window.is_maximized(), labels));
+            .child(AppBar::new(window.is_maximized(), labels).back(
+                !self.history.is_empty(),
+                self.t("app_bar.back"),
+                cx.listener(|this, _, window, cx| this.go_back(window, cx)),
+            ));
         div()
             .id("main-window")
             .relative()

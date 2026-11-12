@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use ferry_core::i18n::I18n;
-use materiant::button::{Button, Size};
+use materiant::button::Button;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{App, ExternalPaths, IntoElement, SharedString, Window, div, px};
 use materiant::theme::{ActiveTheme, Neutral};
@@ -56,17 +56,17 @@ pub fn drop_zone(
         .child(
             div()
                 .flex()
-                .gap_2()
+                .gap_3()
                 .child(
                     Button::new("pick-files", i18n.t("main.pick_files"))
-                        .size(Size::Sm)
+                        .icon(crate::assets::file())
                         .outlined()
                         .disabled(!enabled)
                         .on_click(move |_, window, cx| on_pick_files(window, cx)),
                 )
                 .child(
                     Button::new("pick-folders", i18n.t("main.pick_folders"))
-                        .size(Size::Sm)
+                        .icon(crate::assets::folder())
                         .outlined()
                         .disabled(!enabled)
                         .on_click(move |_, window, cx| on_pick_folders(window, cx)),

@@ -1,7 +1,7 @@
 //! Thanh trên của trình duyệt: Lùi / Tiến / Lên, breadcrumb (bấm từng đoạn để nhảy), làm mới, ô tìm.
 
 use ferry_core::browse::{self, Location};
-use materiant::button::{Button, IconButton, Size};
+use materiant::button::{Button, Size};
 use materiant::field::TextField;
 use materiant::gpui_kit::prelude::*;
 use std::time::Duration;
@@ -16,6 +16,7 @@ use materiant::style::ActiveTokens;
 use materiant::theme::ActiveTheme;
 
 use super::PhoneBrowser;
+use crate::views::quiet_button::{self, quiet_icon_button};
 
 /// Đoạn breadcrumb: nhãn + nơi nhảy tới. Gốc = tên điện thoại; "Khác" là một đoạn riêng.
 pub fn segments(device_name: &str, other_label: &str, at: &Location) -> Vec<(String, Location)> {
@@ -60,31 +61,24 @@ pub fn toolbar(
         .py_2()
         .border_b_1()
         .border_color(c.border)
-        .child(
-            IconButton::new("br-back", IconName::ChevronLeft)
-                .size(Size::Sm)
-                .accessibility_label(t("browser.back"))
-                .disabled(this.back.is_empty())
-                .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
-        )
-        .child(
-            IconButton::new("br-fwd", IconName::ChevronRight)
-                .size(Size::Sm)
-                .accessibility_label(t("browser.forward"))
-                .disabled(this.forward.is_empty())
-                .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx))),
-        )
-        .child(
-            IconButton::new("br-up", IconName::ChevronUp)
-                .size(Size::Sm)
-                .accessibility_label(t("browser.up"))
-                .disabled(this.at.parent().is_none())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(p) = this.at.parent() {
-                        this.go(p, cx);
-                    }
-                })),
-        )
+        .child(quiet_icon_button(
+            "br-back",
+            IconName::ChevronLeft,
+            quiet_button::BAR,
+            !this.back.is_empty(),
+            Some(t("browser.back").into()),
+            cx.listener(|this, _, _, cx| this.go_back(cx)),
+            cx,
+        ))
+        .child(quiet_icon_button(
+            "br-fwd",
+            IconName::ChevronRight,
+            quiet_button::BAR,
+            !this.forward.is_empty(),
+            Some(t("browser.forward").into()),
+            cx.listener(|this, _, _, cx| this.go_forward(cx)),
+            cx,
+        ))
         .child(crumbs)
         .child(refresh)
         .child(div().w(px(180.)).flex_none().child(search.clone()))

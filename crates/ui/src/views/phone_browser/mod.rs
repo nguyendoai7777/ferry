@@ -265,18 +265,6 @@ impl PhoneBrowser {
         self.recompute(cx);
     }
 
-    /// Mục thư viện đang chọn (cho gd1_11 "Tải về máy").
-    pub fn selected_items(&self) -> Vec<&LibraryItem> {
-        self.selected
-            .iter()
-            .filter_map(|&i| self.entries.get(i))
-            .filter_map(|e| e.item)
-            .filter_map(|i| self.items.get(i))
-            // Tệp ngoài thư viện (duyệt bộ nhớ, W-7) không có `id` ⇒ không tải về được.
-            .filter(|it| !it.id.is_empty())
-            .collect()
-    }
-
     /// Thư mục đang mở nếu là đích hợp lệ.
     pub fn destination(&self) -> Option<&str> {
         match &self.at {

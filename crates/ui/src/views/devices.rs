@@ -15,7 +15,7 @@ use ferry_core::i18n::I18n;
 use ferry_core::ipc::{CommandError, DeviceView, Outcome, PhoneOp, SettingsOp, SettingsView};
 use materiant::badge::Badge;
 use materiant::button::{Button, Size};
-use materiant::card::{Card, CardGroup, CardItem};
+use materiant::card::{CardGroup, CardItem};
 use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
@@ -296,6 +296,8 @@ impl DevicesPage {
             let b = Badge::new(self.i18n.t(state_key(device.state)).to_owned());
             match state_tone(device.state) {
                 Some(tone) => b.tone(tone),
+                // Chưa kết nối: trạng thái nghỉ ⇒ xám; đang kiểm tra giữ viền màu nhấn.
+                None if state_key(device.state) == "devices.state_offline" => b.inactive(),
                 None => b.outline(),
             }
         };
@@ -422,17 +424,14 @@ impl Render for DevicesPage {
                     self.render_item(ix, d, same_name, cx)
                 })
                 .collect();
-            let card = Card::new("devices-card")
-                .title(self.t("devices.paired_title"))
-                .description(self.t("devices.paired_description"))
-                .child(CardGroup::new().children(items));
+            let card = CardGroup::new().standalone().children(items);
             // D-16: khung cuộn chạm mép; đệm ngang nằm trong nội dung, bằng nhau hai bên.
             ScrollArea::new("devices-scroll")
                 .vertical()
                 .flex_1()
                 .min_h_0()
-                .padding_x(px(24.))
-                .child(div().py_5().child(card))
+                .padding_x(px(16.))
+                .child(div().py_4().child(card))
                 .into_any_element()
         };
         let (rename, forget) = self.render_dialogs(cx);

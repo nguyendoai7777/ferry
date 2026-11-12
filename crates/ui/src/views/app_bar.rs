@@ -7,18 +7,24 @@
 //! sát mép phải. macOS ([`window_controls::NATIVE_CAPTION_BUTTONS`]): thêm đèn giao thông của hệ thống ở góc trái (đầu cột
 //! trái chừa chỗ), ba nút này thành ô vuông 28 px bo 7 px cách nhau 4 px, chừa 8 px mép phải cho góc bo của cửa sổ, Đóng rê
 //! xám như hai nút kia — y như thanh tiêu đề cửa sổ Cài đặt của fastcast (`fastcast/crates/ui/src/settings/title_bar.rs`).
+//!
+//! Góc trái: nút Lùi theo lịch sử trang của cửa sổ (như trình duyệt; `MainWindow::go_back`), xám khi chưa có trang trước.
+
+use std::rc::Rc;
 
 use materiant::effect::ripple::{RippleConfig, RippleExt};
+use materiant::icon::IconName;
 // `#[derive(IntoElement)]` trỏ crate `gpui`; bản không test chỉ có `materiant::gpui_kit`.
 use materiant::gpui_kit as gpui;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px, svg, white,
+    App, ClickEvent, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px, svg, white,
 };
 use materiant::overlay::tooltip::TooltipExt;
 use materiant::theme::ActiveTheme;
 use materiant::theme::color::hex;
 
+use super::quiet_button::{self, quiet_icon_button};
 use crate::assets::FerryIcon;
 use crate::platform::window_controls;
 
@@ -42,16 +48,52 @@ pub struct CaptionLabels {
     pub close: SharedString,
 }
 
+type BackHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+struct Back {
+    enabled: bool,
+    label: SharedString,
+    on_click: BackHandler,
+}
+
 #[derive(IntoElement)]
 pub struct AppBar {
     maximized: bool,
     labels: CaptionLabels,
+    back: Option<Back>,
 }
 
 impl AppBar {
     pub fn new(maximized: bool, labels: CaptionLabels) -> AppBar {
-        AppBar { maximized, labels }
+        AppBar { maximized, labels, back: None }
     }
+
+    /// Nút Lùi ở góc trái; `enabled` = có trang trước trong lịch sử.
+    pub fn back(
+        mut self,
+        enabled: bool,
+        label: SharedString,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> AppBar {
+        self.back = Some(Back { enabled, label, on_click: Rc::new(on_click) });
+        self
+    }
+}
+
+/// Mép trái của nút Lùi trong thanh.
+const BACK_INSET: f32 = 6.;
+/// Nút Lùi: nút icon lặng (`quiet_button`), xám khi chưa có trang trước.
+fn back_button(b: Back, cx: &App) -> impl IntoElement {
+    let handler = b.on_click;
+    div().pl(px(BACK_INSET)).child(quiet_icon_button(
+        "app-bar-back",
+        IconName::ChevronLeft,
+        quiet_button::BAR,
+        b.enabled,
+        Some(b.label),
+        move |ev, window, cx| handler(ev, window, cx),
+        cx,
+    ))
 }
 
 /// Ba nút cửa sổ ở góc phải.
@@ -145,7 +187,8 @@ impl RenderOnce for AppBar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let CaptionLabels { minimize, maximize, restore, close } = self.labels;
         let toggle_label = if self.maximized { restore } else { maximize };
-        div().id("app-bar").h(px(HEIGHT)).w_full().flex_none().flex().items_center().child(
+        let back = self.back.map(|b| back_button(b, cx));
+        div().id("app-bar").h(px(HEIGHT)).w_full().flex_none().flex().items_center().children(back).child(
             div()
                 .ml_auto()
                 .flex()

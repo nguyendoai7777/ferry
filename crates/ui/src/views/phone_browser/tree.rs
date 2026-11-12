@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 
 use ferry_core::browse::{DirNode, Location, Tree};
-use materiant::button::{IconButton, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, ElementId, IntoElement, SharedString, div, px};
 use materiant::icon::{Icon, IconName};
@@ -13,6 +12,7 @@ use materiant::menu::ContextMenuExt;
 use materiant::theme::{ActiveTheme, Neutral};
 
 use super::PhoneBrowser;
+use crate::views::quiet_button::{self, quiet_icon_button};
 use crate::assets;
 
 pub const ROW_HEIGHT: f32 = 28.;
@@ -90,8 +90,8 @@ pub fn tree_view(
         .w(px(210.))
         .flex_none()
         .h_full()
-        // Dòng gốc không dính sát đầu bảng / thanh công cụ.
-        .pt(px(6.))
+        // Dòng đầu / cuối không dính sát thanh công cụ / đáy.
+        .py(px(12.))
         .border_r_1()
         .border_color(cx.theme().colors().border)
         .child(
@@ -105,21 +105,23 @@ pub fn tree_view(
                 };
                 // Gốc (`path` rỗng) cũng có nút thu gọn; "Khác" không có con.
                 let chevron = if r.has_children && r.loc != Location::Other {
-                    IconButton::new(
+                    quiet_icon_button(
                         ElementId::Name(format!("tree-t-{ix}").into()),
                         if r.open { IconName::ChevronDown } else { IconName::ChevronRight },
+                        quiet_button::TREE,
+                        true,
+                        None,
+                        move |_, _, cx| {
+                            let path = path.clone();
+                            let _ = toggle.update(cx, |this, cx| {
+                                if path.is_empty() { this.toggle_root(cx) } else { this.toggle_tree(&path, cx) }
+                            });
+                        },
+                        cx,
                     )
-                    .size(Size::Sm)
-                    .accessibility_label(r.label.clone())
-                    .on_click(move |_, _, cx| {
-                        let path = path.clone();
-                        let _ = toggle.update(cx, |this, cx| {
-                            if path.is_empty() { this.toggle_root(cx) } else { this.toggle_tree(&path, cx) }
-                        });
-                    })
                     .into_any_element()
                 } else {
-                    div().w(px(24.)).flex_none().into_any_element()
+                    div().w(px(quiet_button::TREE.edge)).flex_none().into_any_element()
                 };
                 let (menu_weak, loc, label, is_virtual) = (weak.clone(), r.loc.clone(), r.label.clone(), r.is_virtual);
                 div()
