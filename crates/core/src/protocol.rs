@@ -47,6 +47,12 @@ pub mod header {
     pub const FILE_DIR: &str = "x-file-dir";
     pub const UPLOAD_LENGTH: &str = "upload-length";
     pub const UPLOAD_OFFSET: &str = "upload-offset";
+    /// Số tệp / tổng byte của lô (§6.5, gửi ở mọi `POST` của lô).
+    pub const BATCH_FILES: &str = "x-batch-files";
+    pub const BATCH_BYTES: &str = "x-batch-bytes";
+    /// Mã lô + thứ tự tệp trong danh sách lô (§6.10, chỉ khi điện thoại có `batch`).
+    pub const BATCH_ID: &str = "x-batch-id";
+    pub const BATCH_INDEX: &str = "x-batch-index";
     /// `Content-Type` của thân `PATCH`.
     pub const OFFSET_OCTET_STREAM: &str = "application/offset+octet-stream";
 }
@@ -66,6 +72,8 @@ pub mod feature {
     /// Tải tệp theo đường (`GET /fetch`) + `DELETE /entries?ifEmpty=1` — Cắt / Sao chép sang máy tính (§6.14, W-10);
     /// chỉ có cùng [`BROWSE`].
     pub const FETCH: &str = "fetch";
+    /// Nhận danh sách cả lô (`X-Batch-Id`, `X-Batch-Index`, thân JSON — §6.10); có thể trả `410 declined`.
+    pub const BATCH: &str = "batch";
 }
 
 /// Đuôi video điện thoại nhận (PROTOCOL 6.6), chữ thường.
@@ -245,6 +253,24 @@ pub struct DirListing {
 pub struct EntryPath {
     #[serde(default)]
     pub path: String,
+}
+
+/// Một tệp trong thân danh sách lô (§6.10). `name`, `dir` thô — cùng giá trị gửi ở `X-File-Name` / `X-File-Dir`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchFile {
+    pub name: String,
+    pub dir: String,
+    pub length: u64,
+    /// PC sẽ không gửi tệp này (đã có trên điện thoại).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip: bool,
+}
+
+/// Thân danh sách lô (§6.10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchManifest {
+    pub files: Vec<BatchFile>,
 }
 
 /// `201` của `POST /api/v1/uploads` (PROTOCOL 6.5).

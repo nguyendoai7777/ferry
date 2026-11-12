@@ -46,6 +46,8 @@ pub enum FailReason {
     SourceChanged,
     /// Tệp nguồn không còn.
     SourceMissing,
+    /// `410`: người dùng từ chối lô trên điện thoại (§6.5, §6.10) — cả lô dừng, không tự thử lại.
+    Declined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +193,8 @@ pub enum UploadEvent {
     SourceChanged,
     /// Tệp nguồn không còn.
     SourceMissing,
+    /// `410 declined` (§6.10): mục đang bay và mọi mục chưa xong của lô ⇒ Failed, không HEAD / PATCH / DELETE thêm.
+    Declined,
     /// Đồng hồ `Waiting.until` đã tới.
     WakeUp,
     /// Người dùng: tạm dừng / chạy tiếp (cả "thử lại" sau Failed) / huỷ.
@@ -278,6 +282,7 @@ impl UploadMachine {
             },
             (_, Ev::SourceChanged) => to(S::Failed { reason: FailReason::SourceChanged }, f, self.delete_effect()),
             (_, Ev::SourceMissing) => to(S::Failed { reason: FailReason::SourceMissing }, f, self.delete_effect()),
+            (_, Ev::Declined) => to(S::Failed { reason: FailReason::Declined }, f, E::None),
 
             // Mở lại sau khi tắt app.
             (S::Checking | S::Creating, Ev::Restore) => to(S::Queued, f, E::None),
@@ -726,6 +731,10 @@ mod tests {
             (S::Failed { reason: FailReason::SourceChanged }, E::Delete { uid: "u1".into() })
         );
         assert_eq!(step(S::Queued, Ev::SourceMissing), (S::Failed { reason: FailReason::SourceMissing }, E::None));
+        // §6.10: từ chối lô ⇒ Failed ở mọi trạng thái chưa xong, không DELETE phiên (điện thoại trả 410 cho mọi thứ).
+        assert_eq!(step(S::Queued, Ev::Declined), (S::Failed { reason: FailReason::Declined }, E::None));
+        let sending = S::Sending { uid: "u".into(), offset: 9 };
+        assert_eq!(step(sending, Ev::Declined), (S::Failed { reason: FailReason::Declined }, E::None));
     }
 
     #[test]

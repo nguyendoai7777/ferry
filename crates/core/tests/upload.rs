@@ -430,3 +430,74 @@ async fn offline_mid_backoff_wakes_immediately_on_new_address() {
     assert!(is_done(&rig.until_done(ids[0]).await));
     assert_eq!(rig.phone_data("clip.mp4"), std::fs::read(&f).unwrap());
 }
+
+// §6.10 — điện thoại có `batch`: mọi `POST` của lô mang `X-Batch-Id` / `X-Batch-Index`; thân danh sách đủ cả lô (tệp
+// đã có ⇒ `skip`) gửi tới khi một `POST` nhận `201`, kể cả lần gửi lại sau `503 awaiting_approval`.
+#[tokio::test]
+async fn batch_manifest_until_first_created() {
+    let phone = FakePhone::start().await;
+    phone.set_features(&["dirs", "batch"]);
+    phone.add_file("b.mp4", Some("Trip"), pattern(30 * KB, 2));
+    phone.set_awaiting(1);
+    let mut rig = Rig::with_phone(phone, small_chunks(), None, true).await;
+    let trip = rig.src().join("Trip");
+    write(&trip, "a.mp4", 40 * KB, 1);
+    write(&trip, "b.mp4", 30 * KB, 2);
+    write(&trip, "c.mp4", 50 * KB, 3);
+    let (batch, ids) = rig.add(&[trip], "");
+    assert_eq!(ids.len(), 3);
+    rig.until(|e| matches!(e, TransferEvent::BatchFinished { sent: 2, skipped: 1, .. })).await;
+    let posts = rig.phone.batch_posts();
+    let names: Vec<&str> = posts.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a.mp4", "a.mp4", "c.mp4"], "503 awaiting ⇒ cùng POST gửi lại; b đã có ⇒ không POST");
+    for p in &posts {
+        assert_eq!(p.id.as_deref(), Some(batch.0.as_str()));
+        assert_eq!((p.files, p.bytes), (Some(2), Some(90 * KB)), "không tính tệp skip");
+    }
+    assert_eq!(posts.iter().map(|p| p.index).collect::<Vec<_>>(), [Some(0), Some(0), Some(2)]);
+    let list = posts[0].list.clone().expect("thân danh sách ở POST đầu");
+    assert_eq!(posts[1].list.as_ref(), Some(&list), "chưa có 201 ⇒ gửi lại danh sách");
+    assert!(posts[2].list.is_none(), "đã có 201 ⇒ thôi gửi thân");
+    let rows: Vec<(&str, &str, u64, bool)> =
+        list.iter().map(|f| (f.name.as_str(), f.dir.as_str(), f.length, f.skip)).collect();
+    assert_eq!(
+        rows,
+        [("a.mp4", "Trip", 40 * KB, false), ("b.mp4", "Trip", 30 * KB, true), ("c.mp4", "Trip", 50 * KB, false)]
+    );
+}
+
+// §6.10 — `410 declined`: cả lô Failed "Điện thoại từ chối nhận", không thử lại, không PATCH.
+#[tokio::test]
+async fn declined_batch_fails_every_item() {
+    let phone = FakePhone::start().await;
+    phone.set_features(&["dirs", "batch"]);
+    phone.set_declined(true);
+    let mut rig = Rig::with_phone(phone, small_chunks(), None, true).await;
+    let trip = rig.src().join("Trip");
+    write(&trip, "a.mp4", 40 * KB, 1);
+    write(&trip, "b.mp4", 40 * KB, 2);
+    write(&trip, "c.mp4", 40 * KB, 3);
+    let (_, ids) = rig.add(&[trip], "");
+    rig.until(|e| matches!(e, TransferEvent::BatchFinished { sent: 0, failed: 3, .. })).await;
+    for id in &ids {
+        assert_eq!(rig.state(*id), UploadState::Failed { reason: FailReason::Declined });
+    }
+    assert_eq!(rig.phone.batch_posts().len(), 1, "410 ⇒ không POST thêm mục nào của lô");
+    assert!(rig.phone.files().is_empty());
+}
+
+// Điện thoại chưa có `batch`: chỉ `X-Batch-Files` / `X-Batch-Bytes` (§6.5), không id / index / thân.
+#[tokio::test]
+async fn phone_without_batch_gets_counts_only() {
+    let mut rig = Rig::new(small_chunks(), None, true).await;
+    let a = write(&rig.src(), "a.mp4", 40 * KB, 1);
+    let b = write(&rig.src(), "b.mp4", 20 * KB, 2);
+    rig.add(&[a, b], "Phim");
+    rig.until(|e| matches!(e, TransferEvent::BatchFinished { sent: 2, .. })).await;
+    let posts = rig.phone.batch_posts();
+    assert_eq!(posts.len(), 2);
+    for p in &posts {
+        assert_eq!((p.files, p.bytes), (Some(2), Some(60 * KB)));
+        assert!(p.id.is_none() && p.index.is_none() && p.list.is_none(), "{p:?}");
+    }
+}

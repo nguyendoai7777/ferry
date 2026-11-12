@@ -42,11 +42,17 @@ pub struct Link {
     pub client: Arc<PhoneClient>,
     /// `info.features` có `dirs` (§6.9) ⇒ gửi `X-File-Dir`; không ⇒ gửi phẳng.
     pub dirs: bool,
+    /// `info.features` có `batch` (§6.10) ⇒ gửi `X-Batch-Id` / `X-Batch-Index` + thân danh sách lô.
+    pub batch: bool,
 }
 
 impl Link {
     pub fn new(client: PhoneClient, info: &Info) -> Link {
-        Link { client: Arc::new(client), dirs: info.has_feature(feature::DIRS) }
+        Link {
+            client: Arc::new(client),
+            dirs: info.has_feature(feature::DIRS),
+            batch: info.has_feature(feature::BATCH),
+        }
     }
 
     pub fn addr(&self) -> SocketAddr {

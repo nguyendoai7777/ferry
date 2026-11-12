@@ -24,9 +24,9 @@ use tokio::sync::mpsc;
 
 use super::meter::{MeteredReader, SpeedMeter};
 use super::{Command, ItemAction, Link, LinkWatch, RunnerHandle, SharedStore, TransferEvent};
-use crate::client::{self, ClientError, PatchOutcome};
+use crate::client::{self, BatchHeaders, ClientError, PatchOutcome};
 use crate::device::DeviceId;
-use crate::protocol::{self, LibraryItem};
+use crate::protocol::{self, BatchFile, BatchManifest, LibraryItem};
 use crate::queue::batch::source_matches;
 use crate::queue::state::{FailReason, PauseReason};
 use crate::queue::store::{DownloadItem, UploadItem};
@@ -55,6 +55,9 @@ impl Default for RunnerConfig {
         }
     }
 }
+
+/// Trần danh sách lô (§6.10: ≤ 10 000 mục). Lô dài hơn ⇒ chỉ gửi `X-Batch-Files` / `X-Batch-Bytes`.
+const MANIFEST_MAX: usize = 10_000;
 
 /// Khoá so trùng (§5, §6.9): `dir` đã chuẩn hoá + tên + cỡ.
 type RemoteKey = (String, String, u64);
@@ -132,6 +135,9 @@ pub struct UploadRunner {
     final_chunk_lost: bool,
     /// Byte đã đọc từ đĩa để gửi (mọi mục, cả phần gửi lại) — chẩn đoán / test.
     bytes_read: Arc<AtomicU64>,
+    /// Lô đã có một `POST` nhận `201` ⇒ thôi gửi thân danh sách (§6.10). Mất khi tiến trình khởi động lại: gửi lại
+    /// thì điện thoại bỏ qua bản trùng.
+    batch_acked: HashSet<BatchId>,
 }
 
 impl UploadRunner {
@@ -156,6 +162,7 @@ impl UploadRunner {
             warned_flat: false,
             final_chunk_lost: false,
             bytes_read: Arc::new(AtomicU64::new(0)),
+            batch_acked: HashSet::new(),
         };
         (runner, RunnerHandle { tx })
     }
@@ -322,6 +329,16 @@ impl UploadRunner {
             };
             match self.in_flight(&item, &eff, &link, &mut meter, &mut deferred).await {
                 InFlight::Done(ev) => {
+                    if let (UploadEvent::Created { .. }, Some(batch)) = (&ev, &item.batch_id) {
+                        self.batch_acked.insert(batch.clone());
+                    }
+                    if ev == UploadEvent::Declined {
+                        effect = self.apply(id, &ev);
+                        if let Some(batch) = &item.batch_id {
+                            self.decline_batch(batch);
+                        }
+                        continue;
+                    }
                     if ev == UploadEvent::Unauthorized {
                         self.repair_blocked = true;
                         self.emit(TransferEvent::DeviceNeedsRepair { device: self.device.clone() });
@@ -360,6 +377,10 @@ impl UploadRunner {
         deferred: &mut Vec<Command>,
     ) -> InFlight {
         let counter = Arc::new(AtomicU64::new(0));
+        let batch = match eff {
+            UploadEffect::Create => self.batch_headers(item, link),
+            _ => None,
+        };
         let patch_from = match eff {
             UploadEffect::Patch { offset, .. } => Some(*offset),
             _ => None,
@@ -373,6 +394,7 @@ impl UploadRunner {
             counter: counter.clone(),
             warned_flat: &mut self.warned_flat,
             final_chunk_lost: &mut self.final_chunk_lost,
+            batch,
         };
         let fut = cx.execute(item, eff);
         tokio::pin!(fut);
@@ -402,6 +424,48 @@ impl UploadRunner {
         };
         self.bytes_read.fetch_add(counter.load(Ordering::Relaxed), Ordering::Relaxed);
         result
+    }
+
+    /// Header lô cho `POST /uploads` của `item` (§6.5, §6.10). `skip` = mục đã có sẵn trên điện thoại (Skipped, hoặc
+    /// chưa chạy mà `list` của bước Checking đã có). Thứ tự danh sách = thứ tự mục trong lô (theo `id`) ⇒ `X-Batch-Index` ổn định qua mọi
+    /// lần dựng lại.
+    fn batch_headers(&mut self, item: &UploadItem, link: &Link) -> Option<BatchHeaders> {
+        let batch = item.batch_id.clone()?;
+        let items = self.with_store(|s| s.batch_uploads(&batch))?;
+        let keys = self.index.as_ref().filter(|ix| ix.batch == batch).map(|ix| &ix.keys);
+        let (mut files, mut bytes, mut index) = (0u64, 0u64, None);
+        let mut list = Vec::with_capacity(items.len());
+        for (i, it) in items.iter().enumerate() {
+            let dir = target_dir(it, link.dirs);
+            // Done = lô này đã gửi ⇒ vẫn tính (số tệp / byte của lô giữ nguyên qua mọi `POST`); chưa chạy mà `list` đã có
+            // ⇒ Checking sẽ Skipped.
+            let skip = match it.state {
+                UploadState::Skipped => true,
+                UploadState::Done { .. } | UploadState::Cancelled | UploadState::Failed { .. } => false,
+                _ => it.id != item.id && keys.is_some_and(|k| k.contains(&(dir.clone(), it.name.clone(), it.size))),
+            };
+            if it.id == item.id {
+                index = Some(i);
+            }
+            if !skip && !matches!(it.state, UploadState::Cancelled | UploadState::Failed { .. }) {
+                files += 1;
+                bytes += it.size;
+            }
+            list.push(BatchFile { name: it.name.clone(), dir, length: it.size, skip });
+        }
+        let listed = index.filter(|_| link.batch && list.len() <= MANIFEST_MAX).map(|i| (batch.0.clone(), i));
+        let manifest =
+            (listed.is_some() && !self.batch_acked.contains(&batch)).then_some(BatchManifest { files: list });
+        Some(BatchHeaders { files, bytes, listed, manifest })
+    }
+
+    /// `410 declined` (§6.10): mọi mục chưa xong của lô ⇒ Failed, không gửi gì thêm cho lô này.
+    fn decline_batch(&mut self, batch: &BatchId) {
+        let items = self.with_store(|s| s.batch_uploads(batch)).unwrap_or_default();
+        log::info!("upload {}: batch {} declined on the phone", self.device, batch.0);
+        for it in items.iter().filter(|i| !i.state.is_terminal()) {
+            self.apply(it.id, &UploadEvent::Declined);
+        }
     }
 
     // ------------------------------------------------------------ lệnh
@@ -551,6 +615,8 @@ struct Exec<'a> {
     counter: Arc<AtomicU64>,
     warned_flat: &'a mut bool,
     final_chunk_lost: &'a mut bool,
+    /// Header lô của `POST /uploads` (chỉ khi effect là `Create`).
+    batch: Option<BatchHeaders>,
 }
 
 impl Exec<'_> {
@@ -604,7 +670,7 @@ impl Exec<'_> {
             }
             None
         };
-        match self.link.client.upload_create(&item.name, item.size, dir).await {
+        match self.link.client.upload_create_in(&item.name, item.size, dir, self.batch.as_ref()).await {
             Ok(created) => UploadEvent::Created { uid: created.id },
             Err(e) => self.map_error(e, Phase::Create),
         }
@@ -685,6 +751,7 @@ impl Exec<'_> {
                 transient
             }
             ClientError::Unauthorized => Ev::Unauthorized,
+            ClientError::Declined => Ev::Declined,
             ClientError::InsufficientStorage => Ev::InsufficientStorage { short_by: None },
             ClientError::Unsupported => Ev::Rejected(FailReason::Unsupported),
             ClientError::TooLarge => Ev::Rejected(FailReason::TooLarge),

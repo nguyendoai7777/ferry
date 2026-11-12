@@ -70,6 +70,8 @@ pub enum ClientError {
     Busy { retry_after: Option<Duration> },
     /// `507` — điện thoại không đủ chỗ (cần tổng + 16 MB).
     InsufficientStorage,
+    /// `410` — người dùng từ chối lô trên điện thoại (§6.5, §6.10): dừng cả lô, không thử lại.
+    Declined,
     /// Mã khác.
     Server(u16),
     /// Không nối được / đứt / quá thời gian. `kind()`: `ConnectionRefused` (nối hỏng), `TimedOut`, `Other` (đứt giữa chừng).
@@ -96,6 +98,7 @@ impl std::fmt::Display for ClientError {
             Self::RateLimited { retry_after } => write!(f, "rate limited (429), retry after {retry_after:?}"),
             Self::Busy { retry_after } => write!(f, "busy (503), retry after {retry_after:?}"),
             Self::InsufficientStorage => f.write_str("insufficient storage (507)"),
+            Self::Declined => f.write_str("batch declined on the phone (410)"),
             Self::Server(c) => write!(f, "HTTP {c}"),
             Self::Network(e) => write!(f, "network: {e}"),
             Self::Local(e) => write!(f, "local file: {e}"),
@@ -131,6 +134,7 @@ impl ClientError {
             423 => Self::Locked,
             429 => Self::RateLimited { retry_after: retry_after(headers) },
             503 => Self::Busy { retry_after: retry_after(headers) },
+            410 => Self::Declined,
             507 => Self::InsufficientStorage,
             c => Self::Server(c),
         }
@@ -158,6 +162,18 @@ impl ClientError {
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
+
+/// Header lô của một `POST /api/v1/uploads` (§6.5, §6.10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchHeaders {
+    /// Số tệp / tổng byte PC sẽ gửi (không tính tệp `skip`).
+    pub files: u64,
+    pub bytes: u64,
+    /// `X-Batch-Id` + `X-Batch-Index` — chỉ khi điện thoại có `batch`.
+    pub listed: Option<(String, usize)>,
+    /// Thân danh sách — gửi tới khi một `POST` của lô nhận `201`.
+    pub manifest: Option<protocol::BatchManifest>,
+}
 
 /// Kết quả một khúc `PATCH`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,13 +352,38 @@ impl PhoneClient {
     /// `POST /api/v1/uploads`. `name` chỉ phần tên. `dir` (thư mục đích, `/` hoặc `\` phân cách) chỉ gửi khi điện
     /// thoại có `features: dirs` — tầng trên quyết; `None` = không gửi `X-File-Dir` (gốc).
     pub async fn upload_create(&self, name: &str, length: u64, dir: Option<&str>) -> Result<UploadCreated> {
+        self.upload_create_in(name, length, dir, None).await
+    }
+
+    /// Như [`Self::upload_create`], kèm header lô (§6.5 `X-Batch-Files` / `X-Batch-Bytes`; §6.10 `X-Batch-Id` /
+    /// `X-Batch-Index` + thân danh sách khi `batch.manifest` có).
+    pub async fn upload_create_in(
+        &self,
+        name: &str,
+        length: u64,
+        dir: Option<&str>,
+        batch: Option<&BatchHeaders>,
+    ) -> Result<UploadCreated> {
         let mut rb = self
             .request(Method::POST, path::UPLOADS)
             .header(header::FILE_NAME, encode_header_value(name))
-            .header(header::UPLOAD_LENGTH, length)
-            .header(h::CONTENT_LENGTH, 0);
+            .header(header::UPLOAD_LENGTH, length);
         if let Some(d) = dir {
             rb = rb.header(header::FILE_DIR, encode_header_value(&protocol::normalize_dir(d)));
+        }
+        let manifest = batch.and_then(|b| b.manifest.as_ref());
+        if manifest.is_none() {
+            rb = rb.header(h::CONTENT_LENGTH, 0);
+        }
+        if let Some(b) = batch {
+            rb = rb.header(header::BATCH_FILES, b.files).header(header::BATCH_BYTES, b.bytes);
+            if let Some((id, index)) = &b.listed {
+                rb = rb.header(header::BATCH_ID, id.as_str()).header(header::BATCH_INDEX, *index);
+            }
+            if let Some(m) = manifest {
+                let bytes = serde_json::to_vec(m).unwrap_or_default();
+                rb = rb.header(h::CONTENT_TYPE, "application/json").header(h::CONTENT_LENGTH, bytes.len()).body(bytes);
+            }
         }
         json(self.send(rb).await?).await
     }

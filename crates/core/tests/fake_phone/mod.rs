@@ -105,6 +105,25 @@ struct State {
     file_gets: Vec<FileGet>,
     /// W-8: thư mục tạo bằng `POST /dirs` (thư mục khác suy từ `dir` của tệp).
     made_dirs: std::collections::BTreeSet<String>,
+    /// §6.10: header lô + thân danh sách (nếu có) của mọi `POST /uploads` đã nhận.
+    batch_posts: Vec<BatchPost>,
+    /// §6.10: danh sách đã nhận theo `X-Batch-Id` (bản đầu thắng, bản trùng bỏ qua).
+    batch_lists: HashMap<String, usize>,
+    /// `POST /uploads` trả `410 declined` (người dùng từ chối lô).
+    declined: bool,
+    /// Chừng này `POST /uploads` kế tiếp trả `503 awaiting_approval`.
+    awaiting: u32,
+}
+
+/// Một `POST /api/v1/uploads` điện thoại giả đã nhận — header lô (§6.5, §6.10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchPost {
+    pub name: String,
+    pub id: Option<String>,
+    pub index: Option<usize>,
+    pub files: Option<u64>,
+    pub bytes: Option<u64>,
+    pub list: Option<Vec<ferry_core::protocol::BatchFile>>,
 }
 
 /// Một `GET /api/v1/file/<id>` điện thoại giả đã nhận (gd1_10).
@@ -215,6 +234,10 @@ impl FakePhone {
             cut_get_after: None,
             file_gets: Vec::new(),
             made_dirs: std::collections::BTreeSet::new(),
+            batch_posts: Vec::new(),
+            batch_lists: HashMap::new(),
+            declined: false,
+            awaiting: 0,
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let mut tasks = vec![tokio::spawn(accept_loop(l4, state.clone(), connections.clone()))];
@@ -316,6 +339,24 @@ impl FakePhone {
 
     pub fn sessions(&self) -> usize {
         self.st().sessions.len()
+    }
+
+    /// Header lô của mọi `POST /uploads` đã nhận (§6.10).
+    #[allow(dead_code)]
+    pub fn batch_posts(&self) -> Vec<BatchPost> {
+        self.st().batch_posts.clone()
+    }
+
+    /// Người dùng từ chối lô: mọi `POST /uploads` trả `410 declined`.
+    #[allow(dead_code)]
+    pub fn set_declined(&self, on: bool) {
+        self.st().declined = on;
+    }
+
+    /// `n` `POST /uploads` kế tiếp trả `503 awaiting_approval` + `Retry-After: 1`.
+    #[allow(dead_code)]
+    pub fn set_awaiting(&self, n: u32) {
+        self.st().awaiting = n;
     }
 
     pub fn files(&self) -> Vec<StoredFile> {
@@ -585,7 +626,12 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
             Err(code) => Reply::status(code),
         },
         ("DELETE", "/api/v1/entries") => delete_entry(&mut state.lock().unwrap(), &req),
-        ("POST", "/api/v1/uploads") => create_upload(&state, &req),
+        // Thân danh sách lô (§6.10) tuỳ chọn: không `Content-Length` (curl không thân) = thân rỗng.
+        ("POST", "/api/v1/uploads") if req.header("content-length").is_none() => create_upload(&state, &req, &[]),
+        ("POST", "/api/v1/uploads") => match read_body(&mut sock, &req, 1 << 20).await {
+            Ok(body) => create_upload(&state, &req, &body),
+            Err(code) => Reply::status(code),
+        },
         (m, p) if p.starts_with("/api/v1/uploads/") => {
             let uid = decode(&p["/api/v1/uploads/".len()..]);
             match m {
@@ -967,7 +1013,7 @@ async fn pair(sock: &mut TcpStream, state: &Mutex<State>, req: &Request) -> Repl
     Reply::json(200, json!({"token": token, "id": ID, "name": NAME}))
 }
 
-fn create_upload(state: &Mutex<State>, req: &Request) -> Reply {
+fn create_upload(state: &Mutex<State>, req: &Request, body: &[u8]) -> Reply {
     let Some(name) = req.header("x-file-name").and_then(decode_opt) else { return Reply::status(400) };
     let name = name.rsplit(['/', '\\']).next().unwrap_or("").to_owned();
     let Some(length) = req.header_u64("upload-length").filter(|l| *l > 0) else { return Reply::status(400) };
@@ -984,6 +1030,9 @@ fn create_upload(state: &Mutex<State>, req: &Request) -> Reply {
         return Reply::status(415);
     }
     let mut s = state.lock().unwrap();
+    if let Err(r) = batch_gate(&mut s, req, &name, body) {
+        return r;
+    }
     if s.sessions.len() >= MAX_SESSIONS {
         return Reply::status(503).with("Retry-After", 2);
     }
@@ -995,6 +1044,51 @@ fn create_upload(state: &Mutex<State>, req: &Request) -> Reply {
         .insert(uid.clone(), Session { name, dir: dir.clone(), length, offset: 0, data: Vec::new(), busy: false });
     Reply::json(201, json!({"id": uid, "offset": 0, "length": length, "dir": dir}))
         .with("Location", format!("/api/v1/uploads/{uid}"))
+}
+
+/// §6.5 + §6.10: ghi header lô, nhận danh sách, cổng xác nhận (`503 awaiting_approval` / `410 declined`).
+fn batch_gate(s: &mut State, req: &Request, name: &str, body: &[u8]) -> Result<(), Reply> {
+    let batch = s.features.iter().any(|f| f == "batch");
+    let id = req.header("x-batch-id").map(str::to_owned);
+    let index = match req.header("x-batch-index") {
+        None => None,
+        Some(v) => Some(v.trim().parse::<usize>().map_err(|_| Reply::status(400))?),
+    };
+    let list = if body.is_empty() {
+        None
+    } else {
+        let m: ferry_core::protocol::BatchManifest = serde_json::from_slice(body).map_err(|_| Reply::status(400))?;
+        Some(m.files)
+    };
+    s.batch_posts.push(BatchPost {
+        name: name.to_owned(),
+        id: id.clone(),
+        index,
+        files: req.header_u64("x-batch-files"),
+        bytes: req.header_u64("x-batch-bytes"),
+        list: list.clone(),
+    });
+    if batch && let Some(id) = &id {
+        let ok = (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !ok {
+            return Err(Reply::status(400));
+        }
+        if let Some(l) = &list {
+            s.batch_lists.entry(id.clone()).or_insert(l.len());
+        }
+        let known = s.batch_lists.get(id).copied();
+        if index.zip(known).is_some_and(|(i, n)| i >= n) {
+            return Err(Reply::status(400));
+        }
+    }
+    if s.declined {
+        return Err(Reply::json(410, json!({"error": "declined"})));
+    }
+    if s.awaiting > 0 {
+        s.awaiting -= 1;
+        return Err(Reply::json(503, json!({"error": "awaiting_approval"})).with("Retry-After", 1));
+    }
+    Ok(())
 }
 
 /// `None` = không phản hồi (kết nối đứt).
@@ -1201,6 +1295,10 @@ impl FakePhone {
             cut_get_after: None,
             file_gets: Vec::new(),
             made_dirs: std::collections::BTreeSet::new(),
+            batch_posts: Vec::new(),
+            batch_lists: HashMap::new(),
+            declined: false,
+            awaiting: 0,
         }));
         let connections = Arc::new(AtomicU64::new(0));
         let tasks = vec![tokio::spawn(accept_loop(l6, state.clone(), connections.clone()))];

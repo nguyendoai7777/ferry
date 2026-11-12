@@ -100,6 +100,7 @@ pub fn item_status(i18n: &I18n, item: &UploadItem, device: DeviceState) -> (Stri
                 FailReason::BadRequest => "state.failed_bad_request",
                 FailReason::SourceChanged => "state.failed_source_changed",
                 FailReason::SourceMissing => "state.failed_source_missing",
+                FailReason::Declined => "state.failed_declined",
             };
             (i18n.t(key).to_owned(), Tone::Danger)
         }

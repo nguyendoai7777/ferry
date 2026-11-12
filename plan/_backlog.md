@@ -34,8 +34,9 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
   - **Server Sync WiFi tự bật lại**: lưu `sync_enabled`, bật lại service ở `Application.onCreate`,
     `MY_PACKAGE_REPLACED`, `BOOT_COMPLETED`, `START_STICKY`; log tag `VpSync`. Gặp thật 11/11/2026: cài đè apk giết
     tiến trình, mở lại app không mở cổng 8080 ⇒ PC báo lỗi mạng.
-  - **§6.10 danh sách cả lô** (`batch`, `X-Batch-*`, `503 awaiting_approval`, `410 declined`): phía PC chưa gửi
-    `X-Batch-*` / chưa xử lý `410` — làm khi điện thoại khai `batch`.
+  - **§6.10 danh sách cả lô** — PC đã xong 12/11/2026 (`X-Batch-*` + thân danh sách tới `201` đầu, `410` ⇒ cả lô Failed
+    "Điện thoại từ chối nhận", `503 awaiting_approval` chờ `Retry-After` không giới hạn). Thử thật: iPhone khai `batch`;
+    Android khi có — tắt "Tự động nhận file", gửi một thư mục ⇒ điện thoại thấy đủ danh sách, bấm Từ chối ⇒ PC báo cả lô.
   - **W-11 — `id` + token bền qua tắt / bật "Cho phép nhận"** (PROTOCOL §6.3; gặp 12/11/2026 trên vivo: mỗi lần bật lại
     sync `id` đổi `e5427876…` ⇒ `a002ad7a…` và token cũ thành `paired:false` ⇒ PC bắt ghép lại PIN). Lưu bền `id` + danh
     sách token; soát cả iPhone. Thử: ghi `id` từ `curl <ip>:8080/api/v1/info`, tắt / bật sync, `id` phải giữ.
