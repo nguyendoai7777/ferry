@@ -14,6 +14,7 @@
 mod breadcrumb;
 mod clip;
 mod edit;
+mod export;
 mod table;
 mod tree;
 
@@ -339,6 +340,7 @@ impl PhoneBrowser {
                 if came_online {
                     self.refresh(cx);
                 }
+                self.sync_export(cx);
                 cx.notify();
             }
             ModelEvent::Reply { req, outcome } if self.pending.contains_key(req) => {
@@ -596,7 +598,16 @@ impl Render for PhoneBrowser {
                     div().px_4().py_1().text_xs().text_color(color).child(SharedString::from(text))
                 }),
             )
-            .child(div().flex_1().min_h(px(0.)).flex().child(tree_view).child(table_view))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .flex()
+                    .on_key_down(cx.listener(Self::on_browser_key))
+                    .child(tree_view)
+                    .child(table_view),
+            )
+            .children(self.render_export_bar(cx))
             .children(bottom)
             .child(self.render_edit_dialog(cx))
     }

@@ -40,6 +40,8 @@ use ferry_core::watch::{self, FolderWatcher, Ready};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+mod export;
+
 use crate::ipc_server::Outbox;
 use crate::notify::Notice;
 use crate::tray_state::{self, Summary, TrayStatus, plural};
@@ -69,6 +71,9 @@ pub struct EngineConfig {
     pub autostart_error: Option<String>,
     /// Thư mục theo dõi: tệp đứng yên chừng này mới vào hàng đợi (`watch::STABLE_FOR`; test rút ngắn).
     pub watch_stable_for: Duration,
+    /// Thư mục tạm của Cắt / Sao chép sang máy tính (W-10): `<data_dir>/clipboard`, mỗi lần một thư mục con.
+    pub export_dir: PathBuf,
+    pub clipboard: crate::clipboard::Clipboard,
 }
 
 /// Đầu ra không qua IPC. Test thay bằng hàm ghi lại.
@@ -241,6 +246,8 @@ enum Internal {
         req: u64,
         result: AllowResult,
     },
+    /// Cắt / Sao chép sang máy tính (W-10, `engine/export.rs`).
+    Export(export::ExportMsg),
 }
 
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
@@ -318,6 +325,11 @@ struct Engine {
     last_offline_scan: Option<Instant>,
     /// Lần đọc lại `info` gần nhất của từng máy Online ([`INFO_REFRESH_EVERY`]).
     info_refreshed: HashMap<DeviceId, Instant>,
+    /// W-10: lần Cắt / Sao chép sang máy tính đang có, số thứ tự lần gần nhất, thư mục tạm gốc.
+    export: Option<export::ExportJob>,
+    export_seq: u64,
+    export_base: PathBuf,
+    clipboard: crate::clipboard::Clipboard,
 }
 
 struct Subscriber {
@@ -386,7 +398,13 @@ impl Engine {
             last_scan: None,
             last_offline_scan: None,
             info_refreshed: HashMap::new(),
+            export: None,
+            export_seq: 0,
+            export_base: cfg.export_dir,
+            clipboard: cfg.clipboard,
         };
+        // Phiên Cắt / Sao chép của lần chạy trước: còn trong hạn thì giữ (Windows / macOS clipboard sống qua tiến trình).
+        ferry_core::export::clean_stale(&engine.export_base, ferry_core::export::KEEP_FOR);
         if browser.is_some() {
             engine.firewall = firewall::detect(&engine.firewall_marker());
             if engine.firewall.may_block {
@@ -693,6 +711,11 @@ impl Engine {
                 self.edit_op(outbox, req, &device, feature::COPY, move |c| async move {
                     c.move_entry(&path, &dir).await.map(|path| Outcome::Edited { path })
                 })
+            }
+            LibraryOp::Export { device, entries, cut } => Some(self.start_export(device, entries, cut)),
+            LibraryOp::CancelExport => {
+                self.drop_export(true);
+                Some(Ok(Outcome::Done))
             }
             LibraryOp::Download { device, remote_ids } => {
                 if remote_ids.is_empty() {
@@ -1425,6 +1448,7 @@ impl Engine {
                 self.dirty = true;
                 reply_to(&outbox, req, Ok(Outcome::Done));
             }
+            Internal::Export(msg) => self.on_export(msg),
             Internal::Watched { device, files } => {
                 if files > 0 {
                     if let Some(r) = self.runners.get(&device) {
@@ -1645,6 +1669,7 @@ impl Engine {
         snapshot.mdns_firewall =
             firewall::hint_needed(self.firewall.may_block, self.mdns_since.is_some(), self.mdns_found)
                 .then(|| self.firewall.hint());
+        snapshot.export = self.export_view();
         snapshot
     }
 
@@ -1820,6 +1845,7 @@ fn snapshot_parts(
         downloads,
         downloads_omitted,
         mdns_firewall: None,
+        export: None,
     }
 }
 
@@ -2018,6 +2044,7 @@ mod tests {
 
     use ferry_core::config::PairedDevice;
     use ferry_core::i18n::Language;
+    use ferry_core::ipc::{ExportEntry, ExportState};
     use ferry_core::pairing::MemoryKeyring;
 
     use super::fake_phone::{self, FakePhone};
@@ -2087,6 +2114,8 @@ mod tests {
             autostart: |_| Ok(()),
             autostart_error: None,
             watch_stable_for: Duration::from_millis(300),
+            export_dir: dir.join("clipboard"),
+            clipboard: crate::clipboard::Clipboard { set_files: fake_clipboard_set, clear: || {} },
         };
         let engine = spawn(&tokio::runtime::Handle::current(), cfg, sinks);
         Rig { engine, captured, store }
@@ -2122,6 +2151,18 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    /// Clipboard giả: ghi lại thay vì đụng clipboard thật của máy chạy test.
+    static CLIPBOARD: std::sync::Mutex<Vec<(Vec<PathBuf>, bool)>> = std::sync::Mutex::new(Vec::new());
+
+    fn fake_clipboard_set(paths: &[PathBuf], cut: bool) -> Result<(), String> {
+        CLIPBOARD.lock().unwrap().push((paths.to_vec(), cut));
+        Ok(())
+    }
+
+    fn export_is(msg: &DaemonToUi, want: impl Fn(&ExportState) -> bool) -> bool {
+        matches!(msg, DaemonToUi::Snapshot(s) if s.export.as_ref().is_some_and(|e| want(&e.state)))
     }
 
     fn is_online(msg: &DaemonToUi) -> bool {
@@ -2358,6 +2399,79 @@ mod tests {
         let mv = LibraryOp::Move { device: dev, path: "Movies".into(), dir: "Movies".into() };
         let (_rx, out) = call(&rig.engine, &outbox, rx, 12, mv).await;
         assert_eq!(out, Outcome::Failed { error: CommandError::InvalidInput });
+        rig.engine.shutdown();
+    }
+
+    /// W-10: Sao chép tải vào thư mục tạm rồi mới đặt clipboard; Cắt xoá trên điện thoại chỉ sau khi mục tạm bị dời đi.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn export_copies_then_moves_after_paste() {
+        async fn call(engine: &EngineHandle, outbox: &Outbox, rx: OutboxReceiver, req: u64, op: LibraryOp) -> (OutboxReceiver, Outcome) {
+            engine.send(Input::Request { outbox: outbox.clone(), req, op: Op::Library(op) });
+            let (rx, got) = collect(rx, move |m| matches!(m, DaemonToUi::Reply { req: r, .. } if *r == req)).await;
+            let DaemonToUi::Reply { outcome, .. } = got.last().unwrap().1.clone() else { unreachable!() };
+            (rx, outcome)
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        phone.add_file("a.mp4", Some("Download"), vec![3; 5000]);
+        phone.add_file("x.mp4", Some("Phim/Sub"), vec![4; 7000]);
+        phone.set_features(&["dirs", "browse", "fetch"]);
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, is_online).await;
+        let dev = device();
+        let entry = |path: &str, folder| ExportEntry { path: path.into(), folder };
+
+        // Cắt cần `edit`.
+        let cut = LibraryOp::Export { device: dev.clone(), entries: vec![entry("Download/a.mp4", false)], cut: true };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 1, cut).await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::Forbidden });
+
+        let copy = LibraryOp::Export { device: dev.clone(), entries: vec![entry("Download/a.mp4", false)], cut: false };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 2, copy).await;
+        assert_eq!(out, Outcome::Done);
+        let (rx, _) = collect(rx, |m| export_is(m, |s| *s == ExportState::Ready)).await;
+        let (paths, was_cut) = CLIPBOARD.lock().unwrap().last().cloned().unwrap();
+        assert!(!was_cut);
+        assert_eq!(std::fs::read(&paths[0]).unwrap(), vec![3; 5000]);
+        let session = paths[0].parent().unwrap().to_owned();
+        let (rx, out) = call(&rig.engine, &outbox, rx, 3, LibraryOp::CancelExport).await;
+        assert_eq!(out, Outcome::Done);
+        let (rx, _) = collect(rx, |m| matches!(m, DaemonToUi::Snapshot(s) if s.export.is_none())).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!session.exists(), "cancel removes the session dir");
+        assert_eq!(phone.files().len(), 2, "copy never deletes on the phone");
+
+        // Cắt: chưa dán ⇒ không xoá; dời mục tạm đi ⇒ xoá đúng phần đó.
+        phone.set_features(&["dirs", "browse", "fetch", "edit"]);
+        tokio::time::sleep(INFO_REFRESH_EVERY).await;
+        let (rx, _) = call(&rig.engine, &outbox, rx, 4, LibraryOp::List { device: dev.clone() }).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let cut = LibraryOp::Export {
+            device: dev.clone(),
+            entries: vec![entry("Download/a.mp4", false), entry("Phim", true)],
+            cut: true,
+        };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 5, cut).await;
+        assert_eq!(out, Outcome::Done);
+        let (rx, _) = collect(rx, |m| export_is(m, |s| *s == ExportState::Ready)).await;
+        let (paths, was_cut) = CLIPBOARD.lock().unwrap().last().cloned().unwrap();
+        assert!(was_cut);
+        assert_eq!(paths.len(), 2);
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(phone.files().len(), 2, "nothing pasted yet");
+
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        for p in &paths {
+            std::fs::rename(p, dest.join(p.file_name().unwrap())).unwrap();
+        }
+        let (_rx, _) =
+            collect(rx, |m| export_is(m, |s| matches!(s, ExportState::Moved { deleted: 4, kept: 0 }))).await;
+        assert!(phone.files().is_empty());
+        assert_eq!(std::fs::read(dest.join("Phim/Sub/x.mp4")).unwrap(), vec![4; 7000]);
+        assert!(rig.captured.lock().unwrap().notices.iter().any(|n| n.body.contains("2")));
         rig.engine.shutdown();
     }
 

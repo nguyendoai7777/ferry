@@ -493,7 +493,8 @@ async fn edit_makes_renames_and_deletes() {
     assert!(left.files.is_empty());
     assert_eq!(left.dirs.len(), 1);
     assert!(p.files().is_empty());
-    assert_eq!(p.made_dirs(), ["Download/Mới"]);
+    // Xoá tệp / thư mục con không xoá thư mục cha (như bộ nhớ thật).
+    assert_eq!(p.made_dirs(), ["Download", "Download/Mới"]);
 }
 
 /// W-9 (§6.13): chép / dời; trùng tên ⇒ điện thoại đặt `tên (2)`, thư mục vào cây con ⇒ `400`, thiếu `copy` ⇒ `403`.

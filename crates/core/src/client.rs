@@ -301,6 +301,13 @@ impl PhoneClient {
         self.send(self.request(Method::DELETE, &q)).await.map(drop)
     }
 
+    /// `DELETE /api/v1/entries?path=&ifEmpty=1` (§6.14) — xoá thư mục chỉ khi nó rỗng thật (kể cả mục ẩn). Còn mục ⇒
+    /// `Conflict`.
+    pub async fn delete_dir_if_empty(&self, dir: &str) -> Result<()> {
+        let q = format!("{}?path={}&ifEmpty=1", path::ENTRIES, encode_path_segment(&protocol::normalize_dir(dir)));
+        self.send(self.request(Method::DELETE, &q)).await.map(drop)
+    }
+
     /// `POST /api/v1/copy` (§6.13) — chép tệp / thư mục `entry` vào thư mục `dir` (rỗng = gốc). Trùng tên ⇒ điện thoại tự
     /// đặt `tên (2)`; trả đường thật của bản chép.
     pub async fn copy_entry(&self, entry: &str, dir: &str) -> Result<String> {
@@ -403,7 +410,16 @@ impl PhoneClient {
     /// Trả phản hồi đã kiểm mã: xem [`FileDownload::partial`] **trước** khi ghi (`false` ⇒ tệp đã đổi / server gửi cả
     /// tệp từ byte 0, cắt tệp `.part` về 0) rồi [`FileDownload::write_to`].
     pub async fn file_get_range(&self, id: &str, from: u64, if_range: Option<&str>) -> Result<FileDownload> {
-        let mut rb = self.request(Method::GET, &file_path(id));
+        self.get_range(&file_path(id), from, if_range).await
+    }
+
+    /// `GET /api/v1/fetch?path=` (§6.14) — như [`Self::file_get_range`] nhưng theo đường tệp trên bộ nhớ dùng chung.
+    pub async fn fetch_range(&self, entry: &str, from: u64, if_range: Option<&str>) -> Result<FileDownload> {
+        self.get_range(&fetch_path(entry), from, if_range).await
+    }
+
+    async fn get_range(&self, route: &str, from: u64, if_range: Option<&str>) -> Result<FileDownload> {
+        let mut rb = self.request(Method::GET, route);
         if from > 0 {
             rb = rb.header(h::RANGE, format!("bytes={from}-"));
             if let Some(etag) = if_range {
@@ -486,6 +502,10 @@ fn upload_path(uid: &str) -> String {
 
 fn file_path(id: &str) -> String {
     format!("{}{}", path::FILE, encode_path_segment(id))
+}
+
+fn fetch_path(entry: &str) -> String {
+    format!("{}?path={}", path::FETCH, encode_path_segment(&protocol::normalize_dir(entry)))
 }
 
 /// 2xx ⇒ giữ nguyên; lỗi ⇒ log thân (cắt ngắn) rồi map theo mã.

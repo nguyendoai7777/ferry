@@ -34,6 +34,9 @@ pub mod path {
     pub const COPY: &str = "/api/v1/copy";
     /// `POST` `{"path","dir"}` ⇒ `200` `{"path"}` — dời (Cắt → Dán), chỉ khi có [`super::feature::COPY`] (§6.13).
     pub const MOVE: &str = "/api/v1/move";
+    /// `GET` / `HEAD ?path=<URL-encoded>` — tải một tệp theo đường (Range / If-Range như [`FILE`]), chỉ khi có
+    /// [`super::feature::FETCH`] (§6.14).
+    pub const FETCH: &str = "/api/v1/fetch";
 }
 
 /// Tên header riêng của giao thức (PROTOCOL 6.3, 6.5).
@@ -60,6 +63,9 @@ pub mod feature {
     pub const EDIT: &str = "edit";
     /// Sao chép / dời giữa thư mục (§6.13, W-9); chỉ có cùng [`EDIT`].
     pub const COPY: &str = "copy";
+    /// Tải tệp theo đường (`GET /fetch`) + `DELETE /entries?ifEmpty=1` — Cắt / Sao chép sang máy tính (§6.14, W-10);
+    /// chỉ có cùng [`BROWSE`].
+    pub const FETCH: &str = "fetch";
 }
 
 /// Đuôi video điện thoại nhận (PROTOCOL 6.6), chữ thường.

@@ -150,6 +150,15 @@ impl Model {
             .is_some_and(|d| d.features.iter().any(|f| f == feature::COPY))
     }
 
+    /// Điện thoại cho tải theo đường dẫn (W-10, `features: fetch`) — Cắt / Sao chép sang máy tính.
+    pub fn fetches_storage(&self, device: &DeviceId) -> bool {
+        self.snapshot
+            .devices
+            .iter()
+            .find(|d| &d.id == device)
+            .is_some_and(|d| d.features.iter().any(|f| f == feature::FETCH))
+    }
+
     /// Khoá thư mục đích nhớ theo chế độ: cùng chuỗi `dir` mang nghĩa khác khi có / không `browse` (§6.11).
     fn dest_key(&self, device: &DeviceId) -> String {
         if self.browses_storage(device) { format!("{}#browse", device.0) } else { device.0.clone() }

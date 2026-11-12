@@ -73,6 +73,8 @@ pub enum Pending {
     Delete(Target),
     /// Một mục của lượt Dán (W-9).
     Paste(ClipEntry),
+    /// Cắt / Sao chép sang máy tính vừa gửi (W-10): chỉ cần biết lỗi bắt đầu.
+    Export,
 }
 
 /// Một lượt xoá nhiều mục: đợi đủ trả lời mới đọc lại các thư mục cha.
@@ -480,6 +482,7 @@ impl PhoneBrowser {
                 _ => self.edit_failed(&CommandError::Internal, window, cx),
             },
             Pending::Paste(e) => self.on_paste_reply(e, outcome, cx),
+            Pending::Export => self.on_export_reply(outcome, cx),
             Pending::Delete(t) => {
                 let Some(run) = self.deleting.as_mut() else { return true };
                 run.left = run.left.saturating_sub(1);

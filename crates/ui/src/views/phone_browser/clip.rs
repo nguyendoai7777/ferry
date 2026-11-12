@@ -3,6 +3,7 @@
 //! Cắt / Sao chép chỉ ghi đường vào bảng nháp của [`Model`] (không gọi mạng). Dán gửi lần lượt `Copy` / `Move` từng mục
 //! vào thư mục đích; đủ trả lời thì đọc lại thư mục đích (và thư mục nguồn khi dời). Trùng tên ở đích: điện thoại tự đặt
 //! `tên (2)`. Dán xám khi bảng nháp trống / của máy khác, điện thoại chưa khai `copy`, đang offline hoặc đang dán.
+//! Điện thoại khai `fetch` (W-10) ⇒ Cắt / Sao chép còn chuẩn bị để dán ở trình quản lý tệp của máy ([`super::export`]).
 
 use std::collections::BTreeSet;
 
@@ -50,16 +51,17 @@ impl PhoneBrowser {
 
     /// "Cắt" + "Sao chép" cho các mục `targets`. Thư mục ảo (chỉ có phía PC) không chép được.
     pub(crate) fn clip_items(&self, menu: Menu, targets: Vec<Target>, weak: &WeakEntity<Self>, cx: &App) -> Menu {
-        let off = targets.is_empty() || !self.copy_known(cx) || targets.iter().any(|t| t.is_virtual);
+        let none = targets.is_empty() || targets.iter().any(|t| t.is_virtual);
+        let (cut_off, copy_off) = (none || !self.can_cut_out(cx), none || !self.can_copy_out(cx));
         let (w1, t1, w2, t2) = (weak.clone(), targets.clone(), weak.clone(), targets);
-        menu.item(MenuItem::new("br-m-cut", self.i18n.t("browser.menu_cut").to_owned()).disabled(off).on_select(
+        menu.item(MenuItem::new("br-m-cut", self.i18n.t("browser.menu_cut").to_owned()).disabled(cut_off).on_select(
             move |_, cx| {
                 let t = t1.clone();
                 let _ = w1.update(cx, |this, cx| this.set_clip(t, true, cx));
             },
         ))
         .item(
-            MenuItem::new("br-m-copy", self.i18n.t("browser.menu_copy").to_owned()).disabled(off).on_select(
+            MenuItem::new("br-m-copy", self.i18n.t("browser.menu_copy").to_owned()).disabled(copy_off).on_select(
                 move |_, cx| {
                     let t = t2.clone();
                     let _ = w2.update(cx, |this, cx| this.set_clip(t, false, cx));
@@ -81,7 +83,8 @@ impl PhoneBrowser {
         )
     }
 
-    fn set_clip(&mut self, targets: Vec<Target>, cut: bool, cx: &mut Context<Self>) {
+    pub(crate) fn set_clip(&mut self, targets: Vec<Target>, cut: bool, cx: &mut Context<Self>) {
+        self.start_export(&targets, cut, cx);
         let entries = targets.into_iter().map(|t| ClipEntry { path: t.path, folder: t.folder }).collect();
         let clip = StorageClip { device: self.device.clone(), entries, cut };
         self.model.update(cx, |m, _| m.clip = Some(clip));
@@ -93,6 +96,10 @@ impl PhoneBrowser {
             return;
         }
         let Some(clip) = self.clip(cx).cloned() else { return };
+        if clip.cut {
+            let paths: Vec<String> = clip.entries.iter().map(|e| e.path.clone()).collect();
+            self.drop_export_of(&paths, cx);
+        }
         let mut run = PasteRun {
             left: 0,
             failed: Vec::new(),

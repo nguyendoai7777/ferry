@@ -195,7 +195,7 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
 - `paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
 - `port` + `addresses`: mọi địa chỉ LAN của điện thoại (IPv4 riêng + IPv6 global / ULA; **không** link-local — scope
   phía điện thoại vô nghĩa với PC). Thêm đường khi mDNS chỉ trả một họ địa chỉ hoặc IP đổi.
-- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10); `browse` ⇒ duyệt bộ nhớ (§6.11); `edit` ⇒ thư mục mới / đổi tên / xoá (§6.12);
+- `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10); `browse` ⇒ duyệt bộ nhớ (§6.11); `edit` ⇒ thư mục mới / đổi tên / xoá (§6.12); `copy` ⇒ sao chép / dời trên điện thoại (§6.13); `fetch` ⇒ tải theo đường, Cắt / Sao chép sang máy tính (§6.14);
   thiếu ⇒ PC gửi phẳng và báo "Cập nhật app trên điện thoại để giữ thư mục". `ipv6` ⇒ server nghe IPv6.
 
 `POST /api/v1/pair` — không cần xác thực.
@@ -415,6 +415,36 @@ lẫn `dir`, trừ `dir` rỗng = gốc là đích hợp lệ), mỗi request m�
 - Đang nhận upload vào mục đó ⇒ `409` (PC thử lại sau). Thư viện (`list`) đi theo như §6.12.
 - PC: Cắt / Sao chép không gọi mạng; Dán bật khi bảng nháp có mục và điện thoại có `copy`. Dán xong ⇒ đọc lại thư mục
   đích (và thư mục nguồn khi dời); dời xong thì bảng nháp rỗng, sao chép thì giữ để dán tiếp.
+
+### 6.14 Tải theo đường dẫn — Cắt · Sao chép sang máy tính
+
+Chỉ khi `info.features` có **`fetch`** (W-10), và `fetch` chỉ được khai khi đang có `browse` (§6.11; cùng công tắc + quyền,
+mất quyền ⇒ thôi khai). Mục đích: như Explorer — chọn tệp / thư mục trong trình duyệt điện thoại trên PC, Sao chép (hoặc
+Cắt) rồi dán vào trình quản lý tệp của máy (Files, Explorer, Finder). Tệp ngoài thư viện không có `id` (§6.11) nên
+`/api/v1/file/<id>` không dùng được; route dưới tải theo đường.
+
+- **Tải** — `GET` / `HEAD /api/v1/fetch?path=<URL-encoded>`, Bearer. `path` là một **tệp**, tương đối so với gốc bộ nhớ
+  dùng chung, làm sạch như §6.12. Như §6.4: `Range: bytes=a-b` (một khoảng) / `bytes=a-`, `If-Range` với `ETag`, `206` /
+  `416` (kèm `Content-Range: bytes */<cỡ>`), `Content-Length`, `Content-Disposition` có `filename*`, `Accept-Ranges:
+  bytes`. **`ETag` bắt buộc** và đổi khi nội dung đổi (gợi ý: `"<size>-<modified>"`) — PC dùng nó để tải tiếp đúng tệp.
+  `Content-Type` theo đuôi, không biết ⇒ `application/octet-stream`.
+- Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự, rỗng) · `403` không có `fetch` / mất quyền, hoặc mục ẩn (đoạn bắt đầu
+  bằng `.`), `Android/data`, `Android/obb` (như §6.11 — đọc được `Android/` thì tải được) · `404` không có tệp đó, hoặc
+  `path` là thư mục. Thư mục không có route riêng: PC tự liệt kê cây bằng `GET /dirs` (§6.11) rồi tải từng tệp.
+- **Xoá thư mục chỉ khi rỗng** — `DELETE /api/v1/entries?path=<URL-encoded>&ifEmpty=1` (cần `edit`, §6.12): như xoá
+  thường nhưng thư mục còn mục bất kỳ (**kể cả mục ẩn** mà `dirs` không trả) ⇒ `409`, không xoá gì. Với tệp, `ifEmpty`
+  không có tác dụng. Điện thoại khai `fetch` + `edit` thì phải hiểu tham số này.
+- **PC — Sao chép sang máy**: tải mọi tệp đã chọn (thư mục: cả cây con theo `dirs`) vào một thư mục tạm riêng của app
+  trên PC, giữ nguyên cây; đứt mạng thì tải tiếp bằng `Range` + `If-Range`, không đọc cả tệp vào RAM. Tải đủ mới đặt
+  danh sách tệp tạm lên clipboard của hệ thống (Linux `text/uri-list` + `x-special/gnome-copied-files`, Windows
+  `CF_HDROP` + `Preferred DropEffect`, macOS file URL) ⇒ người dùng dán ở trình quản lý tệp. Thư mục tạm dọn khi
+  Sao chép / Cắt lần sau, khi người dùng bỏ, và sau 24 giờ.
+- **PC — Cắt sang máy** (cần thêm `edit`): như trên, clipboard đánh dấu "dời" (`cut` / `DROPEFFECT_MOVE`). Chỉ xoá
+  trên điện thoại khi **biết chắc đã dán**: trình quản lý tệp dời mục tạm đi (mục tạm cấp đầu biến khỏi thư mục tạm,
+  còn thư mục tạm thì còn). Khi đó, với từng tệp đã tải: `GET /dirs` của thư mục cha, `size` + `modified` vẫn như lúc tải
+  ⇒ `DELETE` tệp đó; khác (điện thoại đã sửa tệp) ⇒ giữ. Thư mục: xoá từ dưới lên bằng `ifEmpty=1` ⇒ thư mục còn mục
+  không tải (mục ẩn, tệp mới) được giữ. Không dán (bỏ, hết 24 giờ, Sao chép / Cắt khác) ⇒ không xoá gì. macOS Finder
+  không có Cắt cho tệp: Cắt vẫn đặt file URL, dời bằng ⌥⌘V thì vẫn nhận ra như trên.
 
 ## 7. Kiểm thử
 

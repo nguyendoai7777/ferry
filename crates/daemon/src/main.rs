@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod autostart;
+mod clipboard;
 mod daemon;
 mod engine;
 mod instance;
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         Err(e) => return fail(&format!("cannot take instance lock: {e}")),
     };
 
+    let export_dir = data_dir.join(ferry_core::export::DIR_NAME);
     let config_path = match paths::config_file() {
         Ok(p) => p,
         Err(e) => return fail(&format!("no config dir: {e}")),
@@ -108,6 +110,8 @@ fn main() -> ExitCode {
             autostart: autostart::apply,
             autostart_error,
             watch_stable_for: ferry_core::watch::STABLE_FOR,
+            export_dir: export_dir.clone(),
+            clipboard: clipboard::Clipboard::OS,
         };
         let sinks = Sinks {
             tray: Box::new(move |status| tray_waker.send(Event::Tray(status))),

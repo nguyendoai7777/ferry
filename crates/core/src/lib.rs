@@ -9,6 +9,7 @@ pub mod client;
 pub mod config;
 pub mod device;
 pub mod discovery;
+pub mod export;
 pub mod firewall;
 pub mod i18n;
 pub mod ipc;

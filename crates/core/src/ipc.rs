@@ -19,6 +19,7 @@
 //! - gd1_12 thêm: `Settings{req, op}` ([`SettingsOp`], mọi lệnh trả [`Outcome::Settings`] = cài đặt sau khi áp),
 //!   [`DaemonToUi::OpenSettings`] (menu khay "Cài đặt…"), [`CommandError::NotWritable`].
 //! - W-6 thêm: [`PhoneOp::AllowMdnsFirewall`] ⇒ [`Outcome::Firewall`], [`Snapshot::mdns_firewall`].
+//! - W-10 thêm: [`LibraryOp::Export`] / [`LibraryOp::CancelExport`], [`Snapshot::export`], [`CommandError::TooMany`].
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -32,6 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ThemeChoice, WatchFolder};
 use crate::device::{DeviceId, DeviceState};
+pub use crate::export::ExportEntry;
 use crate::firewall::{AllowResult, MdnsFirewallHint};
 use crate::i18n::LanguagePref;
 use crate::protocol::{DirListing, LibraryItem};
@@ -148,6 +150,15 @@ pub enum LibraryOp {
     Copy { device: DeviceId, path: String, dir: String },
     /// W-9: dời `path` vào `dir` (Cắt → Dán). Trả [`Outcome::Edited`] (đường mới); lỗi như [`Self::Copy`].
     Move { device: DeviceId, path: String, dir: String },
+    /// W-10 (§6.14, cần `features: fetch`; `cut` cần thêm `edit`): Cắt / Sao chép sang máy tính. Daemon tải các mục
+    /// (thư mục cả cây) vào thư mục tạm của phiên rồi mới đặt danh sách tệp lên clipboard của máy; tiến độ ở
+    /// [`Snapshot::export`]. Thay lần trước (bỏ thư mục tạm cũ). `cut`: dán ở trình quản lý tệp xong (mục tạm bị dời
+    /// đi) thì xoá trên điện thoại. Trả `Done` khi đã bắt đầu; lỗi: `InvalidInput` (danh sách rỗng), `Forbidden`
+    /// (thiếu `fetch` / `edit`), `Offline`.
+    Export { device: DeviceId, entries: Vec<ExportEntry>, cut: bool },
+    /// Bỏ lần Cắt / Sao chép sang máy tính đang có: dừng tải, xoá thư mục tạm, bỏ danh sách tệp khỏi clipboard (nếu
+    /// vẫn là của Ferry). Không có gì ⇒ vẫn `Done`.
+    CancelExport,
 }
 
 /// Lệnh màn cài đặt (PROTOCOL 4.5). Quên điện thoại đi [`PhoneOp::Forget`].
@@ -327,6 +338,33 @@ pub struct Snapshot {
     /// cho phép. `None` ⇒ không gợi ý.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mdns_firewall: Option<MdnsFirewallHint>,
+    /// W-10: lần Cắt / Sao chép sang máy tính gần nhất (`LibraryOp::Export`). `None` ⇒ không có.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<Box<ExportView>>,
+}
+
+/// W-10 (§6.14): tiến độ Cắt / Sao chép sang máy tính.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportView {
+    pub device: DeviceId,
+    pub cut: bool,
+    /// Đường điện thoại của các mục đã chọn (UI bỏ "Dán" trong điện thoại khi chúng đã dời sang máy).
+    pub paths: Vec<String>,
+    pub state: ExportState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum ExportState {
+    /// Đang tải vào thư mục tạm. `totalFiles = 0` ⇒ còn đang liệt kê cây thư mục.
+    Preparing { done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64 },
+    /// Danh sách tệp đã trên clipboard — dán ở trình quản lý tệp được rồi.
+    Ready,
+    /// Cắt: mọi mục đã dán sang máy; `deleted` tệp / thư mục đã xoá trên điện thoại, `kept` giữ lại (đổi sau khi
+    /// tải, thư mục còn mục khác).
+    Moved { deleted: u64, kept: u64 },
+    Failed { error: CommandError },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -457,6 +495,8 @@ pub enum CommandError {
     Missing,
     /// W-8: điện thoại không cho sửa ở đây (`403`: gốc, `Android/`, mục ẩn, tắt "Cho máy tính duyệt bộ nhớ").
     Forbidden,
+    /// W-10: quá nhiều tệp cho một lần Cắt / Sao chép sang máy tính (`export::MAX_FILES`).
+    TooMany,
     /// Lỗi trong daemon (đĩa, SQLite) — chi tiết ở log.
     Internal,
 }
@@ -1041,6 +1081,35 @@ mod tests {
             assert_eq!(serde_json::from_str::<DaemonToUi>(wire).unwrap(), msg);
         }
         assert_eq!(format!("{:?}", Pin("123456".into())), "Pin(***)", "PIN never reaches the log");
+    }
+
+    #[test]
+    fn export_round_trips() {
+        let op = LibraryOp::Export {
+            device: DeviceId("p".into()),
+            entries: vec![ExportEntry { path: "Download/Phim".into(), folder: true }],
+            cut: true,
+        };
+        let wire = serde_json::to_string(&op).unwrap();
+        assert_eq!(wire, r#"{"op":"export","device":"p","entries":[{"path":"Download/Phim","folder":true}],"cut":true}"#);
+        assert_eq!(serde_json::from_str::<LibraryOp>(&wire).unwrap(), op);
+        assert_eq!(serde_json::to_string(&LibraryOp::CancelExport).unwrap(), r#"{"op":"cancel_export"}"#);
+
+        let snap = Snapshot {
+            export: Some(Box::new(ExportView {
+                device: DeviceId("p".into()),
+                cut: false,
+                paths: vec!["Download/a.mp4".into()],
+                state: ExportState::Preparing { done_bytes: 5, total_bytes: 10, done_files: 0, total_files: 1 },
+            })),
+            ..Snapshot::default()
+        };
+        let wire = serde_json::to_string(&snap).unwrap();
+        assert!(wire.contains(r#""state":{"kind":"preparing","doneBytes":5,"totalBytes":10,"doneFiles":0,"totalFiles":1}"#), "{wire}");
+        assert_eq!(serde_json::from_str::<Snapshot>(&wire).unwrap(), snap);
+        assert!(!serde_json::to_string(&Snapshot::default()).unwrap().contains("export"));
+        let failed = ExportState::Failed { error: CommandError::TooMany };
+        assert_eq!(serde_json::to_string(&failed).unwrap(), r#"{"kind":"failed","error":{"code":"too_many"}}"#);
     }
 
     #[test]

@@ -133,6 +133,12 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   `copy`). Bảng nháp là `Model::clip` (chỉ đường, không gọi mạng; sống qua lần mở lại trình duyệt), UI ở
   `phone_browser/clip.rs`; Dán gửi từng mục, đủ trả lời mới đọc lại thư mục đích (+ nguồn khi dời). Mục ảo không chép.
   App điện thoại cài §6.13 sau (12/11/2026 mới có ở PC + `fake_phone`) ⇒ máy thật chưa khai `copy` thì Dán xám.
+- **Cắt / Sao chép sang máy tính (W-10, `features: fetch`, §6.14)**: daemon (không phải UI) tải vào
+  `<data_dir>/clipboard/<phiên>` (`ferry_core::export`) rồi đặt clipboard (`daemon/src/clipboard/`); engine ở
+  `engine/export.rs`, UI `phone_browser/export.rs`. Linux: chủ selection X11 tự viết (`x11rb`) chạy qua XWayland — máy
+  Wayland không có XWayland thì không dán được. Cắt chỉ xoá trên điện thoại khi mục cấp đầu trong thư mục phiên biến mất
+  (trình quản lý tệp đã dời) — đừng đổi sang "xoá khi tải xong". Test engine dùng clipboard giả (`Clipboard` hai hàm);
+  test clipboard thật `--ignored`. Thư mục tên `Con`, `Nul`… bị đặt lại `_Con` (tên cấm của Windows) ở mọi OS.
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

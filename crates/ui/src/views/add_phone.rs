@@ -198,7 +198,8 @@ pub fn error_message(i18n: &I18n, error: &CommandError, address_step: bool, now_
         | CommandError::Internal
         | CommandError::Exists
         | CommandError::Missing
-        | CommandError::Forbidden => key("add_phone.err_internal"),
+        | CommandError::Forbidden
+        | CommandError::TooMany => key("add_phone.err_internal"),
     }
 }
 

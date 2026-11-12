@@ -51,6 +51,14 @@ pub struct StoredFile {
 }
 
 impl StoredFile {
+    /// Đường trên bộ nhớ (`dir/name`).
+    pub fn path_key(&self) -> String {
+        match self.dir.as_deref() {
+            Some(d) if !d.is_empty() => format!("{d}/{}", self.name),
+            _ => self.name.clone(),
+        }
+    }
+
     fn etag(&self) -> String {
         format!("\"{}-{}\"", self.id, self.version)
     }
@@ -329,6 +337,7 @@ impl FakePhone {
         f.size = data.len() as u64;
         f.data = Arc::new(data);
         f.version += 1;
+        f.modified += 1;
     }
 }
 
@@ -585,6 +594,14 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
                 _ => Reply::status(405),
             }
         }
+        (m @ ("GET" | "HEAD"), "/api/v1/fetch") => {
+            let found = fetch_target(&state.lock().unwrap(), &req);
+            return match found {
+                Ok(f) if m == "GET" => serve_file(&mut sock, &state, &req, f.path_key(), Some(f)).await,
+                Ok(f) => send(&mut sock, file_reply(&f, &req, true)).await,
+                Err(code) => send(&mut sock, Reply::status(code)).await,
+            };
+        }
         ("GET", p) if p.starts_with("/api/v1/file/") => return get_file(&mut sock, &state, &req, p).await,
         (m @ ("GET" | "HEAD"), p) if p.starts_with("/api/v1/file/") => {
             let id = decode(&p["/api/v1/file/".len()..]);
@@ -604,8 +621,7 @@ fn dirs(s: &State, req: &Request) -> Reply {
     if !s.features.iter().any(|f| f == "browse") {
         return Reply::status(403);
     }
-    let raw = req.path.split_once("?path=").map_or("", |(_, q)| q);
-    let at = decode(raw).trim_matches('/').to_owned();
+    let at = query(req, "path").unwrap_or_default().trim_matches('/').to_owned();
     if at.split('/').any(|seg| seg == "..") {
         return Reply::status(400);
     }
@@ -625,6 +641,9 @@ fn dirs(s: &State, req: &Request) -> Reply {
         let Some(d) = f.dir.as_deref() else { continue };
         if d == at {
             exists = true;
+            if f.name.starts_with('.') {
+                continue; // mục ẩn không liệt kê (§6.11)
+            }
             files.push(json!({"name": f.name, "size": f.size, "modified": f.modified, "id": f.id}));
         } else if let Some(rest) = d.strip_prefix(&prefix) {
             exists = true;
@@ -634,7 +653,7 @@ fn dirs(s: &State, req: &Request) -> Reply {
     if !exists {
         return Reply::status(404);
     }
-    let dirs: Vec<_> = sub.into_iter().map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
+    let dirs: Vec<_> = sub.into_iter().filter(|n| !n.starts_with('.')).map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
     Reply::json(200, json!({"path": at, "dirs": dirs, "files": files}))
 }
 
@@ -735,7 +754,7 @@ fn delete_entry(s: &mut State, req: &Request) -> Reply {
     if !edit_on(s) {
         return Reply::status(403);
     }
-    let raw = req.path.split_once("?path=").map_or(String::new(), |(_, q)| decode(q));
+    let raw = query(req, "path").unwrap_or_default();
     let p = match clean_path(&raw) {
         Ok(p) => p,
         Err(c) => return Reply::status(c),
@@ -744,15 +763,27 @@ fn delete_entry(s: &mut State, req: &Request) -> Reply {
         return Reply::status(403);
     }
     if let Some(ix) = s.file_index(&p) {
-        s.files.remove(ix);
+        // Thư mục chứa nó vẫn còn (rỗng) như hệ tệp thật.
+        if let Some(d) = s.files.remove(ix).dir.filter(|d| !d.is_empty()) {
+            s.made_dirs.insert(d);
+        }
         return Reply::empty(204);
     }
     if !s.dir_exists(&p) {
         return Reply::status(404);
     }
     let prefix = format!("{p}/");
+    // §6.14: `ifEmpty=1` ⇒ thư mục còn mục bất kỳ (kể cả ẩn) thì `409`.
+    let inside = s.files.iter().any(|f| f.dir.as_deref().is_some_and(|d| d == p || d.starts_with(&prefix)))
+        || s.made_dirs.iter().any(|d| d.starts_with(&prefix));
+    if inside && query(req, "ifEmpty").as_deref() == Some("1") {
+        return Reply::status(409);
+    }
     s.files.retain(|f| !f.dir.as_deref().is_some_and(|d| d == p || d.starts_with(&prefix)));
     s.made_dirs.retain(|d| *d != p && !d.starts_with(&prefix));
+    if let Some((parent, _)) = p.rsplit_once('/') {
+        s.made_dirs.insert(parent.to_owned());
+    }
     Reply::empty(204)
 }
 
@@ -1178,16 +1209,45 @@ impl FakePhone {
 /// `GET /api/v1/file/<id>`: như `file_reply`, ghi lại `Range` / `If-Range`, cắt giữa thân khi được dặn.
 async fn get_file(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, path: &str) {
     let id = decode(&path["/api/v1/file/".len()..]);
-    let (file, cut) = {
+    let file = state.lock().unwrap().files.iter().find(|f| f.id == id).cloned();
+    serve_file(sock, state, req, id, file).await
+}
+
+/// `GET /fetch?path=` (§6.14): chỉ khi khai `fetch`; tệp theo đường, mục ẩn ⇒ `403`, thư mục / thiếu ⇒ `404`.
+fn fetch_target(s: &State, req: &Request) -> Result<StoredFile, u16> {
+    if !s.features.iter().any(|f| f == "fetch") {
+        return Err(403);
+    }
+    let p = clean_path(&query(req, "path").unwrap_or_default())?;
+    if p.is_empty() {
+        return Err(400);
+    }
+    if p.split('/').any(|seg| seg.starts_with('.')) {
+        return Err(403);
+    }
+    s.file_index(&p).map(|ix| s.files[ix].clone()).ok_or(404)
+}
+
+/// `key` trong query (`?a=1&b=2`), đã giải mã.
+fn query(req: &Request, key: &str) -> Option<String> {
+    let q = req.path.split_once('?')?.1;
+    q.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+        (k == key).then(|| decode(v))
+    })
+}
+
+/// Gửi tệp (`GET`), ghi lại `Range` / `If-Range` vào `file_gets` với khoá `key` (`id` hoặc đường), cắt thân theo
+/// `cut_next_get_after`.
+async fn serve_file(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, key: String, file: Option<StoredFile>) {
+    let cut = {
         let mut s = state.lock().unwrap();
         s.file_gets.push(FileGet {
-            id: id.clone(),
+            id: key,
             range: req.header("range").map(str::to_owned),
             if_range: req.header("if-range").map(str::to_owned),
         });
-        let file = s.files.iter().find(|f| f.id == id).cloned();
-        let cut = if file.is_some() { s.cut_get_after.take() } else { None };
-        (file, cut)
+        if file.is_some() { s.cut_get_after.take() } else { None }
     };
     let Some(f) = file else { return send(sock, Reply::status(404)).await };
     let reply = file_reply(&f, req, false);

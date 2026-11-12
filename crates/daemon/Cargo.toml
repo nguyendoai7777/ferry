@@ -26,18 +26,25 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 [target.'cfg(target_os = "linux")'.dependencies]
 # `async-io`, không `tokio`: cùng bản đã có trong cây qua `keyring` (Secret Service).
 zbus = { version = "5", default-features = false, features = ["async-io"] }
+# Clipboard danh sách tệp (Cắt / Sao chép sang máy tính, W-10): tự làm chủ selection X11 / XWayland để đưa cả
+# `x-special/gnome-copied-files` (cắt) — `arboard` chỉ có `text/uri-list`. MIT/Apache, thuần Rust.
+x11rb = { version = "0.13", default-features = false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.26", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+# `CF_HDROP` + `Preferred DropEffect` (W-10). BSL-1.0.
+clipboard-win = "5.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSGraphicsContext", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+# URL tệp trên NSPasteboard (W-10). MIT/Apache; không bật ảnh.
+arboard = { version = "3.7", default-features = false }
 
 [dev-dependencies]
 # Điện thoại giả `ferry-core/tests/fake_phone` (gộp bằng `#[path]` vào test của engine) cần hai crate này.

@@ -23,6 +23,9 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_14 `[owner-qa]` — bản cài Windows / macOS** — lý do: cần máy Windows (`pwsh ./build.ps1 -Package setup,portable`,
   cài, xem luật tường lửa "Ferry (mDNS)" trên mạng Public, gỡ cài) và Mac (`bash build.sh`, `Ferry.app` hỏi quyền mạng
   LAN, cửa sổ `ferry-ui` có lấy focus khi `LSUIElement`). Cả ba OS: cài trên máy sạch ⇒ dò điện thoại, gửi 1 tệp (gd1_14 C1).
+- **gd1_15 C8, C9 `[owner-qa]` — dán ở trình quản lý tệp thật** — lý do: session không có điều khiển màn hình; cần mắt
+  chủ dự án (Ubuntu Files) và máy Windows / Mac. `cargo run -p ferry-core --example fake_phone`, ghép, trang thư viện:
+  Sao chép một tệp + một thư mục ⇒ dán ở Files; Cắt ⇒ dán ⇒ mục biến khỏi điện thoại, thông báo "Đã chuyển…".
 - **Icon nhúng trong exe Windows** (gd1_14 mục 10) — lý do: cần máy Windows kiểm resource; shortcut đã dùng `ferry.ico`.
 - **Chờ app điện thoại `video-player`** — lý do: việc ở repo điện thoại (session mobile), PC đã xong phần mình. Khi điện
   thoại có thì thử thật trên vivo V2425A (`adb connect <ip>:5555`, `~/Android/Sdk/platform-tools/adb`):
@@ -31,6 +34,9 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
   - **Server Sync WiFi tự bật lại**: lưu `sync_enabled`, bật lại service ở `Application.onCreate`,
     `MY_PACKAGE_REPLACED`, `BOOT_COMPLETED`, `START_STICKY`; log tag `VpSync`. Gặp thật 11/11/2026: cài đè apk giết
     tiến trình, mở lại app không mở cổng 8080 ⇒ PC báo lỗi mạng.
+  - **W-10 tải theo đường dẫn** (PROTOCOL §6.14, `features: fetch` khi có `browse`): `GET|HEAD /api/v1/fetch?path=`
+    (Range / If-Range / ETag bắt buộc), `DELETE /entries?ifEmpty=1` ⇒ `409` khi thư mục còn mục (kể cả ẩn). Chép mục 6.14
+    sang `PC-implement.md`. PC + `fake_phone` xong 12/11/2026 (`plan/ferry-gd1_15_phone-to-pc-clipboard.md`).
   - **§6.10 danh sách cả lô** (`batch`, `X-Batch-*`, `503 awaiting_approval`, `410 declined`): phía PC chưa gửi
     `X-Batch-*` / chưa xử lý `410` — làm khi điện thoại khai `batch`.
   - **Mã thiết bị bền qua cài lại app** (HMAC của `ANDROID_ID`): cài lại app đổi `id` ⇒ PC đang dò thay thế qua địa chỉ
