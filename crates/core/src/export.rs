@@ -139,7 +139,7 @@ pub fn new_session_dir(base: &Path) -> PathBuf {
 
 /// Tên `name` (đã làm sạch) chưa dùng trong `taken` (so không phân biệt hoa thường: NTFS / APFS mặc định không phân biệt).
 fn unique_name(taken: &mut HashSet<String>, name: &str, folder: bool) -> String {
-    let clean = sanitize_file_name(name);
+    let clean = keep_hidden(name);
     let (stem, ext) = match clean.rsplit_once('.') {
         Some((s, e)) if !folder && !s.is_empty() => (s.to_owned(), format!(".{e}")),
         _ => (clean.clone(), String::new()),
@@ -151,6 +151,15 @@ fn unique_name(taken: &mut HashSet<String>, name: &str, folder: bool) -> String 
             return cand;
         }
         n += 1;
+    }
+}
+
+/// Như [`sanitize_file_name`] nhưng giữ một dấu chấm đầu: mục ẩn trên điện thoại (W-11) chép sang máy vẫn là mục ẩn
+/// (`.nomedia`, không thành `nomedia`).
+fn keep_hidden(name: &str) -> String {
+    match name.trim_start().strip_prefix('.') {
+        Some(rest) if !rest.trim_start_matches('.').trim().is_empty() => format!(".{}", sanitize_file_name(rest)),
+        _ => sanitize_file_name(name),
     }
 }
 
@@ -502,6 +511,17 @@ mod tests {
         assert_eq!(unique_name(&mut taken, "A.mp4", false), "A (2).mp4");
         assert_eq!(unique_name(&mut taken, "a:b", true), "a_b");
         assert_eq!(unique_name(&mut taken, "a_b", true), "a_b (2)");
+    }
+
+    #[test]
+    fn hidden_names_keep_their_dot() {
+        assert_eq!(keep_hidden(".nomedia"), ".nomedia");
+        assert_eq!(keep_hidden(".thu:mục"), ".thu_mục");
+        assert_eq!(keep_hidden(".."), "download");
+        assert_eq!(keep_hidden("a.mp4"), "a.mp4");
+        let mut taken = HashSet::new();
+        assert_eq!(unique_name(&mut taken, ".vdr", true), ".vdr");
+        assert_eq!(unique_name(&mut taken, ".VDR", true), ".VDR (2)");
     }
 
     #[test]

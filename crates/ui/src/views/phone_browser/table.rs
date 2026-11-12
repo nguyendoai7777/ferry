@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use ferry_core::browse::{Entry, EntryKind, Location, SortKey};
+use ferry_core::browse::{self, Entry, EntryKind, Location, SortKey};
 use ferry_core::i18n::I18n;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, IntoElement, MouseButton, SharedString, div, px};
@@ -16,6 +16,8 @@ use super::PhoneBrowser;
 use crate::{assets, fmt};
 
 pub const ROW_HEIGHT: f32 = 28.;
+/// Độ mờ icon của mục ẩn (tên bắt đầu bằng `.`, W-11) — bảng và cây dùng chung.
+pub const HIDDEN_ICON_OPACITY: f32 = 0.45;
 /// Khung danh sách chừa trên / dưới, dòng đầu không dính sát đầu bảng.
 const LIST_PAD_Y: f32 = 4.;
 const MODIFIED_W: f32 = 112.;
@@ -198,14 +200,20 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                                         .flex()
                                         .items_center()
                                         .gap_2()
+                                        // Mục ẩn (tên bắt đầu bằng `.`, W-11) ⇒ icon nhạt hơn.
                                         .child(
-                                            Icon::new(match e.kind {
-                                                EntryKind::Folder => assets::folder(),
-                                                EntryKind::Video => assets::video(),
-                                                EntryKind::File => assets::file(),
-                                            })
-                                            .size(px(16.))
-                                            .color(c.muted),
+                                            div()
+                                                .flex_none()
+                                                .when(browse::is_hidden_name(&e.name), |d| d.opacity(HIDDEN_ICON_OPACITY))
+                                                .child(
+                                                    Icon::new(match e.kind {
+                                                        EntryKind::Folder => assets::folder(),
+                                                        EntryKind::Video => assets::video(),
+                                                        EntryKind::File => assets::file(),
+                                                    })
+                                                    .size(px(16.))
+                                                    .color(c.muted),
+                                                ),
                                         )
                                         .child(
                                             div()

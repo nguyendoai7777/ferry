@@ -650,9 +650,6 @@ fn dirs(s: &State, req: &Request) -> Reply {
         let Some(d) = f.dir.as_deref() else { continue };
         if d == at {
             exists = true;
-            if f.name.starts_with('.') {
-                continue; // mục ẩn không liệt kê (§6.11)
-            }
             files.push(json!({"name": f.name, "size": f.size, "modified": f.modified, "id": f.id}));
         } else if let Some(rest) = d.strip_prefix(&prefix) {
             exists = true;
@@ -662,11 +659,7 @@ fn dirs(s: &State, req: &Request) -> Reply {
     if !exists {
         return Reply::status(404);
     }
-    let dirs: Vec<_> = sub
-        .into_iter()
-        .filter(|n| !n.starts_with('.'))
-        .map(|n| json!({"name": n, "modified": 1, "count": 1}))
-        .collect();
+    let dirs: Vec<_> = sub.into_iter().map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
     Reply::json(200, json!({"path": at, "dirs": dirs, "files": files}))
 }
 
@@ -685,11 +678,9 @@ fn clean_path(raw: &str) -> Result<String, u16> {
     Ok(segs.join("/"))
 }
 
-/// Gốc, `Android/…`, mục ẩn ⇒ cấm sửa.
+/// Gốc, `Android/…` ⇒ cấm sửa (mục ẩn được phép từ W-11).
 fn protected(p: &str) -> bool {
-    p.is_empty()
-        || p.split('/').next().is_some_and(|s| s.eq_ignore_ascii_case("android"))
-        || p.split('/').any(|s| s.starts_with('.'))
+    p.is_empty() || p.split('/').next().is_some_and(|s| s.eq_ignore_ascii_case("android"))
 }
 
 fn json_field(body: &[u8], key: &str) -> Option<String> {
@@ -728,7 +719,7 @@ fn rename(s: &mut State, body: &[u8]) -> Reply {
         Err(c) => return Reply::status(c),
     };
     let name = name.trim().to_owned();
-    if name.is_empty() || name == "." || name == ".." || name.starts_with('.') || name.contains(['/', '\\']) {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
         return Reply::status(400);
     }
     if protected(&p) {
@@ -1241,9 +1232,6 @@ fn fetch_target(s: &State, req: &Request) -> Result<StoredFile, u16> {
     let p = clean_path(&query(req, "path").unwrap_or_default())?;
     if p.is_empty() {
         return Err(400);
-    }
-    if p.split('/').any(|seg| seg.starts_with('.')) {
-        return Err(403);
     }
     s.file_index(&p).map(|ix| s.files[ix].clone()).ok_or(404)
 }

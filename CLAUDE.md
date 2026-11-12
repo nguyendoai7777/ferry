@@ -153,6 +153,10 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   Wayland không có XWayland thì không dán được. Cắt chỉ xoá trên điện thoại khi mục cấp đầu trong thư mục phiên biến mất
   (trình quản lý tệp đã dời) — đừng đổi sang "xoá khi tải xong". Test engine dùng clipboard giả (`Clipboard` hai hàm);
   test clipboard thật `--ignored`. Thư mục tên `Con`, `Nul`… bị đặt lại `_Con` (tên cấm của Windows) ở mọi OS.
+- **Mục ẩn (W-11, 12/11/2026)**: `dirs` trả cả tên bắt đầu bằng `.`; PC nhận ra theo tên (`browse::is_hidden_name`) và vẽ icon
+  nhạt (`table::HIDDEN_ICON_OPACITY`, bảng + cây), cho gõ tên bắt đầu bằng `.` (`edit::sanitize_name`). Chép sang máy
+  (`export::keep_hidden`) giữ dấu chấm đầu; "Tải về máy" (`sanitize_file_name`) vẫn cắt nó. App điện thoại bản cũ còn
+  giấu / cấm mục ẩn ⇒ tạo thư mục ẩn nhận `403` / `400` tới khi app cập nhật.
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

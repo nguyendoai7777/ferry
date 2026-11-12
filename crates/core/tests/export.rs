@@ -77,8 +77,8 @@ async fn copy_keeps_the_tree_and_bytes() {
     assert_eq!(std::fs::read(root.join("Phim/clip.mp4")).unwrap(), pattern(300_000, 1));
     assert_eq!(std::fs::read(root.join("Phim/Sub/note.txt")).unwrap(), pattern(1200, 2));
     assert_eq!(std::fs::read(root.join("lone.txt")).unwrap(), pattern(10, 3));
-    // Mục ẩn không liệt kê ⇒ không chép; không còn tệp `.ferry-part`.
-    assert!(!root.join("Phim/.nomedia").exists());
+    // Mục ẩn liệt kê (W-11) ⇒ chép như tệp thường; không còn tệp `.ferry-part`.
+    assert!(root.join("Phim/.nomedia").exists());
     let names: Vec<String> = walk(&root);
     assert!(names.iter().all(|n| !n.ends_with(".ferry-part")), "{names:?}");
 
@@ -115,10 +115,11 @@ async fn cut_deletes_only_after_the_item_moved_away() {
     phone.add_file("a.mp4", Some("Download"), pattern(1000, 5));
     phone.add_file("x.mp4", Some("Phim"), pattern(2000, 6));
     phone.add_file("y.mp4", Some("Phim/Con"), pattern(3000, 7));
-    phone.add_file(".nomedia", Some("Phim/Con"), Vec::new());
     let tmp = tempfile::tempdir().unwrap();
     let root = export::new_session_dir(tmp.path());
     let plan = run(&client, &[entry("Download/a.mp4", false), entry("Phim", true)], &root).await;
+    // Tệp mới trên điện thoại sau khi tải ⇒ không thuộc kế hoạch, thư mục chứa nó phải được giữ.
+    phone.add_file("z.mp4", Some("Phim/Con"), pattern(500, 9));
 
     // Chưa dán: không mục nào biến ⇒ không xoá.
     assert_eq!(export::moved_tops(&plan), Some(vec![]));
@@ -132,14 +133,14 @@ async fn cut_deletes_only_after_the_item_moved_away() {
     assert_eq!((r.deleted, r.kept), (1, 0));
     assert!(phone.files().iter().all(|f| f.name != "a.mp4"));
 
-    // Thư mục: tệp đã sửa trên điện thoại sau khi tải ⇒ giữ; thư mục còn mục ẩn ⇒ giữ.
+    // Thư mục: tệp đã sửa trên điện thoại sau khi tải ⇒ giữ; thư mục còn tệp mới ⇒ giữ.
     let x = phone.files().into_iter().find(|f| f.name == "x.mp4").unwrap();
     phone.replace_file(&x.id, pattern(10, 8));
     std::fs::rename(root.join("Phim"), dest.join("Phim")).unwrap();
     assert_eq!(export::moved_tops(&plan), Some(vec![0, 1]));
     let r = export::remove_moved(&client, &plan, 1).await.unwrap();
     let left: Vec<String> = phone.files().iter().map(|f| f.path_key()).collect();
-    assert!(left.contains(&"Phim/x.mp4".to_owned()) && left.contains(&"Phim/Con/.nomedia".to_owned()), "{left:?}");
+    assert!(left.contains(&"Phim/x.mp4".to_owned()) && left.contains(&"Phim/Con/z.mp4".to_owned()), "{left:?}");
     assert!(!left.contains(&"Phim/Con/y.mp4".to_owned()), "{left:?}");
     assert_eq!((r.deleted, r.kept), (1, 3));
 

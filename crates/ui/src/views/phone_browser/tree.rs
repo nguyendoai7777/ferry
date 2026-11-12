@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use ferry_core::browse::{DirNode, Location, Tree};
+use ferry_core::browse::{self, DirNode, Location, Tree};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, ElementId, IntoElement, SharedString, div, px};
 use materiant::icon::{Icon, IconName};
@@ -138,7 +138,12 @@ pub fn tree_view(
                     .gap_1()
                     .pl(px(4. + 12. * r.depth as f32))
                     .child(chevron)
-                    .child(Icon::new(assets::folder()).size(px(16.)).color(c.muted))
+                    .child(
+                        div()
+                            .flex_none()
+                            .when(browse::is_hidden_name(&r.label), |d| d.opacity(super::table::HIDDEN_ICON_OPACITY))
+                            .child(Icon::new(assets::folder()).size(px(16.)).color(c.muted)),
+                    )
                     .child(
                         div()
                             .min_w_0()

@@ -100,9 +100,9 @@ fn moved(path: &str, old: &str, new: &str) -> Option<String> {
     }
 }
 
-/// Tên mục người dùng gõ: như tên thư mục, thêm cấm dấu chấm đầu (điện thoại ẩn, §6.12 trả `400`).
+/// Tên mục người dùng gõ: như tên thư mục. Tên bắt đầu bằng `.` hợp lệ — tạo / đổi thành mục ẩn (W-11, §6.12).
 pub fn sanitize_name(name: &str) -> Option<String> {
-    browse::sanitize_folder_name(name).filter(|n| !n.starts_with('.'))
+    browse::sanitize_folder_name(name)
 }
 
 pub(super) fn error_key(e: &CommandError) -> &'static str {
@@ -642,9 +642,10 @@ mod tests {
     }
 
     #[test]
-    fn names_reject_hidden_and_separators() {
+    fn names_allow_hidden_reject_separators() {
         assert_eq!(sanitize_name("  Phim  ").as_deref(), Some("Phim"));
-        assert_eq!(sanitize_name(".nomedia"), None);
+        assert_eq!(sanitize_name(".vdr").as_deref(), Some(".vdr"));
+        assert_eq!(sanitize_name(".."), None);
         assert_eq!(sanitize_name("a/b"), None);
         assert_eq!(sanitize_name(""), None);
     }

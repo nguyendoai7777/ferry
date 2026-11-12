@@ -36,6 +36,11 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
     tiến trình, mở lại app không mở cổng 8080 ⇒ PC báo lỗi mạng.
   - **§6.10 danh sách cả lô** (`batch`, `X-Batch-*`, `503 awaiting_approval`, `410 declined`): phía PC chưa gửi
     `X-Batch-*` / chưa xử lý `410` — làm khi điện thoại khai `batch`.
+  - **W-11 — `id` + token bền qua tắt / bật "Cho phép nhận"** (PROTOCOL §6.3; gặp 12/11/2026 trên vivo: mỗi lần bật lại
+    sync `id` đổi `e5427876…` ⇒ `a002ad7a…` và token cũ thành `paired:false` ⇒ PC bắt ghép lại PIN). Lưu bền `id` + danh
+    sách token; soát cả iPhone. Thử: ghi `id` từ `curl <ip>:8080/api/v1/info`, tắt / bật sync, `id` phải giữ.
+  - **W-11 — mục ẩn** (§6.11–6.14): `dirs` liệt kê tên bắt đầu bằng `.` (vẫn giấu `Android/data`, `Android/obb`); `dirs`
+    `POST`, `rename`, `copy`, `move`, `fetch`, `DELETE entries` cho phép mục ẩn (vẫn cấm gốc + `Android/`).
   - **Mã thiết bị bền qua cài lại app** (HMAC của `ANDROID_ID`): cài lại app đổi `id` ⇒ PC đang dò thay thế qua địa chỉ
     (`discovery::find_replacement`).
   - **Điện thoại không quảng bá `_vpsync._tcp`** (gặp 11/11/2026, vivo V2425A, Sync WiFi bật, HTTP `:8080` trả `info`):

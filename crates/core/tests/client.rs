@@ -478,7 +478,9 @@ async fn edit_makes_renames_and_deletes() {
 
     assert_eq!(c.rename("Download/b.txt", "c.txt").await.unwrap(), "Download/c.txt");
     assert!(matches!(c.rename("Download/c.txt", "Mới").await, Err(ClientError::Conflict)));
-    assert!(matches!(c.rename("Download/c.txt", ".ẩn").await, Err(ClientError::BadRequest)));
+    // Mục ẩn được phép (W-11): đổi thành tên bắt đầu bằng `.` rồi đổi lại.
+    assert_eq!(c.rename("Download/c.txt", ".ẩn").await.unwrap(), "Download/.ẩn");
+    assert_eq!(c.rename("Download/.ẩn", "c.txt").await.unwrap(), "Download/c.txt");
     assert!(matches!(c.rename("Download/không có", "x").await, Err(ClientError::NotFound)));
     assert_eq!(c.rename("Download/Phim hè", "Phim thu").await.unwrap(), "Download/Phim thu");
     assert_eq!(c.dirs("Download/Phim thu").await.unwrap().files[0].name, "a.mp4");

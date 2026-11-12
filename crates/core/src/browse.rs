@@ -154,6 +154,11 @@ pub fn breadcrumb(path: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Mục ẩn trên điện thoại: tên bắt đầu bằng `.` (PROTOCOL 6.11, W-11 — vẫn liệt kê, PC vẽ nhạt hơn).
+pub fn is_hidden_name(name: &str) -> bool {
+    name.starts_with('.')
+}
+
 /// Chuẩn hoá tên thư mục người dùng gõ: bỏ khoảng trắng đầu / cuối, không rỗng, không `/` `\` `..`.
 pub fn sanitize_folder_name(name: &str) -> Option<String> {
     let n = name.trim();
