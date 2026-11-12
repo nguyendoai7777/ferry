@@ -266,6 +266,7 @@ export_ready_cut_mac = "Ready to paste {n} items — paste them in Finder with �
 export_moved = "Moved {n} items to this computer"
 export_kept = "Kept {n} items on the phone"
 export_failed = "Could not get ready to paste: {why}"
+export_unsupported = "Copied for pasting on the phone. Pasting to this computer needs an update of the phone app."
 export_cancel = "Dismiss"
 err_too_many = "Too many files at once (20,000 at most)."
 err_not_writable = "Could not write to this computer’s disk."

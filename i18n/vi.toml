@@ -266,6 +266,7 @@ export_ready_cut_mac = "Sẵn sàng dán {n} mục — dán ở Finder bằng �
 export_moved = "Đã dời {n} mục sang máy tính"
 export_kept = "Giữ lại {n} mục trên điện thoại"
 export_failed = "Không chuẩn bị được để dán: {why}"
+export_unsupported = "Đã sao chép để dán trong điện thoại. Dán sang máy tính cần cập nhật app trên điện thoại."
 export_cancel = "Bỏ"
 err_too_many = "Quá nhiều tệp cho một lần (tối đa 20 000)."
 err_not_writable = "Không ghi được vào ổ của máy tính."

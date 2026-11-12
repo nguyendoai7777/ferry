@@ -35,7 +35,17 @@ impl PhoneBrowser {
 
     /// Bắt đầu tải các mục vào thư mục tạm để dán ở máy (thay lần trước).
     pub(crate) fn start_export(&mut self, targets: &[Target], cut: bool, cx: &mut Context<Self>) {
-        if !self.export_known(cx) || self.offline || (cut && !self.edit_known(cx)) {
+        if self.offline || self.mode != BrowserMode::Library || !self.browses_storage() {
+            return;
+        }
+        if !self.model.read(cx).fetches_storage(&self.device) {
+            // App điện thoại chưa có §6.14 ⇒ chỉ dán được trong điện thoại (W-9). Nói rõ thay vì im lặng: người dùng
+            // tưởng đã chép sang máy rồi dán ở Files không ra gì.
+            self.notice = Some(self.i18n.t("browser.export_unsupported").to_owned());
+            cx.notify();
+            return;
+        }
+        if cut && !self.edit_known(cx) {
             return;
         }
         let entries = targets.iter().map(|t| ExportEntry { path: t.path.clone(), folder: t.folder }).collect();
