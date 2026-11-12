@@ -16,8 +16,8 @@ use ferry_core::protocol::Secret;
 use ferry_core::queue::state::{FailReason, PauseReason};
 use ferry_core::queue::{BatchId, ItemId, QueueStore, UploadState, now_ms, plan_batch};
 use ferry_core::transfer::{
-    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
-    UploadRunner, link_channel,
+    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, TransferEvent, UploadRunner,
+    link_channel,
 };
 use tokio::sync::mpsc;
 
@@ -60,12 +60,14 @@ struct Rig {
 }
 
 impl Rig {
-    /// Runner chạy, điện thoại Online ở IPv4 (trừ khi `online = false`).
-    async fn new(cfg: RunnerConfig, throttle: Option<u64>, online: bool) -> Rig {
-        Rig::with_phone(FakePhone::start().await, cfg, throttle, online).await
+    /// Runner chạy, điện thoại Online ở IPv4 (trừ khi `online = false`); `pace` như [`Rig::with_phone`].
+    async fn new(cfg: RunnerConfig, pace: Option<u64>, online: bool) -> Rig {
+        Rig::with_phone(FakePhone::start().await, cfg, pace, online).await
     }
 
-    async fn with_phone(phone: FakePhone, cfg: RunnerConfig, throttle: Option<u64>, online: bool) -> Rig {
+    /// `pace`: điện thoại giả nhận chậm (byte / s) để test bắt được lúc đang gửi.
+    async fn with_phone(phone: FakePhone, cfg: RunnerConfig, pace: Option<u64>, online: bool) -> Rig {
+        phone.set_pace(pace);
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(QueueStore::open(&tmp.path().join("queue.sqlite3"), now_ms()).unwrap()));
         let token = phone.issue_token(CLIENT_ID);
@@ -74,7 +76,7 @@ impl Rig {
             link.send_replace(Some(link_at(phone.v4(), &token).await));
         }
         let (tx, events) = mpsc::unbounded_channel();
-        let (runner, handle) = UploadRunner::new(device(), store.clone(), watch, Throttle::new(throttle), tx, cfg);
+        let (runner, handle) = UploadRunner::new(device(), store.clone(), watch, tx, cfg);
         let bytes_read = runner.bytes_read();
         tokio::spawn(runner.run());
         Rig { phone, token, store, link, handle, events, log: Vec::new(), bytes_read, tmp }
@@ -278,38 +280,6 @@ async fn c5_source_changed_mid_upload_fails() {
     assert_eq!(s, UploadState::Failed { reason: FailReason::SourceChanged });
     rig.wait_no_sessions().await;
     assert!(rig.phone.files().is_empty());
-}
-
-// C6
-#[tokio::test]
-async fn c6_rate_limit_within_ten_percent() {
-    let phone = FakePhone::start().await;
-    phone.set_discard_data(true);
-    let cfg =
-        RunnerConfig { chunk_size: 4 * MB, progress_interval: Duration::from_millis(250), ..RunnerConfig::default() };
-    let mut rig = Rig::with_phone(phone, cfg, Some(10 * 1_000_000), true).await;
-    let size = 20 * 1_000_000;
-    let f = write(&rig.src(), "rate.mp4", size, 7);
-    let (_, ids) = rig.add(&[f], "");
-    rig.until_state(ids[0], |s| matches!(s, UploadState::Sending { .. })).await;
-    let start = Instant::now();
-    assert!(is_done(&rig.until_done(ids[0]).await));
-    let measured = size as f64 / start.elapsed().as_secs_f64();
-    let target = 10_000_000.0;
-    assert!((measured - target).abs() / target <= 0.10, "measured {measured:.0} B/s");
-    // Tốc độ báo UI (trung bình trượt) cũng trong ±10 % sau giây đầu.
-    let speeds: Vec<u64> = rig
-        .log
-        .iter()
-        .filter_map(|e| match e {
-            TransferEvent::Progress { bytes_per_sec, sent, .. } if *sent > 10_000_000 => Some(*bytes_per_sec),
-            _ => None,
-        })
-        .collect();
-    assert!(!speeds.is_empty());
-    for s in speeds {
-        assert!((s as f64 - target).abs() / target <= 0.10, "reported {s} B/s");
-    }
 }
 
 // C7

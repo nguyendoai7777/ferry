@@ -317,13 +317,12 @@ err_internal = "Something went wrong — try again in a few minutes."
 drop_other = "You cannot send into Other — open a folder."
 
 [settings]
-loading = "Loading settings…"
+loading = "Loading settings"
 retry = "Try again"
 no_daemon = "Ferry isn't running — open Ferry, then try again"
 load_failed = "Couldn't read the settings — try again in a moment"
 
 [settings.appearance]
-title = "Appearance"
 mode = "Background"
 mode_light = "Light"
 mode_dark = "Dark"
@@ -331,23 +330,15 @@ mode_system = "System"
 theme_preset = "Color theme"
 
 [settings.files]
-title = "Files"
 download_dir = "Download folder"
-choose = "Choose…"
+choose = "Choose"
 reset = "Default"
 watch_folder = "Watch a folder"
 watch_folder_hint = "New files in this folder are sent to the phone automatically."
 watch_folder_none = "No folder chosen"
 watch_folder_error = "Couldn't watch the folder: {error}. Choose the folder again or check its permissions."
 
-[settings.network]
-title = "Network"
-speed_limit = "Speed limit"
-speed_limit_hint = "Applies to every file being sent."
-speed_unit = "MB/s"
-
 [settings.system]
-title = "System"
 autostart = "Start with the system"
 autostart_error = "Couldn't turn it on: {error}. Check the system permissions, then try again."
 language = "Language"
@@ -356,12 +347,10 @@ language_vi = "Tiếng Việt"
 language_en = "English"
 
 [settings.advanced]
-title = "Advanced"
 addresses = "Manual addresses"
 addresses_hint = "Use when the network blocks automatic phone discovery. Enter address:port."
 add = "Add"
 remove = "Remove"
-empty = "No address yet."
 
 [settings.error]
 no_daemon = "Ferry isn't running — open Ferry, then try again"
@@ -369,7 +358,6 @@ unknown_device = "This phone isn't in the list — close this window and open it
 offline = "The phone isn't connected — turn on WiFi Sync on the phone, then try again"
 invalid_path = "This folder can't be used — choose another folder"
 invalid_address = "That address isn't valid — enter it like 192.168.1.9:8080"
-invalid_speed = "Enter a speed from 1 to {max} MB/s"
 not_writable = "Can't write to this folder — choose another folder or allow writing to it"
 unreachable = "Can't reach this address — check that the phone has WiFi Sync on and is on the same network"
 unknown_interface = "This computer has no network card named {name} — check the address"

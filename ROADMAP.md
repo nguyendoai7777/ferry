@@ -13,7 +13,7 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_01` `workspace` | cargo workspace 3 crate, deny, i18n, paths, log, config, khung IPC, khay rỗng + cửa sổ rỗng, `start.sh`, nối script gốc | — | opus |
 | `gd1_02` `protocol-client` | kiểu §6 + client HTTP (info, pair, list, uploads, file) + server giả `fake_phone` cho test | 01 | opus |
 | `gd1_03` `queue-store` | hàng đợi bền SQLite, máy trạng thái mục upload / download (§5), backoff — hàm thuần + lưu đĩa | 01 | opus |
-| `gd1_04` `upload-runner` | chạy hàng đợi gửi: Checking → Creating → Sending nối tiếp, mọi nhánh lỗi §5, giới hạn băng thông | 02, 03 | opus |
+| `gd1_04` `upload-runner` | chạy hàng đợi gửi: Checking → Creating → Sending nối tiếp, mọi nhánh lỗi §5, giới hạn băng thông (gỡ 12/11/2026) | 02, 03 | opus |
 | `gd1_05` `discovery-devices` | mDNS `_vpsync._tcp` + địa chỉ tay, máy trạng thái thiết bị, chọn IPv4 cùng subnet | 02 | opus |
 | `gd1_06` `pairing-keyring` | ghép bằng PIN, token vào kho khoá OS, client id, quên điện thoại, `NeedsRepair` | 02, 05 | opus |
 | `gd1_07` `daemon-runtime` | runtime tokio trong `ferry`, snapshot + lệnh qua IPC, khay 3 trạng thái + menu, thông báo cả lô xong | 04, 05, 06 | opus |
@@ -21,7 +21,7 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_09` `add-phone` | màn thêm điện thoại 3 bước (hướng dẫn, danh sách dò thấy, PIN) | 07 | sonnet |
 | `gd1_10` `download-runner` | tải về nối tiếp `Range` + `If-Range` / `ETag`, `.part`, thư mục lưu | 03, 07 | opus |
 | `gd1_11` `phone-library` | tab thư viện điện thoại (dùng lại `PhoneBrowser`) + "Tải về…" | 08, 10 | sonnet |
-| `gd1_12` `settings` | cài đặt: thiết bị đã ghép, thư mục lưu / theo dõi, giới hạn băng thông, khởi động cùng máy, địa chỉ tay | 07 | sonnet |
+| `gd1_12` `settings` | cài đặt: thiết bị đã ghép, thư mục lưu / theo dõi, giới hạn băng thông (gỡ 12/11/2026), khởi động cùng máy, địa chỉ tay | 07 | sonnet |
 | `gd1_13` `watch-folder` | thư mục "Gửi sang điện thoại": tệp mới ổn định ⇒ vào hàng đợi | 04, 12 | opus |
 | `gd1_14` `packaging` | `build.sh` / `build.ps1`, bản cài ba OS, trang giấy phép bên thứ ba, nối `build.*` / `tag.*` gốc | 08–13 | opus |
 

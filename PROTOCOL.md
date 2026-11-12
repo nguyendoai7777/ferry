@@ -38,8 +38,8 @@ mình, dùng hằng ngày**: ghép một lần, sau đó không phải gõ gì n
    HTTP.
 7. **Lõi tách khỏi giao diện.** Một crate lõi không phụ thuộc UI (dò, ghép, hàng đợi, truyền), có test riêng; UI kit
    Rust chỉ vẽ trạng thái và gửi lệnh. Sau này làm CLI hay bản khác chỉ việc dùng lại lõi.
-8. **Nhẹ và lịch sự với máy.** Không quét ổ cứng. Không giữ CPU khi rảnh. Băng thông: mặc định hết cỡ, có tuỳ chọn giới
-   hạn. Một file một lúc cho mỗi điện thoại (điện thoại ghi đĩa tuần tự nhanh hơn ghi song song).
+8. **Nhẹ và lịch sự với máy.** Không quét ổ cứng. Không giữ CPU khi rảnh. Băng thông: luôn hết cỡ, không có tuỳ chọn
+   giới hạn (bỏ 12/11/2026). Một file một lúc cho mỗi điện thoại (điện thoại ghi đĩa tuần tự nhanh hơn ghi song song).
 
 ## 3. Kiến trúc đề xuất (gốc — bố cục thật ở `CLAUDE.md`)
 
@@ -81,8 +81,8 @@ pc-app/
    khai `edit` (§6.12, W-8).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → [icon WiFi ở thanh điều hướng đáy] → Bật “Cho phép nhận”" (màn Đồng bộ WiFi). Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
-5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, giới hạn băng
-   thông, khởi động cùng hệ thống, địa chỉ tay (nâng cao).
+5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, khởi động cùng
+   hệ thống, địa chỉ tay, ngôn ngữ, giao diện. Không có giới hạn băng thông (bỏ 12/11/2026).
 
 6. **Trình duyệt điện thoại kiểu Explorer** (một component, dùng ở hộp chọn đích khi gửi và ở tab thư viện điện thoại):
    - Thanh trên: nút Lùi / Tiến / Lên, **thanh địa chỉ dạng breadcrumb** (`Pixel 8 › Chuyến đi › Ngày 1`, bấm từng đoạn

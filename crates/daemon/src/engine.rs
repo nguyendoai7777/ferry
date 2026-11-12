@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ferry_core::client::{ClientError, PhoneClient};
-use ferry_core::config::{self, Config, MAX_SPEED_LIMIT_MB_PER_SEC, WatchFolder};
+use ferry_core::config::{self, Config, WatchFolder};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
 use ferry_core::discovery::mdns::{Browser, MdnsEvent};
@@ -33,8 +33,8 @@ use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
 use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
 use ferry_core::transfer::download;
 use ferry_core::transfer::{
-    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
-    UploadRunner, link_channel,
+    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, TransferEvent, UploadRunner,
+    link_channel,
 };
 use ferry_core::watch::{self, FolderWatcher, Ready};
 use tokio::sync::mpsc;
@@ -61,8 +61,6 @@ pub struct EngineConfig {
     /// `false` ⇒ không dò mDNS (test: chỉ địa chỉ trong config / nhập tay).
     pub mdns: bool,
     pub runner: RunnerConfig,
-    /// Trần tốc độ chung mọi điện thoại — dựng từ `config.speedLimitMbPerSec`, cài đặt đổi qua `Throttle::set_rate`.
-    pub throttle: Arc<Throttle>,
     pub i18n: I18n,
     /// Áp công tắc "Khởi động cùng hệ thống" vào OS (`autostart::apply`; test thay bằng hàm giả). Chạy trong
     /// `spawn_blocking` (Windows gọi `schtasks`).
@@ -271,7 +269,6 @@ struct Engine {
     store: SharedStore,
     tokens: Tokens,
     runner_cfg: RunnerConfig,
-    throttle: Arc<Throttle>,
     i18n: I18n,
     autostart: fn(bool) -> Result<(), String>,
     autostart_error: Option<String>,
@@ -362,7 +359,6 @@ impl Engine {
             store: cfg.store,
             tokens: cfg.tokens,
             runner_cfg: cfg.runner,
-            throttle: cfg.throttle,
             i18n: cfg.i18n,
             autostart: cfg.autostart,
             autostart_error: cfg.autostart_error,
@@ -839,14 +835,6 @@ impl Engine {
                 }));
                 return None;
             }
-            SettingsOp::SetSpeedLimit { mb_per_sec } => {
-                if mb_per_sec.is_some_and(|n| n == 0 || n > MAX_SPEED_LIMIT_MB_PER_SEC) {
-                    return Some(Err(CommandError::InvalidInput));
-                }
-                self.config.speed_limit_mb_per_sec = mb_per_sec;
-                self.throttle.set_rate(self.config.speed_limit_bytes());
-                self.persist();
-            }
             SettingsOp::SetAutostart { enabled } => {
                 let apply = self.autostart;
                 blocking(Box::new(move || Settled::Autostart(enabled, apply(enabled))));
@@ -933,7 +921,6 @@ impl Engine {
             language: c.language,
             download_dir: c.download_dir(),
             download_dir_custom: c.download_dir.as_ref().is_some_and(|d| !d.as_os_str().is_empty()),
-            speed_limit_mb_per_sec: c.speed_limit_mb_per_sec.filter(|n| *n > 0),
             autostart: c.autostart,
             autostart_error: self.autostart_error.clone(),
             watch_folder: c.watch_folder.clone(),
@@ -1185,14 +1172,8 @@ impl Engine {
             return;
         }
         let (link, watch) = link_channel();
-        let (runner, handle) = UploadRunner::new(
-            id.clone(),
-            self.store.clone(),
-            watch,
-            self.throttle.clone(),
-            self.transfer_tx.clone(),
-            self.runner_cfg.clone(),
-        );
+        let (runner, handle) =
+            UploadRunner::new(id.clone(), self.store.clone(), watch, self.transfer_tx.clone(), self.runner_cfg.clone());
         let task = tokio::spawn(runner.run());
         log::info!("engine: runner for {id}");
         self.runners.insert(id.clone(), Runner { handle, link, task });
@@ -2071,14 +2052,16 @@ mod tests {
         store: SharedStore,
     }
 
-    async fn start(dir: &Path, phone: &FakePhone, throttle: Option<u64>) -> Rig {
+    /// `pace`: điện thoại giả nhận / gửi chậm (byte / s) để test bắt được lúc đang truyền.
+    async fn start(dir: &Path, phone: &FakePhone, pace: Option<u64>) -> Rig {
         let token = phone.issue_token(CLIENT_ID);
         let tokens = Tokens::new(Arc::new(MemoryKeyring::new()));
         tokens.set(&device(), &Secret::new(token)).await.unwrap();
-        start_with(dir, phone, tokens, throttle)
+        start_with(dir, phone, tokens, pace)
     }
 
-    fn start_with(dir: &Path, phone: &FakePhone, tokens: Tokens, throttle: Option<u64>) -> Rig {
+    fn start_with(dir: &Path, phone: &FakePhone, tokens: Tokens, pace: Option<u64>) -> Rig {
+        phone.set_pace(pace);
         let config = Config {
             client_id: CLIENT_ID.into(),
             client_name: "Test PC".into(),
@@ -2109,7 +2092,6 @@ mod tests {
                 progress_interval: Duration::from_millis(10),
                 ..RunnerConfig::default()
             },
-            throttle: Throttle::new(throttle),
             i18n: I18n::new(Language::En),
             autostart: |_| Ok(()),
             autostart_error: None,
@@ -2405,7 +2387,13 @@ mod tests {
     /// W-10: Sao chép tải vào thư mục tạm rồi mới đặt clipboard; Cắt xoá trên điện thoại chỉ sau khi mục tạm bị dời đi.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn export_copies_then_moves_after_paste() {
-        async fn call(engine: &EngineHandle, outbox: &Outbox, rx: OutboxReceiver, req: u64, op: LibraryOp) -> (OutboxReceiver, Outcome) {
+        async fn call(
+            engine: &EngineHandle,
+            outbox: &Outbox,
+            rx: OutboxReceiver,
+            req: u64,
+            op: LibraryOp,
+        ) -> (OutboxReceiver, Outcome) {
             engine.send(Input::Request { outbox: outbox.clone(), req, op: Op::Library(op) });
             let (rx, got) = collect(rx, move |m| matches!(m, DaemonToUi::Reply { req: r, .. } if *r == req)).await;
             let DaemonToUi::Reply { outcome, .. } = got.last().unwrap().1.clone() else { unreachable!() };
@@ -2467,8 +2455,7 @@ mod tests {
         for p in &paths {
             std::fs::rename(p, dest.join(p.file_name().unwrap())).unwrap();
         }
-        let (_rx, _) =
-            collect(rx, |m| export_is(m, |s| matches!(s, ExportState::Moved { deleted: 4, kept: 0 }))).await;
+        let (_rx, _) = collect(rx, |m| export_is(m, |s| matches!(s, ExportState::Moved { deleted: 4, kept: 0 }))).await;
         assert!(phone.files().is_empty());
         assert_eq!(std::fs::read(dest.join("Phim/Sub/x.mp4")).unwrap(), vec![4; 7000]);
         assert!(rig.captured.lock().unwrap().notices.iter().any(|n| n.body.contains("2")));
@@ -2571,12 +2558,6 @@ mod tests {
         let bad = ask(e, SettingsOp::SetDownloadDir { path: Some(blocker.join("sub")) }).await;
         assert_eq!(bad, Outcome::Failed { error: CommandError::NotWritable });
 
-        assert_eq!(
-            view(ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) }).await).speed_limit_mb_per_sec,
-            Some(5)
-        );
-        let zero = ask(e, SettingsOp::SetSpeedLimit { mb_per_sec: Some(0) }).await;
-        assert_eq!(zero, Outcome::Failed { error: CommandError::InvalidInput });
         assert!(view(ask(e, SettingsOp::SetAutostart { enabled: true }).await).autostart);
 
         let v = view(ask(e, SettingsOp::Get).await);
@@ -2615,14 +2596,12 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(tmp.path().join("config.json")).unwrap()).unwrap();
         assert_eq!(json["downloadDir"], dl.to_string_lossy().as_ref());
-        assert_eq!(json["speedLimitMbPerSec"], 5);
         assert_eq!(json["autostart"], true);
         assert_eq!(json["watchFolder"]["enabled"], true);
         assert_eq!(json["manualAddresses"][0], addr.as_str());
         assert_eq!(json["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(json["language"], "vi");
         let reread = config::load(&tmp.path().join("config.json")).unwrap();
-        assert_eq!(reread.speed_limit_bytes(), Some(5 * 1024 * 1024));
         assert_eq!(reread.devices[0].alias.as_deref(), Some("Máy của mẹ"));
 
         let v = view(ask(e, SettingsOp::RemoveAddress { address: addr }).await);

@@ -17,8 +17,8 @@ use ferry_core::queue::store::NewDownload;
 use ferry_core::queue::{DownloadEvent, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
 use ferry_core::transfer::download::{default_dest, part_path};
 use ferry_core::transfer::{
-    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, Throttle, TransferEvent,
-    UploadRunner, link_channel,
+    Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, TransferEvent, UploadRunner,
+    link_channel,
 };
 use tokio::sync::mpsc;
 
@@ -58,8 +58,10 @@ struct Rig {
 }
 
 impl Rig {
-    async fn new(throttle: Option<u64>) -> Rig {
+    /// `pace`: điện thoại giả gửi chậm (byte / s) để test bắt được lúc đang tải.
+    async fn new(pace: Option<u64>) -> Rig {
         let phone = FakePhone::start().await;
+        phone.set_pace(pace);
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("queue.sqlite3");
         let store = Arc::new(Mutex::new(QueueStore::open(&db, now_ms()).unwrap()));
@@ -67,7 +69,7 @@ impl Rig {
         let (link, watch) = link_channel();
         link.send_replace(Some(link_at(phone.v4(), &token).await));
         let (tx, events) = mpsc::unbounded_channel();
-        let (runner, handle) = UploadRunner::new(device(), store.clone(), watch, Throttle::new(throttle), tx, fast());
+        let (runner, handle) = UploadRunner::new(device(), store.clone(), watch, tx, fast());
         tokio::spawn(runner.run());
         Rig { phone, token, store, db, link, handle, events, log: Vec::new(), tmp }
     }
@@ -81,8 +83,7 @@ impl Rig {
         link.send_replace(Some(link_at(self.phone.v4(), &self.token).await));
         self.link = link;
         let (tx, events) = mpsc::unbounded_channel();
-        let (runner, handle) =
-            UploadRunner::new(device(), self.store.clone(), watch, Throttle::unlimited(), tx, fast());
+        let (runner, handle) = UploadRunner::new(device(), self.store.clone(), watch, tx, fast());
         tokio::spawn(runner.run());
         self.handle = handle;
         self.events = events;

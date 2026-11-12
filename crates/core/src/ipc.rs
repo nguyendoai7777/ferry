@@ -176,11 +176,6 @@ pub enum SettingsOp {
     SetDownloadDir {
         path: Option<PathBuf>,
     },
-    /// Trần tốc độ MB/s; `None` ⇒ tắt. Có hiệu lực ngay cho tệp đang gửi. Ngoài `1..=MAX_SPEED_LIMIT_MB_PER_SEC` ⇒
-    /// `InvalidInput`.
-    SetSpeedLimit {
-        mb_per_sec: Option<u32>,
-    },
     /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
     SetAutostart {
         enabled: bool,
@@ -221,7 +216,6 @@ pub struct SettingsView {
     pub download_dir: PathBuf,
     /// `false` ⇒ đang là mặc định của OS (nút "Về mặc định" tắt).
     pub download_dir_custom: bool,
-    pub speed_limit_mb_per_sec: Option<u32>,
     pub autostart: bool,
     /// Lần áp vào OS gần nhất hỏng (chữ của OS, đã log) — hiện dưới công tắc kèm cách gỡ.
     pub autostart_error: Option<String>,
@@ -358,13 +352,23 @@ pub struct ExportView {
 #[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum ExportState {
     /// Đang tải vào thư mục tạm. `totalFiles = 0` ⇒ còn đang liệt kê cây thư mục.
-    Preparing { done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64 },
+    Preparing {
+        done_bytes: u64,
+        total_bytes: u64,
+        done_files: u64,
+        total_files: u64,
+    },
     /// Danh sách tệp đã trên clipboard — dán ở trình quản lý tệp được rồi.
     Ready,
     /// Cắt: mọi mục đã dán sang máy; `deleted` tệp / thư mục đã xoá trên điện thoại, `kept` giữ lại (đổi sau khi
     /// tải, thư mục còn mục khác).
-    Moved { deleted: u64, kept: u64 },
-    Failed { error: CommandError },
+    Moved {
+        deleted: u64,
+        kept: u64,
+    },
+    Failed {
+        error: CommandError,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -980,10 +984,6 @@ mod tests {
             ),
             (UiToDaemon::Settings { req: 7, op: SettingsOp::Get }, r#"{"type":"settings","req":7,"op":{"op":"get"}}"#),
             (
-                UiToDaemon::Settings { req: 8, op: SettingsOp::SetSpeedLimit { mb_per_sec: Some(5) } },
-                r#"{"type":"settings","req":8,"op":{"op":"set_speed_limit","mbPerSec":5}}"#,
-            ),
-            (
                 UiToDaemon::Settings {
                     req: 9,
                     op: SettingsOp::SetWatchFolder {
@@ -1020,7 +1020,6 @@ mod tests {
             language: LanguagePref::Vi,
             download_dir: "/d".into(),
             download_dir_custom: true,
-            speed_limit_mb_per_sec: None,
             autostart: true,
             autostart_error: None,
             watch_folder: WatchFolder::default(),
@@ -1040,7 +1039,7 @@ mod tests {
                 DaemonToUi::Reply { req: 7, outcome: Outcome::Settings(view) },
                 concat!(
                     r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
-                    r#""downloadDirCustom":true,"speedLimitMbPerSec":null,"autostart":true,"autostartError":null,"#,
+                    r#""downloadDirCustom":true,"autostart":true,"autostartError":null,"#,
                     r#""watchFolder":{"enabled":false},"manualAddresses":[],"#,
                     r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}],"#,
                     r#""theme":"dark","themePreset":"deeppink"}}"#
@@ -1091,7 +1090,10 @@ mod tests {
             cut: true,
         };
         let wire = serde_json::to_string(&op).unwrap();
-        assert_eq!(wire, r#"{"op":"export","device":"p","entries":[{"path":"Download/Phim","folder":true}],"cut":true}"#);
+        assert_eq!(
+            wire,
+            r#"{"op":"export","device":"p","entries":[{"path":"Download/Phim","folder":true}],"cut":true}"#
+        );
         assert_eq!(serde_json::from_str::<LibraryOp>(&wire).unwrap(), op);
         assert_eq!(serde_json::to_string(&LibraryOp::CancelExport).unwrap(), r#"{"op":"cancel_export"}"#);
 
@@ -1105,7 +1107,10 @@ mod tests {
             ..Snapshot::default()
         };
         let wire = serde_json::to_string(&snap).unwrap();
-        assert!(wire.contains(r#""state":{"kind":"preparing","doneBytes":5,"totalBytes":10,"doneFiles":0,"totalFiles":1}"#), "{wire}");
+        assert!(
+            wire.contains(r#""state":{"kind":"preparing","doneBytes":5,"totalBytes":10,"doneFiles":0,"totalFiles":1}"#),
+            "{wire}"
+        );
         assert_eq!(serde_json::from_str::<Snapshot>(&wire).unwrap(), snap);
         assert!(!serde_json::to_string(&Snapshot::default()).unwrap().contains("export"));
         let failed = ExportState::Failed { error: CommandError::TooMany };

@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
-use super::throttle::{MeteredWriter, SpeedMeter, Throttle};
+use super::meter::{MeteredWriter, SpeedMeter};
 use super::upload::{Flow, UploadRunner};
 use super::{Command, ItemAction, Link, SharedStore, TransferEvent};
 use crate::client::ClientError;
@@ -149,7 +149,6 @@ pub(super) enum Fetched {
 struct FetchCx<'a> {
     device: &'a DeviceId,
     link: &'a Link,
-    throttle: &'a Arc<Throttle>,
     store: &'a SharedStore,
     events: &'a tokio::sync::mpsc::UnboundedSender<TransferEvent>,
     /// Offset tuyệt đối đã ghi vào `.part`; [`NOT_STARTED`] tới khi có header.
@@ -228,7 +227,7 @@ impl FetchCx<'_> {
         let total = resp.total;
         let file_name = resp.file_name.clone();
         self.counter.store(from, Ordering::Relaxed);
-        let mut writer = MeteredWriter::new(file, self.throttle.clone(), self.counter.clone());
+        let mut writer = MeteredWriter::new(file, self.counter.clone());
         let result = resp.write_to(&mut writer).await;
         let mut file = writer.into_inner();
         let have = self.counter.load(Ordering::Relaxed);
@@ -408,14 +407,8 @@ impl UploadRunner {
         deferred: &mut Vec<Command>,
     ) -> InFlight {
         let counter = Arc::new(AtomicU64::new(NOT_STARTED));
-        let cx = FetchCx {
-            device: &self.device,
-            link,
-            throttle: &self.throttle,
-            store: &self.store,
-            events: &self.events,
-            counter: counter.clone(),
-        };
+        let cx =
+            FetchCx { device: &self.device, link, store: &self.store, events: &self.events, counter: counter.clone() };
         let fut = cx.fetch(item, offset, etag);
         tokio::pin!(fut);
         let start = tokio::time::Instant::now() + self.cfg.progress_interval;

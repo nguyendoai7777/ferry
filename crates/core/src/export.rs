@@ -27,8 +27,8 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use crate::browse::parent_dir;
 use crate::client::{ClientError, PhoneClient};
 use crate::protocol::{DirListing, normalize_dir};
+use crate::transfer::MeteredWriter;
 use crate::transfer::download::sanitize_file_name;
-use crate::transfer::{MeteredWriter, Throttle};
 
 /// Thư mục con của `data_dir` chứa các phiên.
 pub const DIR_NAME: &str = "clipboard";
@@ -263,12 +263,7 @@ impl Meter {
 }
 
 /// Tải mọi tệp của `plan` vào thư mục phiên (tạo cả thư mục rỗng). Huỷ = bỏ (abort) future rồi [`discard`].
-pub async fn download(
-    client: &PhoneClient,
-    plan: &ExportPlan,
-    throttle: Arc<Throttle>,
-    meter: &Meter,
-) -> Result<(), ExportError> {
+pub async fn download(client: &PhoneClient, plan: &ExportPlan, meter: &Meter) -> Result<(), ExportError> {
     tokio::fs::create_dir_all(&plan.root).await.map_err(ExportError::Local)?;
     for d in &plan.dirs {
         tokio::fs::create_dir_all(&d.local).await.map_err(ExportError::Local)?;
@@ -277,7 +272,7 @@ pub async fn download(
         if let Some(parent) = f.local.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(ExportError::Local)?;
         }
-        let got = fetch_file(client, f, &throttle, &meter.current).await?;
+        let got = fetch_file(client, f, &meter.current).await?;
         meter.current.store(0, Ordering::Relaxed);
         meter.base.fetch_add(got, Ordering::Relaxed);
         meter.files.fetch_add(1, Ordering::Relaxed);
@@ -292,18 +287,13 @@ fn part_of(local: &Path) -> PathBuf {
 }
 
 /// Một tệp: tải tiếp được, thử lại khi lỗi tạm. Trả cỡ thật đã tải.
-async fn fetch_file(
-    client: &PhoneClient,
-    f: &PlannedFile,
-    throttle: &Arc<Throttle>,
-    current: &Arc<AtomicU64>,
-) -> Result<u64, ExportError> {
+async fn fetch_file(client: &PhoneClient, f: &PlannedFile, current: &Arc<AtomicU64>) -> Result<u64, ExportError> {
     let part = part_of(&f.local);
     let mut etag: Option<String> = None;
     let mut fails = 0u32;
     loop {
         let before = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0);
-        match fetch_once(client, f, &part, &mut etag, throttle, current).await {
+        match fetch_once(client, f, &part, &mut etag, current).await {
             Ok(Step::Done(len)) => {
                 tokio::fs::rename(&part, &f.local).await.map_err(ExportError::Local)?;
                 set_mtime(&f.local, f.modified);
@@ -317,7 +307,9 @@ async fn fetch_file(
                     return Err(e.into());
                 }
                 let wait = match &e {
-                    ClientError::Busy { retry_after: Some(w) } | ClientError::RateLimited { retry_after: Some(w) } => *w,
+                    ClientError::Busy { retry_after: Some(w) } | ClientError::RateLimited { retry_after: Some(w) } => {
+                        *w
+                    }
                     _ => Duration::from_secs(1 << fails.min(5)),
                 };
                 log::debug!("export {}: {e}, retry in {wait:?}", f.remote);
@@ -350,7 +342,6 @@ async fn fetch_once(
     f: &PlannedFile,
     part: &Path,
     etag: &mut Option<String>,
-    throttle: &Arc<Throttle>,
     current: &Arc<AtomicU64>,
 ) -> Result<Step, ClientError> {
     let mut file = tokio::fs::OpenOptions::new()
@@ -395,7 +386,7 @@ async fn fetch_once(
     etag.clone_from(&resp.etag);
     let total = resp.total;
     current.store(from, Ordering::Relaxed);
-    let mut writer = MeteredWriter::new(file, throttle.clone(), current.clone());
+    let mut writer = MeteredWriter::new(file, current.clone());
     let result = resp.write_to(&mut writer).await;
     let mut file = writer.into_inner();
     let _ = file.flush().await;

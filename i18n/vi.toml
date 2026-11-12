@@ -317,13 +317,12 @@ err_internal = "Có lỗi — thử lại sau ít phút."
 drop_other = "Không gửi vào nhóm Khác được — mở một thư mục."
 
 [settings]
-loading = "Đang tải cài đặt…"
+loading = "Đang tải cài đặt"
 retry = "Thử lại"
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
 load_failed = "Không đọc được cài đặt — thử lại sau ít phút"
 
 [settings.appearance]
-title = "Giao diện"
 mode = "Nền"
 mode_light = "Sáng"
 mode_dark = "Tối"
@@ -331,23 +330,15 @@ mode_system = "Theo hệ thống"
 theme_preset = "Bảng màu"
 
 [settings.files]
-title = "Tệp"
 download_dir = "Thư mục tải về"
-choose = "Chọn…"
+choose = "Chọn"
 reset = "Mặc định"
 watch_folder = "Theo dõi thư mục"
 watch_folder_hint = "Tệp mới trong thư mục này tự gửi sang điện thoại."
 watch_folder_none = "Chưa chọn thư mục"
 watch_folder_error = "Không theo dõi được thư mục: {error}. Chọn lại thư mục hoặc kiểm tra quyền truy cập."
 
-[settings.network]
-title = "Mạng"
-speed_limit = "Giới hạn tốc độ"
-speed_limit_hint = "Áp dụng cho mọi tệp đang gửi."
-speed_unit = "MB/s"
-
 [settings.system]
-title = "Hệ thống"
 autostart = "Khởi động cùng hệ thống"
 autostart_error = "Không bật được: {error}. Kiểm tra quyền của hệ điều hành rồi thử lại."
 language = "Ngôn ngữ"
@@ -356,12 +347,10 @@ language_vi = "Tiếng Việt"
 language_en = "English"
 
 [settings.advanced]
-title = "Nâng cao"
 addresses = "Địa chỉ tay"
 addresses_hint = "Dùng khi mạng chặn tự tìm điện thoại. Nhập dạng địa chỉ:cổng."
 add = "Thêm"
 remove = "Xoá"
-empty = "Chưa có địa chỉ nào."
 
 [settings.error]
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
@@ -369,7 +358,6 @@ unknown_device = "Không thấy điện thoại này trong danh sách — đóng
 offline = "Điện thoại chưa kết nối — bật Đồng bộ WiFi trên điện thoại rồi thử lại"
 invalid_path = "Thư mục không dùng được — chọn một thư mục khác"
 invalid_address = "Địa chỉ không đúng dạng — nhập như 192.168.1.9:8080"
-invalid_speed = "Nhập số MB/s từ 1 đến {max}"
 not_writable = "Không ghi được vào thư mục này — chọn thư mục khác hoặc cấp quyền ghi"
 unreachable = "Không nối được địa chỉ này — kiểm tra điện thoại đã bật Đồng bộ WiFi và cùng mạng"
 unknown_interface = "Máy này không có card mạng {name} — kiểm tra lại địa chỉ"

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncSeekExt;
 use tokio::sync::mpsc;
 
-use super::throttle::{MeteredReader, SpeedMeter, Throttle};
+use super::meter::{MeteredReader, SpeedMeter};
 use super::{Command, ItemAction, Link, LinkWatch, RunnerHandle, SharedStore, TransferEvent};
 use crate::client::{self, ClientError, PatchOutcome};
 use crate::device::DeviceId;
@@ -120,7 +120,6 @@ pub struct UploadRunner {
     link: LinkWatch,
     pub(super) commands: mpsc::UnboundedReceiver<Command>,
     pub(super) events: mpsc::UnboundedSender<TransferEvent>,
-    pub(super) throttle: Arc<Throttle>,
     pub(super) cfg: RunnerConfig,
     index: Option<RemoteIndex>,
     /// Sau `401`: hàng dừng tới khi có `Link` mới (đã ghép lại).
@@ -140,7 +139,6 @@ impl UploadRunner {
         device: DeviceId,
         store: SharedStore,
         link: LinkWatch,
-        throttle: Arc<Throttle>,
         events: mpsc::UnboundedSender<TransferEvent>,
         cfg: RunnerConfig,
     ) -> (UploadRunner, RunnerHandle) {
@@ -151,7 +149,6 @@ impl UploadRunner {
             link,
             commands,
             events,
-            throttle,
             cfg,
             index: None,
             repair_blocked: false,
@@ -370,7 +367,6 @@ impl UploadRunner {
         let mut cx = Exec {
             device: &self.device,
             link,
-            throttle: &self.throttle,
             cfg: &self.cfg,
             index: &mut self.index,
             events: &self.events,
@@ -549,7 +545,6 @@ fn touches(cmd: &Command, item: &UploadItem) -> bool {
 struct Exec<'a> {
     device: &'a DeviceId,
     link: &'a Link,
-    throttle: &'a Arc<Throttle>,
     cfg: &'a RunnerConfig,
     index: &'a mut Option<RemoteIndex>,
     events: &'a mpsc::UnboundedSender<TransferEvent>,
@@ -628,7 +623,7 @@ impl Exec<'_> {
             Ok(f) => f,
             Err(e) => return local_event(&e),
         };
-        let reader = MeteredReader::new(file, self.throttle.clone(), self.counter.clone());
+        let reader = MeteredReader::new(file, self.counter.clone());
         match self.link.client.upload_patch(uid, offset, reader, len).await {
             Ok(PatchOutcome::Partial(o)) => {
                 *self.final_chunk_lost = false;

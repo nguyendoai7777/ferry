@@ -1,27 +1,25 @@
-//! Trang Cài đặt (gd1_12, PROTOCOL 4.5) — dựng theo `plan/ferry-gd1_12_settings.md` mục 7. Nằm trong cửa sổ chính, mở
-//! bằng mục Cài đặt ở đáy cột trái (hoặc menu khay "Cài đặt…"); mục Giao diện (nền + bảng màu) như Groovex.
+//! Trang Cài đặt (gd1_12, PROTOCOL 4.5). Nằm trong cửa sổ chính, mở bằng mục Cài đặt ở đáy cột trái (hoặc menu khay
+//! "Cài đặt…"). Bố cục theo Cài đặt của macOS / iOS (12/11/2026): các card `CardGroup::standalone` không tiêu đề, mỗi mục
+//! một dòng có đường kẻ chia — Ngôn ngữ; Giao diện (nền + bảng màu, như Groovex); Tệp + hệ thống + địa chỉ tay. Không
+//! có giới hạn tốc độ (gỡ 12/11/2026: luôn gửi hết cỡ).
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
 //! hiện dưới đúng mục bằng câu nói việc cần làm. Điện thoại đã ghép (đổi tên, xoá) ở màn Danh sách thiết bị
 //! (`views/devices.rs`), không ở đây.
 
-use std::time::Duration;
-
-use ferry_core::config::{MAX_SPEED_LIMIT_MB_PER_SEC, ThemeChoice, WatchFolder};
+use ferry_core::config::{ThemeChoice, WatchFolder};
 use ferry_core::i18n::{I18n, Language, LanguagePref};
 use ferry_core::ipc::{CommandError, SettingsOp, SettingsView};
 use materiant::button::segmented::SegmentedButtons;
 use materiant::button::{Button, Size};
-use materiant::card::Card;
-use materiant::field::FieldLabel;
+use materiant::card::CardGroup;
 use materiant::field::input::TextField;
-use materiant::field::number::NumberField;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, PathPromptOptions,
-    Render, SharedString, WeakEntity, Window, div, px,
+    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, PathPromptOptions, Render,
+    SharedString, WeakEntity, Window, div, px,
 };
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
@@ -32,20 +30,15 @@ use std::path::PathBuf;
 
 use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
 
-/// Tốc độ gợi ý khi bật giới hạn mà ô số còn trống / sai.
-const DEFAULT_SPEED_MB_PER_SEC: u32 = 10;
-/// Gõ xong chừng này mới gửi giới hạn tốc độ (không gửi từng ký tự).
-const SPEED_DEBOUNCE: Duration = Duration::from_millis(700);
-
 // ---------------------------------------------------------------------------------------------------------------
 // Logic thuần (test được)
 
 /// Mục của màn: mỗi mục có cờ `busy` và dòng lỗi riêng.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
+    Language,
     Appearance,
     Files,
-    Network,
     System,
     Advanced,
 }
@@ -77,15 +70,6 @@ enum Load {
     Ready,
 }
 
-/// Ô số → MB/s hợp lệ (`1..=MAX`, số nguyên).
-fn parse_speed(value: Option<f64>) -> Option<u32> {
-    let v = value?;
-    if !v.is_finite() || v.fract() != 0. || v < 1. || v > f64::from(MAX_SPEED_LIMIT_MB_PER_SEC) {
-        return None;
-    }
-    Some(v as u32)
-}
-
 /// Khoá i18n (+ tham số `{name}` nếu có) cho một lỗi, theo mục gây ra — không bao giờ nói mã lỗi.
 fn error_key(section: Section, error: &CallError) -> (&'static str, Option<String>) {
     let command = match error {
@@ -101,8 +85,7 @@ fn error_key(section: Section, error: &CallError) -> (&'static str, Option<Strin
         CommandError::InvalidInput => match section {
             Section::Files => "settings.error.invalid_path",
             Section::Advanced => "settings.error.invalid_address",
-            Section::Network => "settings.error.invalid_speed",
-            Section::System | Section::Appearance => "settings.error.internal",
+            Section::Language | Section::System | Section::Appearance => "settings.error.internal",
         },
         _ => "settings.error.internal",
     };
@@ -145,12 +128,7 @@ pub struct SettingsPage {
     data: Option<SettingsView>,
     busy: [bool; Section::COUNT],
     errors: [Option<SharedString>; Section::COUNT],
-    speed: Entity<NumberField>,
     address: Entity<TextField>,
-    /// Tăng mỗi lần gõ ô tốc độ — bộ đếm trễ chỉ chạy nếu còn là lần gõ cuối.
-    speed_gen: u64,
-    /// Ô tốc độ đổi lúc lệnh trước còn chạy ⇒ gửi lại ngay khi xong.
-    speed_dirty: bool,
     /// Giao diện vừa đổi trên cửa sổ, chưa gửi daemon.
     appearance_dirty: bool,
 }
@@ -160,16 +138,6 @@ impl EventEmitter<SettingsEvent> for SettingsPage {}
 impl SettingsPage {
     pub fn new(i18n: I18n, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
         let this: WeakEntity<SettingsPage> = cx.entity().downgrade();
-        let speed = cx.new(|cx| {
-            let this = this.clone();
-            NumberField::new("settings-speed", window, cx)
-                .range(1..=MAX_SPEED_LIMIT_MB_PER_SEC)
-                .step(1)
-                .default_value(f64::from(DEFAULT_SPEED_MB_PER_SEC))
-                .on_change(move |value, window, cx| {
-                    this.update(cx, |page, cx| page.speed_changed(value, window, cx)).ok();
-                })
-        });
         let address = cx.new(|cx| {
             let this = this.clone();
             TextField::new("settings-address", window, cx).placeholder("192.168.1.9:8080").on_submit(
@@ -185,10 +153,7 @@ impl SettingsPage {
             data: None,
             busy: [false; Section::COUNT],
             errors: Default::default(),
-            speed,
             address,
-            speed_gen: 0,
-            speed_dirty: false,
             appearance_dirty: false,
         };
         page.reload(window, cx);
@@ -208,15 +173,15 @@ impl SettingsPage {
         let task = cx.background_spawn(async move { client.get() });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
-            this.update_in(cx, |page, window, cx| page.loaded(result, window, cx)).ok();
+            this.update(cx, |page, cx| page.loaded(result, cx)).ok();
         })
         .detach();
     }
 
-    fn loaded(&mut self, result: Result<SettingsView, CallError>, window: &mut Window, cx: &mut Context<Self>) {
+    fn loaded(&mut self, result: Result<SettingsView, CallError>, cx: &mut Context<Self>) {
         match result {
             Ok(view) => {
-                self.apply_view(view, true, window, cx);
+                self.apply_view(view, cx);
                 self.load = Load::Ready;
             }
             Err(CallError::NoDaemon) => self.load = Load::Failed(self.t("settings.no_daemon")),
@@ -228,20 +193,12 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// `sync_inputs`: đặt lại ô số theo daemon (lúc nạp đầu) — không giật chữ người dùng đang gõ ở các lần sau.
-    fn apply_view(&mut self, view: SettingsView, sync_inputs: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn apply_view(&mut self, view: SettingsView, cx: &mut Context<Self>) {
         let language = view.language.resolve();
         if language != self.i18n.language() {
             self.i18n = I18n::new(language);
             self.errors = Default::default();
             cx.emit(SettingsEvent::LanguageChanged(language));
-        }
-        if sync_inputs {
-            let value = f64::from(view.speed_limit_mb_per_sec.unwrap_or(DEFAULT_SPEED_MB_PER_SEC));
-            self.speed.update(cx, |field, cx| {
-                field.set_value(value, window, cx);
-                field.set_error(None, cx);
-            });
         }
         // Lựa chọn giao diện chưa lưu xong: giữ cái người dùng đang thấy, không giật về giá trị cũ của daemon.
         let mut view = view;
@@ -249,8 +206,6 @@ impl SettingsPage {
             view.theme = old.theme;
             view.theme_preset = old.theme_preset.clone();
         }
-        let limited = view.speed_limit_mb_per_sec.is_some();
-        self.speed.update(cx, |field, cx| field.set_disabled(!limited, cx));
         self.data = Some(view);
         cx.notify();
     }
@@ -292,7 +247,7 @@ impl SettingsPage {
         self.busy[section.ix()] = false;
         match result {
             Ok(view) => {
-                self.apply_view(view, false, window, cx);
+                self.apply_view(view, cx);
                 if after == After::ClearAddress {
                     self.address.update(cx, |field, cx| field.clear(window, cx));
                 }
@@ -309,9 +264,6 @@ impl SettingsPage {
         }
         if section == Section::Appearance {
             self.flush_appearance(window, cx);
-        }
-        if section == Section::Network && std::mem::take(&mut self.speed_dirty) {
-            self.apply_speed(window, cx);
         }
         cx.notify();
     }
@@ -395,63 +347,6 @@ impl SettingsPage {
         );
     }
 
-    // ----- mạng -----
-
-    fn set_speed_enabled(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let mb_per_sec = if on {
-            let n = parse_speed(self.speed.read(cx).value(cx)).unwrap_or(DEFAULT_SPEED_MB_PER_SEC);
-            self.speed.update(cx, |field, cx| {
-                field.set_value(f64::from(n), window, cx);
-                field.set_error(None, cx);
-            });
-            Some(n)
-        } else {
-            self.speed.update(cx, |field, cx| field.set_error(None, cx));
-            None
-        };
-        self.speed_gen += 1;
-        self.run_op(Section::Network, SettingsOp::SetSpeedLimit { mb_per_sec }, window, cx);
-    }
-
-    fn speed_changed(&mut self, _value: Option<f64>, window: &mut Window, cx: &mut Context<Self>) {
-        self.speed_gen += 1;
-        let generation = self.speed_gen;
-        let timer = cx.background_executor().timer(SPEED_DEBOUNCE);
-        cx.spawn_in(window, async move |this, cx| {
-            timer.await;
-            this.update_in(cx, |page, window, cx| {
-                if page.speed_gen == generation {
-                    page.apply_speed(window, cx);
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Gửi số trong ô (nếu hợp lệ và giới hạn đang bật).
-    fn apply_speed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let limited = self.data.as_ref().is_some_and(|d| d.speed_limit_mb_per_sec.is_some());
-        if !limited {
-            return;
-        }
-        let Some(n) = parse_speed(self.speed.read(cx).value(cx)) else {
-            let text =
-                self.i18n.t_args("settings.error.invalid_speed", &[("max", &MAX_SPEED_LIMIT_MB_PER_SEC.to_string())]);
-            self.speed.update(cx, |field, cx| field.set_error(Some(text.into()), cx));
-            return;
-        };
-        self.speed.update(cx, |field, cx| field.set_error(None, cx));
-        if self.data.as_ref().and_then(|d| d.speed_limit_mb_per_sec) == Some(n) {
-            return;
-        }
-        if self.busy[Section::Network.ix()] {
-            self.speed_dirty = true;
-            return;
-        }
-        self.run_op(Section::Network, SettingsOp::SetSpeedLimit { mb_per_sec: Some(n) }, window, cx);
-    }
-
     // ----- nâng cao -----
 
     fn add_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -473,7 +368,7 @@ impl SettingsPage {
     fn error_line(&self, section: Section, cx: &App) -> Option<gpui_kit::Div> {
         let text = self.errors[section.ix()].clone()?;
         let theme = cx.theme();
-        Some(div().py_2().text_size(theme.caption_size()).text_color(theme.colors().danger).child(text))
+        Some(div().pt_2().text_size(theme.caption_size()).text_color(theme.colors().danger).child(text))
     }
 
     fn render_message(&self, text: SharedString, retry: bool, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -490,9 +385,31 @@ impl SettingsPage {
         div().flex_1().flex().items_center().justify_center().p_6().child(column)
     }
 
+    /// Ngôn ngữ — đầu trang, card riêng một dòng.
+    fn render_language(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
+        let busy = self.busy[Section::Language.ix()];
+        let select = Select::new("settings-language")
+            .items([
+                self.t("settings.system.language_system"),
+                self.t("settings.system.language_vi"),
+                self.t("settings.system.language_en"),
+            ])
+            .selected(Some(language_index(data.language)))
+            .disabled(busy)
+            .w(px(180.))
+            .on_change(cx.listener(|page, ix: &usize, window, cx| {
+                let language = language_from_index(*ix);
+                page.run_op(Section::Language, SettingsOp::SetLanguage { language }, window, cx);
+            }));
+        CardGroup::new().standalone().child(
+            cell(setting_row(cx, self.t("settings.system.language"), None, select))
+                .children(self.error_line(Section::Language, cx)),
+        )
+    }
+
     /// Nền (Sáng / Tối / Theo hệ thống) + bảng màu (bốn preset của materiant), như Cài đặt → Chung của Groovex. Hai lựa
     /// chọn độc lập, áp ngay. Không khoá khi đang lưu: bấm liên tiếp chỉ đổi lựa chọn, lệnh lưu sau cùng thắng.
-    fn render_appearance(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
+    fn render_appearance(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
         let presets = crate::appearance::presets(&self.i18n);
         let preset_ix = crate::appearance::preset_index(&data.theme_preset);
         let theme = data.theme;
@@ -510,31 +427,60 @@ impl SettingsPage {
                 page.set_appearance(theme, keys[*ix].clone(), window, cx);
             }),
         );
-        let labeled = |label: SharedString, body: gpui_kit::AnyElement| {
-            div().flex().flex_col().child(FieldLabel::new(label).weight(FontWeight::NORMAL)).child(body)
-        };
-        Card::new("settings-appearance")
-            .title(self.t("settings.appearance.title"))
-            .child(
-                div()
-                    .py_2()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(labeled(self.t("settings.appearance.mode"), mode.into_any_element()))
-                    .child(labeled(self.t("settings.appearance.theme_preset"), picker.into_any_element())),
-            )
-            .children(self.error_line(Section::Appearance, cx))
+        // Bảng màu là hàng thẻ rộng ⇒ nhãn ở trên, thẻ bên dưới (như ô ảnh nền trong Cài đặt của iOS).
+        let palette = cell(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().child(self.t("settings.appearance.theme_preset")))
+                .child(picker),
+        )
+        .children(self.error_line(Section::Appearance, cx));
+        CardGroup::new()
+            .standalone()
+            .child(cell(setting_row(cx, self.t("settings.appearance.mode"), None, mode)))
+            .child(palette)
     }
 
-    fn render_files(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
+    /// Tệp, khởi động cùng hệ thống, địa chỉ tay — một card, mỗi mục một dòng có đường kẻ chia (kiểu Cài đặt iOS).
+    fn render_general(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
+        let mut group = CardGroup::new().standalone().child(self.render_download(data, cx));
+        group = group.child(self.render_watch(data, cx)).child(self.render_autostart(data, cx));
+        group = group.child(self.render_address_input(cx));
+        let busy = self.busy[Section::Advanced.ix()];
+        group.children(data.manual_addresses.iter().enumerate().map(|(ix, address)| {
+            let target = address.clone();
+            cell(setting_row(
+                cx,
+                address.clone().into(),
+                None,
+                Button::new(("settings-address-remove", ix), self.t("settings.advanced.remove"))
+                    .text()
+                    .danger()
+                    .size(Size::Sm)
+                    .disabled(busy)
+                    .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
+                        page.run_op(
+                            Section::Advanced,
+                            SettingsOp::RemoveAddress { address: target.clone() },
+                            window,
+                            cx,
+                        );
+                    })),
+            ))
+        }))
+    }
+
+    fn render_download(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
         let busy = self.busy[Section::Files.ix()];
-        let download = setting_row(
+        cell(setting_row(
             cx,
             self.t("settings.files.download_dir"),
             Some(data.download_dir.display().to_string().into()),
             div()
                 .flex()
+                .items_center()
                 .gap_2()
                 .child(
                     Button::new("settings-download-choose", self.t("settings.files.choose"))
@@ -554,12 +500,16 @@ impl SettingsPage {
                             page.run_op(Section::Files, SettingsOp::SetDownloadDir { path: None }, window, cx);
                         })),
                 ),
-        );
+        ))
+    }
+
+    fn render_watch(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let busy = self.busy[Section::Files.ix()];
         let watch_hint = match &data.watch_folder.path {
             Some(path) => path.display().to_string().into(),
             None => self.t("settings.files.watch_folder_none"),
         };
-        let watch = setting_row(
+        let row = setting_row(
             cx,
             self.t("settings.files.watch_folder"),
             Some(watch_hint),
@@ -585,53 +535,16 @@ impl SettingsPage {
                 ),
         );
         // Bật mà daemon không theo dõi được (thư mục mất, không quyền, hết inotify watch) — gd1_13.
-        let watch_error = data.watch_error.as_ref().filter(|_| data.watch_folder.enabled).map(|error| {
-            let text = self.i18n.t_args("settings.files.watch_folder_error", &[("error", error)]);
-            let theme = cx.theme();
-            div()
-                .py_2()
-                .text_size(theme.caption_size())
-                .text_color(theme.colors().danger)
-                .child(SharedString::from(text))
-        });
-        Card::new("settings-files")
-            .title(self.t("settings.files.title"))
-            .child(download)
-            .child(watch)
-            .children(watch_error)
-            .children(self.error_line(Section::Files, cx))
+        let watch_error =
+            data.watch_error.as_ref().filter(|_| data.watch_folder.enabled).map(|error| {
+                danger_line(self.i18n.t_args("settings.files.watch_folder_error", &[("error", error)]), cx)
+            });
+        cell(row).children(watch_error).children(self.error_line(Section::Files, cx))
     }
 
-    fn render_network(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
-        let busy = self.busy[Section::Network.ix()];
-        let muted = cx.theme().colors().muted;
-        let row = setting_row(
-            cx,
-            self.t("settings.network.speed_limit"),
-            Some(self.t("settings.network.speed_limit_hint")),
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().w(px(96.)).child(self.speed.clone()))
-                .child(div().text_color(muted).child(self.t("settings.network.speed_unit")))
-                .child(
-                    Switch::new("settings-speed-switch")
-                        .on(data.speed_limit_mb_per_sec.is_some())
-                        .accessibility_label(self.t("settings.network.speed_limit"))
-                        .disabled(busy)
-                        .on_change(cx.listener(|page, on: &bool, window, cx| page.set_speed_enabled(*on, window, cx))),
-                ),
-        );
-        Card::new("settings-network")
-            .title(self.t("settings.network.title"))
-            .child(row)
-            .children(self.error_line(Section::Network, cx))
-    }
-
-    fn render_system(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
+    fn render_autostart(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
         let busy = self.busy[Section::System.ix()];
-        let autostart = setting_row(
+        let row = setting_row(
             cx,
             self.t("settings.system.autostart"),
             None,
@@ -643,93 +556,50 @@ impl SettingsPage {
                     page.run_op(Section::System, SettingsOp::SetAutostart { enabled: *on }, window, cx);
                 })),
         );
-        let autostart_error = data.autostart_error.as_ref().map(|error| {
-            let text = self.i18n.t_args("settings.system.autostart_error", &[("error", error)]);
-            let theme = cx.theme();
-            div()
-                .py_2()
-                .text_size(theme.caption_size())
-                .text_color(theme.colors().danger)
-                .child(SharedString::from(text))
-        });
-        let language = setting_row(
-            cx,
-            self.t("settings.system.language"),
-            None,
-            Select::new("settings-language")
-                .items([
-                    self.t("settings.system.language_system"),
-                    self.t("settings.system.language_vi"),
-                    self.t("settings.system.language_en"),
-                ])
-                .selected(Some(language_index(data.language)))
-                .disabled(busy)
-                .w(px(180.))
-                .on_change(cx.listener(|page, ix: &usize, window, cx| {
-                    let language = language_from_index(*ix);
-                    page.run_op(Section::System, SettingsOp::SetLanguage { language }, window, cx);
-                })),
-        );
-        Card::new("settings-system")
-            .title(self.t("settings.system.title"))
-            .child(autostart)
-            .children(autostart_error)
-            .child(language)
-            .children(self.error_line(Section::System, cx))
+        let autostart_error = data
+            .autostart_error
+            .as_ref()
+            .map(|error| danger_line(self.i18n.t_args("settings.system.autostart_error", &[("error", error)]), cx));
+        cell(row).children(autostart_error).children(self.error_line(Section::System, cx))
     }
 
-    fn render_advanced(&self, data: &SettingsView, cx: &mut Context<Self>) -> Card {
+    /// Địa chỉ tay: nhãn + gợi ý, ô nhập + nút Thêm ngay dưới trong cùng dòng; mỗi địa chỉ đã thêm là một dòng sau đó.
+    fn render_address_input(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let busy = self.busy[Section::Advanced.ix()];
-        let muted = cx.theme().colors().muted;
-        let head = setting_row(
-            cx,
-            self.t("settings.advanced.addresses"),
-            Some(self.t("settings.advanced.addresses_hint")),
-            div(),
-        );
-        let input = div()
-            .py_2()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(div().flex_1().min_w_0().child(self.address.clone()))
-            .child(
+        let input =
+            div().flex().items_center().gap_2().child(div().flex_1().min_w_0().child(self.address.clone())).child(
                 Button::new("settings-address-add", self.t("settings.advanced.add"))
                     .disabled(busy)
                     .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.add_address(window, cx))),
             );
-        let list = if data.manual_addresses.is_empty() {
-            div().py_2().text_color(muted).child(self.t("settings.advanced.empty"))
-        } else {
-            div().flex().flex_col().children(data.manual_addresses.iter().enumerate().map(|(ix, address)| {
-                let target = address.clone();
-                setting_row(
+        cell(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(setting_row(
                     cx,
-                    address.clone().into(),
-                    None,
-                    Button::new(("settings-address-remove", ix), self.t("settings.advanced.remove"))
-                        .text()
-                        .danger()
-                        .size(Size::Sm)
-                        .disabled(busy)
-                        .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
-                            page.run_op(
-                                Section::Advanced,
-                                SettingsOp::RemoveAddress { address: target.clone() },
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-            }))
-        };
-        Card::new("settings-advanced")
-            .title(self.t("settings.advanced.title"))
-            .child(head)
-            .child(input)
-            .child(list)
-            .children(self.error_line(Section::Advanced, cx))
+                    self.t("settings.advanced.addresses"),
+                    Some(self.t("settings.advanced.addresses_hint")),
+                    div(),
+                ))
+                .child(input),
+        )
+        .children(self.error_line(Section::Advanced, cx))
     }
+}
+
+/// Đệm của một dòng trong card (một tầng đệm duy nhất; card không đặt đệm). Lỗi của dòng nằm ngay dưới, cùng ô.
+const ROW_PAD_X: f32 = 16.;
+const ROW_PAD_Y: f32 = 12.;
+
+fn cell(content: impl IntoElement) -> gpui_kit::Div {
+    div().w_full().flex().flex_col().px(px(ROW_PAD_X)).py(px(ROW_PAD_Y)).child(content)
+}
+
+fn danger_line(text: String, cx: &App) -> gpui_kit::Div {
+    let theme = cx.theme();
+    div().pt_2().text_size(theme.caption_size()).text_color(theme.colors().danger).child(SharedString::from(text))
 }
 
 /// Một dòng cài đặt: nhãn (+ dòng phụ mờ, cắt `…` khi dài) bên trái, điều khiển bên phải.
@@ -744,7 +614,14 @@ fn setting_row(cx: &App, label: SharedString, hint: Option<SharedString>, contro
         .gap_0p5()
         .child(div().truncate().child(label))
         .children(hint.map(|h| div().truncate().text_size(caption).text_color(muted).child(h)));
-    div().py_2().flex().items_center().justify_between().gap_3().child(text).child(div().flex_none().child(control))
+    div()
+        .min_h(px(32.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(text)
+        .child(div().flex_none().child(control))
 }
 
 impl Render for SettingsPage {
@@ -758,11 +635,9 @@ impl Render for SettingsPage {
                     .flex_col()
                     .gap_4()
                     .py_4()
+                    .child(self.render_language(&data, cx))
                     .child(self.render_appearance(&data, cx))
-                    .child(self.render_files(&data, cx))
-                    .child(self.render_network(&data, cx))
-                    .child(self.render_system(&data, cx))
-                    .child(self.render_advanced(&data, cx));
+                    .child(self.render_general(&data, cx));
                 ScrollArea::new("settings-scroll")
                     .vertical()
                     .flex_1()
@@ -781,17 +656,6 @@ impl Render for SettingsPage {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn speed_accepts_only_whole_numbers_in_range() {
-        assert_eq!(parse_speed(Some(1.)), Some(1));
-        assert_eq!(parse_speed(Some(f64::from(MAX_SPEED_LIMIT_MB_PER_SEC))), Some(MAX_SPEED_LIMIT_MB_PER_SEC));
-        assert_eq!(parse_speed(Some(0.)), None);
-        assert_eq!(parse_speed(Some(f64::from(MAX_SPEED_LIMIT_MB_PER_SEC) + 1.)), None);
-        assert_eq!(parse_speed(Some(2.5)), None);
-        assert_eq!(parse_speed(Some(f64::NAN)), None);
-        assert_eq!(parse_speed(None), None);
-    }
 
     #[test]
     fn errors_become_actionable_keys_per_section() {
@@ -827,7 +691,7 @@ mod tests {
                 keys.push(format!("settings.{rest}"));
             }
         }
-        assert!(keys.len() > 40, "scan found only {} keys", keys.len());
+        assert!(keys.len() > 30, "scan found only {} keys", keys.len());
         for lang in [Language::Vi, Language::En] {
             let i18n = I18n::new(lang);
             for key in &keys {

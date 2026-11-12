@@ -16,7 +16,7 @@
 //!   địa chỉ hỏng (discovery chọn lại), điện thoại cần cập nhật (không có `dirs`).
 
 pub mod download;
-pub mod throttle;
+pub mod meter;
 pub mod upload;
 
 use std::net::SocketAddr;
@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::{mpsc, watch};
 
-pub use throttle::{MeteredWriter, SpeedMeter, Throttle};
+pub use meter::{MeteredWriter, SpeedMeter};
 pub use upload::{RunnerConfig, UploadRunner};
 
 use crate::client::PhoneClient;

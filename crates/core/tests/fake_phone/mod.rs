@@ -3,7 +3,7 @@
 //! HTTP/1.1 tự viết trên `tokio::net` (không thêm crate server): mỗi kết nối một request, luôn `Connection: close`.
 //! Nghe `127.0.0.1` và `[::1]` (cùng cổng nếu được). Phiên upload trong RAM, giữ byte đã tới khi đứt giữa khúc.
 //! Nút điều khiển cho test: đứt sau N byte, ép mã lỗi kế tiếp (`507`, `503`…), quên mọi token, "tắt server" (mất phiên),
-//! dừng hẳn (không nhận kết nối), bỏ dữ liệu (đo RAM khi upload lớn), đổi `features`.
+//! dừng hẳn (không nhận kết nối), bỏ dữ liệu (đo RAM khi upload lớn), đổi `features`, mạng chậm (`set_pace`).
 //!
 //! Dùng chung cho test của task sau (`mod fake_phone;` trong `tests/<tên>.rs`).
 
@@ -93,6 +93,9 @@ struct State {
     features: Vec<String>,
     legacy_info: bool,
     discard_data: bool,
+    /// Mạng chậm giả: nhận thân `PATCH` / gửi thân `GET` ở chừng này byte / s (`None` = hết cỡ). Thay cho giới hạn tốc
+    /// độ phía PC đã gỡ — test cần bắt sự kiện giữa lúc truyền.
+    pace: Option<u64>,
     cut_after: Option<u64>,
     fail_next: Option<(u16, Option<u64>)>,
     port: u16,
@@ -205,6 +208,7 @@ impl FakePhone {
             features: vec!["ipv6".into(), "dirs".into()],
             legacy_info: false,
             discard_data: false,
+            pace: None,
             cut_after: None,
             fail_next: None,
             port: v4.port(),
@@ -298,6 +302,11 @@ impl FakePhone {
     /// Không giữ byte upload (chỉ đếm offset) — upload lớn không tốn RAM của tiến trình test.
     pub fn set_discard_data(&self, on: bool) {
         self.st().discard_data = on;
+    }
+
+    /// Mạng chậm: nhận / gửi thân tệp ở `bytes_per_sec` (`None` = hết cỡ).
+    pub fn set_pace(&self, bytes_per_sec: Option<u64>) {
+        self.st().pace = bytes_per_sec;
     }
 
     /// W-8: thư mục đã tạo bằng `POST /dirs`.
@@ -653,7 +662,11 @@ fn dirs(s: &State, req: &Request) -> Reply {
     if !exists {
         return Reply::status(404);
     }
-    let dirs: Vec<_> = sub.into_iter().filter(|n| !n.starts_with('.')).map(|n| json!({"name": n, "modified": 1, "count": 1})).collect();
+    let dirs: Vec<_> = sub
+        .into_iter()
+        .filter(|n| !n.starts_with('.'))
+        .map(|n| json!({"name": n, "modified": 1, "count": 1}))
+        .collect();
     Reply::json(200, json!({"path": at, "dirs": dirs, "files": files}))
 }
 
@@ -1002,7 +1015,10 @@ async fn patch(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, uid: &
         sess.busy = true;
         s.cut_after.take()
     };
-    let discard = state.lock().unwrap().discard_data;
+    let (discard, pace) = {
+        let s = state.lock().unwrap();
+        (s.discard_data, s.pace)
+    };
 
     // Nhận thân, ghi vào phiên ngay từng mẩu (đứt giữa chừng vẫn giữ byte đã tới).
     let mut received = 0u64;
@@ -1033,6 +1049,9 @@ async fn patch(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, uid: &
         }
         received += take as u64;
         pending.clear();
+        if let Some(rate) = pace {
+            tokio::time::sleep(Duration::from_secs_f64(take as f64 / rate as f64)).await;
+        }
     }
 
     let mut s = state.lock().unwrap();
@@ -1173,6 +1192,7 @@ impl FakePhone {
             features: vec!["ipv6".into(), "dirs".into()],
             legacy_info: false,
             discard_data: false,
+            pace: None,
             cut_after: None,
             fail_next: None,
             port: v6.port(),
@@ -1249,11 +1269,13 @@ async fn serve_file(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, k
         });
         if file.is_some() { s.cut_get_after.take() } else { None }
     };
+    let pace = state.lock().unwrap().pace;
     let Some(f) = file else { return send(sock, Reply::status(404)).await };
     let reply = file_reply(&f, req, false);
-    match cut {
-        None => send(sock, reply).await,
-        Some(n) => {
+    match (cut, pace) {
+        (None, None) => send(sock, reply).await,
+        (cut, _) => {
+            let n = cut.unwrap_or(u64::MAX);
             let mut head = format!("HTTP/1.1 {} {}\r\nConnection: close\r\n", reply.status, reason(reply.status));
             for (k, v) in &reply.headers {
                 head.push_str(&format!("{k}: {v}\r\n"));
@@ -1261,9 +1283,16 @@ async fn serve_file(sock: &mut TcpStream, state: &Mutex<State>, req: &Request, k
             head.push_str(&format!("Content-Length: {}\r\n\r\n", reply.body.len()));
             let _ = sock.write_all(head.as_bytes()).await;
             let n = (n as usize).min(reply.body.len());
-            let _ = sock.write_all(&reply.body[..n]).await;
+            for piece in reply.body[..n].chunks(READ_BUF) {
+                if sock.write_all(piece).await.is_err() {
+                    return;
+                }
+                if let Some(rate) = pace {
+                    tokio::time::sleep(Duration::from_secs_f64(piece.len() as f64 / rate as f64)).await;
+                }
+            }
             let _ = sock.flush().await;
-            // Thả socket: client thấy thân ngắn hơn `Content-Length`.
+            // Có `cut` ⇒ thả socket: client thấy thân ngắn hơn `Content-Length`. Chỉ `pace` ⇒ gửi đủ thân rồi đóng.
         }
     }
 }

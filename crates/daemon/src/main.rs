@@ -26,7 +26,7 @@ use ferry_core::i18n::I18n;
 use ferry_core::ipc::{ClientConnection, DaemonToUi, Endpoint, Role, UiToDaemon};
 use ferry_core::pairing::Tokens;
 use ferry_core::queue::{QueueStore, now_ms};
-use ferry_core::transfer::{RunnerConfig, Throttle};
+use ferry_core::transfer::RunnerConfig;
 use ferry_core::{VERSION, config, logging, paths};
 
 use crate::daemon::{Daemon, Event};
@@ -68,7 +68,6 @@ fn main() -> ExitCode {
     }
     let language = loaded.config.language.resolve();
     let autostart_error = autostart::sync_on_start(loaded.config.autostart).err();
-    let throttle = Throttle::new(loaded.config.speed_limit_bytes());
 
     let store = match QueueStore::default_path()
         .map_err(|e| e.to_string())
@@ -105,7 +104,6 @@ fn main() -> ExitCode {
             tokens: Tokens::os(),
             mdns: true,
             runner: RunnerConfig::default(),
-            throttle,
             i18n: I18n::new(language),
             autostart: autostart::apply,
             autostart_error,

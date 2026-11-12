@@ -14,7 +14,6 @@ use ferry_core::device::DeviceId;
 use ferry_core::export::{self, ExportEntry, ExportError, ExportPlan, Meter, Removal};
 use ferry_core::ipc::{CommandError, ExportState, ExportView, Outcome};
 use ferry_core::protocol::feature;
-use ferry_core::transfer::Throttle;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -49,16 +48,34 @@ enum JobState {
 }
 
 pub(super) enum ExportMsg {
-    Planned { id: u64, bytes: u64, files: u64 },
-    Tick { id: u64 },
-    Ready { id: u64 },
-    Failed { id: u64, error: CommandError },
+    Planned {
+        id: u64,
+        bytes: u64,
+        files: u64,
+    },
+    Tick {
+        id: u64,
+    },
+    Ready {
+        id: u64,
+    },
+    Failed {
+        id: u64,
+        error: CommandError,
+    },
     /// Đã xoá trên điện thoại phần của một mục cấp đầu vừa dán.
-    Removed { id: u64, removal: Removal },
+    Removed {
+        id: u64,
+        removal: Removal,
+    },
     /// Cắt: mọi mục đã dán và xoá xong.
-    AllMoved { id: u64 },
+    AllMoved {
+        id: u64,
+    },
     /// Hết hạn giữ (`KEEP_FOR`), thư mục phiên mất, hoặc "Đã dời" hiện đủ lâu ⇒ dọn.
-    Expired { id: u64 },
+    Expired {
+        id: u64,
+    },
 }
 
 impl ExportJob {
@@ -110,7 +127,6 @@ impl Engine {
             root: root.clone(),
             cut,
             meter: meter.clone(),
-            throttle: self.throttle.clone(),
             clipboard: self.clipboard,
             tx: self.internal_tx.clone(),
         };
@@ -178,14 +194,17 @@ impl Engine {
             ExportMsg::AllMoved { .. } => {
                 job.state = JobState::Moved;
                 let (device, removal, n) = (job.device.clone(), job.removal, job.paths.len());
-                log::info!("engine: export #{id} moved, deleted {} kept {} on the phone", removal.deleted, removal.kept);
+                log::info!(
+                    "engine: export #{id} moved, deleted {} kept {} on the phone",
+                    removal.deleted,
+                    removal.kept
+                );
                 let phone = self.phone_name(&device);
                 let count = n.to_string();
                 let title = self.i18n.t_args("notice.moved_title", &[("phone", &phone)]);
-                let mut body = self.i18n.t_args(
-                    if n == 1 { "notice.moved_body_one" } else { "notice.moved_body" },
-                    &[("count", &count)],
-                );
+                let mut body = self
+                    .i18n
+                    .t_args(if n == 1 { "notice.moved_body_one" } else { "notice.moved_body" }, &[("count", &count)]);
                 if removal.kept > 0 {
                     body.push('\n');
                     body.push_str(&self.i18n.t_args("notice.moved_kept", &[("count", &removal.kept.to_string())]));
@@ -213,7 +232,6 @@ struct TaskCtx {
     root: PathBuf,
     cut: bool,
     meter: Arc<Meter>,
-    throttle: Arc<Throttle>,
     clipboard: Clipboard,
     tx: mpsc::UnboundedSender<Internal>,
 }
@@ -259,7 +277,7 @@ async fn run(ctx: TaskCtx) {
     };
     ctx.send(ExportMsg::Planned { id: ctx.id, bytes: plan.total_bytes(), files: plan.files.len() as u64 });
 
-    let download = export::download(&ctx.client, &plan, ctx.throttle.clone(), &ctx.meter);
+    let download = export::download(&ctx.client, &plan, &ctx.meter);
     tokio::pin!(download);
     let mut tick = tokio::time::interval(TICK);
     let done = loop {

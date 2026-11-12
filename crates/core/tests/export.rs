@@ -10,7 +10,6 @@ use ferry_core::client::{ClientError, PhoneClient};
 use ferry_core::device::DeviceId;
 use ferry_core::export::{self, ExportEntry, ExportError, Meter};
 use ferry_core::protocol::Secret;
-use ferry_core::transfer::Throttle;
 
 fn pattern(len: usize, seed: usize) -> Vec<u8> {
     (0..len).map(|i| ((i * 31 + seed * 7) % 251) as u8).collect()
@@ -20,7 +19,8 @@ async fn rig(features: &[&str]) -> (FakePhone, PhoneClient) {
     let phone = FakePhone::start().await;
     phone.set_features(features);
     let token = phone.issue_token("0e5e6d0c-test-export");
-    let client = PhoneClient::new(phone.v4(), Some(&DeviceId(fake_phone::ID.into())), Some(Secret::new(token))).unwrap();
+    let client =
+        PhoneClient::new(phone.v4(), Some(&DeviceId(fake_phone::ID.into())), Some(Secret::new(token))).unwrap();
     (phone, client)
 }
 
@@ -33,7 +33,7 @@ fn entry(path: &str, folder: bool) -> ExportEntry {
 async fn run(client: &PhoneClient, entries: &[ExportEntry], root: &Path) -> export::ExportPlan {
     let plan = export::plan(client, entries, root).await.unwrap();
     let meter = Meter::default();
-    export::download(client, &plan, Throttle::new(None), &meter).await.unwrap();
+    export::download(client, &plan, &meter).await.unwrap();
     assert_eq!(meter.bytes(), plan.total_bytes());
     assert_eq!(meter.files(), plan.files.len() as u64);
     plan

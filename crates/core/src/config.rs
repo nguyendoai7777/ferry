@@ -27,10 +27,6 @@ pub struct Config {
     /// [`Config::download_dir`] thay vì đọc thẳng.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_dir: Option<PathBuf>,
-    /// Trần tốc độ chung mọi điện thoại, MB/s (1 MB = 1 048 576 byte, cùng đơn vị chữ hiển thị); vắng = không giới hạn
-    /// (gd1_12). Dùng [`Config::speed_limit_bytes`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speed_limit_mb_per_sec: Option<u32>,
     /// Khởi động cùng hệ thống (gd1_12, `daemon/src/autostart.rs`). Mặc định tắt.
     pub autostart: bool,
     /// Thư mục theo dõi (gd1_12 lưu, gd1_13 chạy).
@@ -75,9 +71,6 @@ pub struct WatchFolder {
     pub path: Option<PathBuf>,
 }
 
-/// Trần trên của giới hạn tốc độ (MB/s) — trên mức này coi như gõ nhầm.
-pub const MAX_SPEED_LIMIT_MB_PER_SEC: u32 = 10_000;
-
 /// Một điện thoại đã ghép (W-3, `PROTOCOL.md` 6.8): `id` + **tập** địa chỉ cuối cùng thấy được, IPv4 lẫn IPv6.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -101,11 +94,6 @@ impl Config {
     /// Thư mục tải về đang dùng: `downloadDir` khi đặt (không rỗng), không thì mặc định của OS.
     pub fn download_dir(&self) -> PathBuf {
         self.download_dir.clone().filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_download_dir)
-    }
-
-    /// Trần tốc độ, byte / s; `None` = không giới hạn (`0` cũng là không giới hạn).
-    pub fn speed_limit_bytes(&self) -> Option<u64> {
-        self.speed_limit_mb_per_sec.filter(|n| *n > 0).map(|n| u64::from(n) * 1024 * 1024)
     }
 
     /// Thêm / cập nhật điện thoại vừa ghép (ghép lại ⇒ thay tên + địa chỉ, giữ vị trí trong danh sách). Không token.
@@ -298,7 +286,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let defaults = serde_json::to_value(Config::default()).unwrap();
-        for key in ["speedLimitMbPerSec", "manualAddresses", "downloadDir", "themePreset"] {
+        for key in ["manualAddresses", "downloadDir", "themePreset"] {
             assert!(defaults.get(key).is_none(), "{key} stays out of the file when unset");
         }
         assert_eq!(defaults["autostart"], false);
@@ -310,7 +298,6 @@ mod tests {
             client_id: "c".into(),
             language: LanguagePref::En,
             download_dir: Some(PathBuf::from("/tmp/nhận")),
-            speed_limit_mb_per_sec: Some(5),
             autostart: true,
             watch_folder: WatchFolder { enabled: true, path: Some(PathBuf::from("/tmp/theo dõi")) },
             manual_addresses: vec!["192.168.1.9:8080".into(), "[fd12::5]:8080".into()],
@@ -326,7 +313,6 @@ mod tests {
         };
         save(&path, &config).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(v["speedLimitMbPerSec"], 5);
         assert_eq!(v["autostart"], true);
         assert_eq!(v["watchFolder"], serde_json::json!({ "enabled": true, "path": "/tmp/theo dõi" }));
         assert_eq!(v["manualAddresses"][1], "[fd12::5]:8080");
@@ -335,8 +321,14 @@ mod tests {
         assert_eq!(v["language"], "en");
         assert_eq!((v["theme"].as_str(), v["themePreset"].as_str()), (Some("dark"), Some("rose-red")));
         assert_eq!(load(&path).unwrap(), config);
-        assert_eq!(config.speed_limit_bytes(), Some(5 * 1024 * 1024));
-        assert_eq!(Config { speed_limit_mb_per_sec: Some(0), ..Config::default() }.speed_limit_bytes(), None);
+    }
+
+    /// Khoá `speedLimitMbPerSec` của bản cũ (giới hạn tốc độ, gỡ 12/11/2026) vẫn đọc được: bỏ qua, không lỗi.
+    #[test]
+    fn legacy_speed_limit_key_is_ignored() {
+        let c: Config = serde_json::from_str(r#"{"speedLimitMbPerSec":5,"autostart":true}"#).unwrap();
+        assert!(c.autostart);
+        assert!(serde_json::to_value(&c).unwrap().get("speedLimitMbPerSec").is_none());
     }
 
     #[test]
