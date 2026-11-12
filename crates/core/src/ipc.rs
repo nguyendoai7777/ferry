@@ -31,7 +31,7 @@ use interprocess::local_socket::{ListenerOptions, Name, Stream};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ThemeChoice, WatchFolder};
+use crate::config::ThemeChoice;
 use crate::device::{DeviceId, DeviceState};
 pub use crate::export::ExportEntry;
 use crate::firewall::{AllowResult, MdnsFirewallHint};
@@ -174,8 +174,6 @@ pub enum SettingsOp {
     SetDownloadDir { path: Option<PathBuf> },
     /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
     SetAutostart { enabled: bool },
-    /// Thư mục theo dõi (gd1_13 chạy). `enabled` mà `path` không phải thư mục có thật ⇒ `InvalidInput`.
-    SetWatchFolder { folder: WatchFolder },
     /// Tên hiển thị trên PC; chuỗi trắng ⇒ về tên điện thoại báo. Không có trong sổ đã ghép ⇒ `UnknownDevice`.
     RenameDevice { device: DeviceId, name: String },
     /// Nền giao diện (sáng / tối / hệ thống). Chỉ lưu; cửa sổ tự áp ngay khi người dùng chọn.
@@ -196,10 +194,6 @@ pub struct SettingsView {
     pub autostart: bool,
     /// Lần áp vào OS gần nhất hỏng (chữ của OS, đã log) — hiện dưới công tắc kèm cách gỡ.
     pub autostart_error: Option<String>,
-    pub watch_folder: WatchFolder,
-    /// Bật mà không theo dõi được thư mục (chữ của OS, đã log: thư mục mất, không quyền, hết inotify watch) — gd1_13.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch_error: Option<String>,
     /// Điện thoại đã ghép, thứ tự ghép.
     pub devices: Vec<DeviceSetting>,
     /// Nền giao diện (thêm sau gd1_14; vắng ⇒ hệ thống).
@@ -960,15 +954,6 @@ mod tests {
             ),
             (UiToDaemon::Settings { req: 7, op: SettingsOp::Get }, r#"{"type":"settings","req":7,"op":{"op":"get"}}"#),
             (
-                UiToDaemon::Settings {
-                    req: 9,
-                    op: SettingsOp::SetWatchFolder {
-                        folder: WatchFolder { enabled: true, path: Some("/v/in".into()) },
-                    },
-                },
-                r#"{"type":"settings","req":9,"op":{"op":"set_watch_folder","folder":{"enabled":true,"path":"/v/in"}}}"#,
-            ),
-            (
                 UiToDaemon::Settings { req: 10, op: SettingsOp::SetLanguage { language: LanguagePref::System } },
                 r#"{"type":"settings","req":10,"op":{"op":"set_language","language":"system"}}"#,
             ),
@@ -998,8 +983,6 @@ mod tests {
             download_dir_custom: true,
             autostart: true,
             autostart_error: None,
-            watch_folder: WatchFolder::default(),
-            watch_error: None,
             devices: vec![DeviceSetting {
                 id: dev.clone(),
                 name: "Pixel".into(),
@@ -1015,7 +998,6 @@ mod tests {
                 concat!(
                     r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
                     r#""downloadDirCustom":true,"autostart":true,"autostartError":null,"#,
-                    r#""watchFolder":{"enabled":false},"#,
                     r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}],"#,
                     r#""theme":"dark","themePreset":"deeppink"}}"#
                 ),

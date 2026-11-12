@@ -1,14 +1,15 @@
 //! Trang Cài đặt (gd1_12, PROTOCOL 4.5). Nằm trong cửa sổ chính, mở bằng mục Cài đặt ở đáy cột trái (hoặc menu khay
 //! "Cài đặt…"). Bố cục theo Cài đặt của macOS / iOS (12/11/2026): các card `CardGroup::standalone` không tiêu đề, mỗi mục
 //! một dòng có đường kẻ chia — Ngôn ngữ; Giao diện (nền + bảng màu, như Groovex); Tệp + hệ thống. Không có giới
-//! hạn tốc độ, không có địa chỉ tay (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn Thêm điện thoại).
+//! hạn tốc độ, địa chỉ tay, thư mục theo dõi (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn Thêm điện
+//! thoại).
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
 //! hiện dưới đúng mục bằng câu nói việc cần làm. Điện thoại đã ghép (đổi tên, xoá) ở màn Danh sách thiết bị
 //! (`views/devices.rs`), không ở đây.
 
-use ferry_core::config::{ThemeChoice, WatchFolder};
+use ferry_core::config::ThemeChoice;
 use ferry_core::i18n::{I18n, Language, LanguagePref};
 use ferry_core::ipc::{CommandError, SettingsOp, SettingsView};
 use materiant::button::segmented::SegmentedButtons;
@@ -25,7 +26,6 @@ use materiant::select::Select;
 use materiant::switch::Switch;
 use materiant::theme::ActiveTheme;
 use materiant::theme::picker::ThemePicker;
-use std::path::PathBuf;
 
 use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
 
@@ -47,12 +47,6 @@ impl Section {
     fn ix(self) -> usize {
         self as usize
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PickTarget {
-    Download,
-    Watch,
 }
 
 enum Load {
@@ -272,7 +266,7 @@ impl SettingsPage {
 
     // ----- tệp -----
 
-    fn pick_folder(&mut self, target: PickTarget, window: &mut Window, cx: &mut Context<Self>) {
+    fn pick_download_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy[Section::Files.ix()] {
             return;
         }
@@ -281,33 +275,13 @@ impl SettingsPage {
         cx.spawn_in(window, async move |this, cx| {
             let path = picked.await.ok().and_then(Result::ok).flatten().and_then(|p| p.into_iter().next());
             if let Some(path) = path {
-                this.update_in(cx, |page, window, cx| page.folder_picked(target, path, window, cx)).ok();
+                this.update_in(cx, |page, window, cx| {
+                    page.run_op(Section::Files, SettingsOp::SetDownloadDir { path: Some(path) }, window, cx)
+                })
+                .ok();
             }
         })
         .detach();
-    }
-
-    fn folder_picked(&mut self, target: PickTarget, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let op = match target {
-            PickTarget::Download => SettingsOp::SetDownloadDir { path: Some(path) },
-            PickTarget::Watch => SettingsOp::SetWatchFolder { folder: WatchFolder { enabled: true, path: Some(path) } },
-        };
-        self.run_op(Section::Files, op, window, cx);
-    }
-
-    fn set_watch_enabled(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let path = self.data.as_ref().and_then(|d| d.watch_folder.path.clone());
-        if on && path.is_none() {
-            // Chưa có thư mục thì hỏi trước; chọn xong mới bật.
-            self.pick_folder(PickTarget::Watch, window, cx);
-            return;
-        }
-        self.run_op(
-            Section::Files,
-            SettingsOp::SetWatchFolder { folder: WatchFolder { enabled: on, path } },
-            window,
-            cx,
-        );
     }
 
     // ----- vẽ -----
@@ -392,11 +366,7 @@ impl SettingsPage {
 
     /// Tệp + khởi động cùng hệ thống — một card, mỗi mục một dòng có đường kẻ chia (kiểu Cài đặt iOS).
     fn render_general(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
-        CardGroup::new()
-            .standalone()
-            .child(self.render_download(data, cx))
-            .child(self.render_watch(data, cx))
-            .child(self.render_autostart(data, cx))
+        CardGroup::new().standalone().child(self.render_download(data, cx)).child(self.render_autostart(data, cx))
     }
 
     fn render_download(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -415,7 +385,7 @@ impl SettingsPage {
                         .size(Size::Sm)
                         .disabled(busy)
                         .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                            page.pick_folder(PickTarget::Download, window, cx);
+                            page.pick_download_dir(window, cx);
                         })),
                 )
                 .child(
@@ -428,45 +398,7 @@ impl SettingsPage {
                         })),
                 ),
         ))
-    }
-
-    fn render_watch(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let busy = self.busy[Section::Files.ix()];
-        let watch_hint = match &data.watch_folder.path {
-            Some(path) => path.display().to_string().into(),
-            None => self.t("settings.files.watch_folder_none"),
-        };
-        let row = setting_row(
-            cx,
-            self.t("settings.files.watch_folder"),
-            Some(watch_hint),
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Button::new("settings-watch-choose", self.t("settings.files.choose"))
-                        .outlined()
-                        .size(Size::Sm)
-                        .disabled(busy)
-                        .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                            page.pick_folder(PickTarget::Watch, window, cx);
-                        })),
-                )
-                .child(
-                    Switch::new("settings-watch")
-                        .on(data.watch_folder.enabled)
-                        .accessibility_label(self.t("settings.files.watch_folder"))
-                        .disabled(busy)
-                        .on_change(cx.listener(|page, on: &bool, window, cx| page.set_watch_enabled(*on, window, cx))),
-                ),
-        );
-        // Bật mà daemon không theo dõi được (thư mục mất, không quyền, hết inotify watch) — gd1_13.
-        let watch_error =
-            data.watch_error.as_ref().filter(|_| data.watch_folder.enabled).map(|error| {
-                danger_line(self.i18n.t_args("settings.files.watch_folder_error", &[("error", error)]), cx)
-            });
-        cell(row).children(watch_error).children(self.error_line(Section::Files, cx))
+        .children(self.error_line(Section::Files, cx))
     }
 
     fn render_autostart(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -588,7 +520,7 @@ mod tests {
                 keys.push(format!("settings.{rest}"));
             }
         }
-        assert!(keys.len() > 30, "scan found only {} keys", keys.len());
+        assert!(keys.len() > 20, "scan found only {} keys", keys.len());
         for lang in [Language::Vi, Language::En] {
             let i18n = I18n::new(lang);
             for key in &keys {

@@ -29,8 +29,6 @@ pub struct Config {
     pub download_dir: Option<PathBuf>,
     /// Khởi động cùng hệ thống (gd1_12, `daemon/src/autostart.rs`). Mặc định tắt.
     pub autostart: bool,
-    /// Thư mục theo dõi (gd1_12 lưu, gd1_13 chạy).
-    pub watch_folder: WatchFolder,
     /// Nền giao diện của cửa sổ: sáng / tối / theo hệ thống (mặc định). Chỉ `ferry-ui` đọc để vẽ.
     pub theme: ThemeChoice,
     /// Bảng màu: khoá preset của materiant (`default`, `deeppink`, `rose-red`, `rebecca-purple`); vắng / rỗng ⇒
@@ -56,16 +54,6 @@ impl ThemeChoice {
 
 /// Bảng màu mặc định (theme gốc của materiant).
 pub const DEFAULT_THEME_PRESET: &str = "default";
-
-/// Một thư mục theo dõi: tệp mới ổn định trong đó tự gửi sang điện thoại (gd1_13).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct WatchFolder {
-    pub enabled: bool,
-    /// Vắng ⇒ chưa chọn; `enabled` không có nghĩa khi chưa có thư mục.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-}
 
 /// Một điện thoại đã ghép (W-3, `PROTOCOL.md` 6.8): `id` + **tập** địa chỉ cuối cùng thấy được, IPv4 lẫn IPv6.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -286,7 +274,6 @@ mod tests {
             assert!(defaults.get(key).is_none(), "{key} stays out of the file when unset");
         }
         assert_eq!(defaults["autostart"], false);
-        assert_eq!(defaults["watchFolder"], serde_json::json!({ "enabled": false }));
         assert_eq!(defaults["theme"], "system");
         assert_eq!(Config::default().theme_preset(), DEFAULT_THEME_PRESET);
 
@@ -295,7 +282,6 @@ mod tests {
             language: LanguagePref::En,
             download_dir: Some(PathBuf::from("/tmp/nhận")),
             autostart: true,
-            watch_folder: WatchFolder { enabled: true, path: Some(PathBuf::from("/tmp/theo dõi")) },
             theme: ThemeChoice::Dark,
             theme_preset: "rose-red".into(),
             devices: vec![PairedDevice {
@@ -309,7 +295,6 @@ mod tests {
         save(&path, &config).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(v["autostart"], true);
-        assert_eq!(v["watchFolder"], serde_json::json!({ "enabled": true, "path": "/tmp/theo dõi" }));
         assert_eq!(v["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(v["downloadDir"], "/tmp/nhận");
         assert_eq!(v["language"], "en");
@@ -317,16 +302,18 @@ mod tests {
         assert_eq!(load(&path).unwrap(), config);
     }
 
-    /// Khoá đã gỡ 12/11/2026 (`speedLimitMbPerSec` — giới hạn tốc độ, `manualAddresses` — địa chỉ tay của Cài đặt) vẫn đọc
-    /// được: bỏ qua, không lỗi, không ghi lại.
+    /// Khoá đã gỡ 12/11/2026 (`speedLimitMbPerSec` — giới hạn tốc độ, `manualAddresses` — địa chỉ tay của Cài đặt,
+    /// `watchFolder` — thư mục theo dõi gd1_13) vẫn đọc được: bỏ qua, không lỗi, không ghi lại.
     #[test]
     fn legacy_removed_keys_are_ignored() {
         let c: Config =
-            serde_json::from_str(r#"{"speedLimitMbPerSec":5,"manualAddresses":["192.168.1.9:8080"],"autostart":true}"#)
+            serde_json::from_str(r#"{"speedLimitMbPerSec":5,"manualAddresses":["192.168.1.9:8080"],"watchFolder":{"enabled":true,"path":"/v"},"autostart":true}"#)
                 .unwrap();
         assert!(c.autostart);
         let v = serde_json::to_value(&c).unwrap();
-        assert!(v.get("speedLimitMbPerSec").is_none() && v.get("manualAddresses").is_none());
+        for key in ["speedLimitMbPerSec", "manualAddresses", "watchFolder"] {
+            assert!(v.get(key).is_none(), "{key} is dropped");
+        }
     }
 
     #[test]

@@ -19,7 +19,6 @@ pub mod paths;
 pub mod protocol;
 pub mod queue;
 pub mod transfer;
-pub mod watch;
 
 /// Phiên bản app (theo workspace), in vào log và `Hello`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

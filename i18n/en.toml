@@ -333,10 +333,6 @@ theme_preset = "Color theme"
 download_dir = "Download folder"
 choose = "Choose"
 reset = "Default"
-watch_folder = "Watch a folder"
-watch_folder_hint = "New files in this folder are sent to the phone automatically."
-watch_folder_none = "No folder chosen"
-watch_folder_error = "Couldn't watch the folder: {error}. Choose the folder again or check its permissions."
 
 [settings.system]
 autostart = "Start with the system"

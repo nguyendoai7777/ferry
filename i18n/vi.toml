@@ -333,10 +333,6 @@ theme_preset = "Bảng màu"
 download_dir = "Thư mục tải về"
 choose = "Chọn"
 reset = "Mặc định"
-watch_folder = "Theo dõi thư mục"
-watch_folder_hint = "Tệp mới trong thư mục này tự gửi sang điện thoại."
-watch_folder_none = "Chưa chọn thư mục"
-watch_folder_error = "Không theo dõi được thư mục: {error}. Chọn lại thư mục hoặc kiểm tra quyền truy cập."
 
 [settings.system]
 autostart = "Khởi động cùng hệ thống"

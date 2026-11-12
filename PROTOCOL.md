@@ -51,14 +51,14 @@ pc-app/
     pairing        POST /api/v1/pair, cất/xoá token trong keyring
     client         HTTP thuần: info, list, download (Range), upload nối tiếp
     queue          hàng đợi bền (SQLite hoặc JSON append-only), máy trạng thái từng mục, retry/backoff
-    watch          (tuỳ chọn) thư mục "Gửi sang điện thoại": file mới ổn định → vào hàng đợi
+    watch          (đã gỡ 12/11/2026) thư mục "Gửi sang điện thoại": file mới ổn định → vào hàng đợi
   app/             UI kit của chủ dự án: khay hệ thống + cửa sổ
 ```
 
 - Lõi chạy trên một runtime async (tokio) riêng; UI nhận **ảnh chụp trạng thái** qua channel (không chia sẻ mutex với UI).
 - Crate gợi ý (cân nhắc theo UI kit đang dùng): `mdns-sd` (dò), `reqwest` hoặc `hyper` (stream thân request từ file,
   không đọc cả file vào RAM), `keyring` (token), `directories` (đường dữ liệu), `rusqlite` hoặc `serde_json` (hàng đợi),
-  `notify` (theo dõi thư mục), `uuid` (client id).
+  `uuid` (client id).
 - Client id: UUID sinh một lần lúc cài, lưu cạnh cấu hình. Tên client: tên máy (`hostname`), cho đổi.
 
 ## 4. Màn hình
@@ -82,8 +82,9 @@ pc-app/
    khai `edit` (§6.12, W-8).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → [icon WiFi ở thanh điều hướng đáy] → Bật “Cho phép nhận”" (màn Đồng bộ WiFi). Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
-5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, khởi động cùng
-   hệ thống, ngôn ngữ, giao diện. Không có giới hạn băng thông, không có địa chỉ tay (bỏ 12/11/2026).
+5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục lưu file tải về, khởi động cùng
+   hệ thống, ngôn ngữ, giao diện. Không có giới hạn băng thông, không có địa chỉ tay, không có thư mục theo dõi
+   (bỏ 12/11/2026).
 
 6. **Trình duyệt điện thoại kiểu Explorer** (một component, dùng ở hộp chọn đích khi gửi và ở tab thư viện điện thoại):
    - Thanh trên: nút Lùi / Tiến / Lên, **thanh địa chỉ dạng breadcrumb** (`Pixel 8 › Chuyến đi › Ngày 1`, bấm từng đoạn

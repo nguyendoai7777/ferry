@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ferry_core::client::{ClientError, PhoneClient};
-use ferry_core::config::{self, Config, WatchFolder};
+use ferry_core::config::{self, Config};
 use ferry_core::device::{DeviceEvent, DeviceId, DeviceState, Devices};
 use ferry_core::discovery::address::{self, AddressError, LocalInterface};
 use ferry_core::discovery::mdns::{Browser, MdnsEvent};
@@ -36,7 +36,6 @@ use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, TransferEvent, UploadRunner,
     link_channel,
 };
-use ferry_core::watch::{self, FolderWatcher, Ready};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -67,8 +66,6 @@ pub struct EngineConfig {
     pub autostart: fn(bool) -> Result<(), String>,
     /// Lỗi của lần đồng bộ autostart lúc khởi động (`autostart::sync_on_start`).
     pub autostart_error: Option<String>,
-    /// Thư mục theo dõi: tệp đứng yên chừng này mới vào hàng đợi (`watch::STABLE_FOR`; test rút ngắn).
-    pub watch_stable_for: Duration,
     /// Thư mục tạm của Cắt / Sao chép sang máy tính (W-10): `<data_dir>/clipboard`, mỗi lần một thư mục con.
     pub export_dir: PathBuf,
     pub clipboard: crate::clipboard::Clipboard,
@@ -219,17 +216,6 @@ enum Internal {
         outbox: Outbox,
         req: u64,
     },
-    /// Đăng ký theo dõi thư mục xong (`FolderWatcher::start` trong `spawn_blocking`). `reply` ⇒ lệnh cài đặt đang chờ kết quả.
-    WatchStarted {
-        generation: u64,
-        result: Result<FolderWatcher, String>,
-        reply: Option<(Outbox, u64)>,
-    },
-    /// Thư mục theo dõi: đã thêm `files` tệp vào hàng đợi của `device` (`add_watched`).
-    Watched {
-        device: DeviceId,
-        files: u64,
-    },
     /// Quét LAN dự phòng xong (`discovery::scan`).
     Scanned {
         found: Vec<(SocketAddr, Info)>,
@@ -249,7 +235,6 @@ enum Internal {
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
 enum Settled {
     DownloadDir(Option<PathBuf>, Result<(), CommandError>),
-    WatchFolder(WatchFolder, Result<(), CommandError>),
     /// Lỗi OS không chặn: cấu hình vẫn theo công tắc, lỗi hiện ở màn cài đặt (lần khởi động sau thử lại).
     Autostart(bool, Result<(), String>),
 }
@@ -258,7 +243,6 @@ struct Receivers {
     transfer: mpsc::UnboundedReceiver<TransferEvent>,
     internal: mpsc::UnboundedReceiver<Internal>,
     browser: Option<Browser>,
-    watch: mpsc::UnboundedReceiver<Ready>,
 }
 
 struct Engine {
@@ -289,14 +273,6 @@ struct Engine {
     /// Đã báo "cần ghép lại" / "hết chỗ" — báo một lần tới khi thiết bị chạy lại.
     told_repair: HashSet<DeviceId>,
     told_no_space: HashSet<DeviceId>,
-    /// Bộ theo dõi thư mục đang chạy (gd1_13); thả ⇒ luồng của nó dừng.
-    watcher: Option<FolderWatcher>,
-    /// Thế hệ bộ theo dõi hiện tại — lô `Ready` của bộ cũ (vừa đổi thư mục) bị bỏ.
-    watch_gen: u64,
-    watch_tx: mpsc::UnboundedSender<Ready>,
-    watch_stable_for: Duration,
-    /// Lần bật bộ theo dõi gần nhất hỏng (chữ của OS) — `SettingsView::watch_error`.
-    watch_error: Option<String>,
     /// W-6: tường lửa đoán lúc khởi động (`firewall::detect`); chỉ khi có dò mDNS.
     firewall: firewall::Detected,
     /// Dò mDNS từ lúc này (`None` ⇒ không dò).
@@ -337,7 +313,6 @@ impl Engine {
     fn new(cfg: EngineConfig, sinks: Sinks) -> (Engine, Receivers) {
         let (transfer_tx, transfer) = mpsc::unbounded_channel();
         let (internal_tx, internal) = mpsc::unbounded_channel();
-        let (watch_tx, watch) = mpsc::unbounded_channel();
         let locals = address::local_interfaces();
         let devices = Devices::from_config(&cfg.config.devices, locals.clone(), Instant::now());
         let browser = if cfg.mdns {
@@ -376,11 +351,6 @@ impl Engine {
             tray: None,
             told_repair: HashSet::new(),
             told_no_space: HashSet::new(),
-            watcher: None,
-            watch_gen: 0,
-            watch_tx,
-            watch_stable_for: cfg.watch_stable_for,
-            watch_error: None,
             firewall: firewall::Detected::NONE,
             mdns_since: browser.as_ref().map(|_| Instant::now()),
             mdns_found: false,
@@ -409,8 +379,7 @@ impl Engine {
         for id in paired {
             engine.ensure_runner(&id);
         }
-        engine.restart_watch(None);
-        (engine, Receivers { transfer, internal, browser, watch })
+        (engine, Receivers { transfer, internal, browser })
     }
 
     async fn run(mut self, mut inputs: mpsc::UnboundedReceiver<Input>, mut rx: Receivers) {
@@ -435,7 +404,6 @@ impl Engine {
                 },
                 Some(ev) = rx.transfer.recv() => self.on_transfer(ev),
                 Some(msg) = rx.internal.recv() => self.on_internal(msg),
-                Some(ready) = rx.watch.recv() => self.on_watch_ready(ready),
                 ev = next_mdns(rx.browser.as_ref()) => match ev {
                     Some(MdnsEvent::Announced(ann)) => {
                         if !std::mem::replace(&mut self.mdns_found, true) && self.firewall.may_block {
@@ -837,19 +805,6 @@ impl Engine {
                 blocking(Box::new(move || Settled::Autostart(enabled, apply(enabled))));
                 return None;
             }
-            SettingsOp::SetWatchFolder { folder } => {
-                if folder.path.as_ref().is_some_and(|p| !p.is_absolute()) || (folder.enabled && folder.path.is_none()) {
-                    return Some(Err(CommandError::InvalidInput));
-                }
-                blocking(Box::new(move || {
-                    let check = match &folder.path {
-                        Some(p) if folder.enabled && !p.is_dir() => Err(CommandError::InvalidInput),
-                        _ => Ok(()),
-                    };
-                    Settled::WatchFolder(folder, check)
-                }));
-                return None;
-            }
             SettingsOp::RenameDevice { device, name } => {
                 if !self.config.devices.iter().any(|d| d.id == device) || !self.devices.set_alias(&device, Some(name)) {
                     return Some(Err(CommandError::UnknownDevice));
@@ -880,10 +835,6 @@ impl Engine {
                 check?;
                 self.config.download_dir = path;
             }
-            Settled::WatchFolder(folder, check) => {
-                check?;
-                self.config.watch_folder = folder;
-            }
             Settled::Autostart(enabled, result) => {
                 self.config.autostart = enabled;
                 self.autostart_error = result.err();
@@ -901,8 +852,6 @@ impl Engine {
             download_dir_custom: c.download_dir.as_ref().is_some_and(|d| !d.as_os_str().is_empty()),
             autostart: c.autostart,
             autostart_error: self.autostart_error.clone(),
-            watch_folder: c.watch_folder.clone(),
-            watch_error: self.watch_error.clone(),
             devices: c
                 .devices
                 .iter()
@@ -978,48 +927,6 @@ impl Engine {
             let ev = self.devices.info_ok(info, addr, now);
             self.on_device_events(ev);
         }
-    }
-
-    // ---- thư mục theo dõi (gd1_13) ----
-
-    /// Dừng bộ theo dõi cũ (nếu có), bật bộ mới theo `config.watch_folder`. Đăng ký theo dõi chặn (cây lớn) ⇒ chạy trong
-    /// `spawn_blocking`, kết quả về `Internal::WatchStarted`; `reply` = lệnh cài đặt trả lời sau khi biết bật được không.
-    fn restart_watch(&mut self, reply: Option<(Outbox, u64)>) {
-        self.watcher = None;
-        self.watch_error = None;
-        self.watch_gen += 1;
-        let wf = &self.config.watch_folder;
-        let (true, Some(path)) = (wf.enabled, wf.path.clone()) else {
-            if let Some((outbox, req)) = reply {
-                reply_to(&outbox, req, Ok(Outcome::Settings(self.settings_view())));
-            }
-            return;
-        };
-        let (generation, stable_for, out, tx) =
-            (self.watch_gen, self.watch_stable_for, self.watch_tx.clone(), self.internal_tx.clone());
-        tokio::task::spawn_blocking(move || {
-            let result = FolderWatcher::start(path, generation, stable_for, out);
-            let _ = tx.send(Internal::WatchStarted { generation, result, reply });
-        });
-    }
-
-    /// Lô tệp mới đã ổn định ⇒ hàng đợi của điện thoại mặc định (điện thoại ghép đầu tiên). Chống trùng + ghi store
-    /// trong `spawn_blocking`.
-    fn on_watch_ready(&mut self, ready: Ready) {
-        if ready.generation != self.watch_gen || self.watcher.is_none() {
-            return;
-        }
-        let Some(device) = self.config.devices.first().map(|d| d.id.clone()) else {
-            log::info!("engine: watch folder: {} new file(s) but no paired phone", ready.files.len());
-            return;
-        };
-        let (store, tx) = (self.store.clone(), self.internal_tx.clone());
-        tokio::task::spawn_blocking(move || match add_watched(&store, &device, &ready) {
-            Ok(files) => {
-                let _ = tx.send(Internal::Watched { device, files });
-            }
-            Err(e) => log::warn!("engine: watch folder: {e}"),
-        });
     }
 
     /// Ghi `config.json` (nguyên tử). Chỉ engine ghi — một nơi, tuần tự trong `select!`.
@@ -1269,29 +1176,8 @@ impl Engine {
                 reply_to(&outbox, req, r);
             }
             Internal::Settled { outbox, req, change } => {
-                let restart = matches!(&change, Settled::WatchFolder(f, Ok(())) if *f != self.config.watch_folder);
                 let r = self.on_settled(change);
-                if restart {
-                    // Trả lời sau khi biết bật theo dõi được không (`watch_error` trong `SettingsView`).
-                    self.restart_watch(Some((outbox, req)));
-                } else {
-                    reply_to(&outbox, req, r);
-                }
-            }
-            Internal::WatchStarted { generation, result, reply } => {
-                // Bộ của thế hệ cũ (đổi thư mục lần nữa trong lúc đăng ký) ⇒ thả.
-                if generation == self.watch_gen {
-                    match result {
-                        Ok(w) => self.watcher = Some(w),
-                        Err(e) => {
-                            log::warn!("engine: watch folder: {e}");
-                            self.watch_error = Some(e);
-                        }
-                    }
-                }
-                if let Some((outbox, req)) = reply {
-                    reply_to(&outbox, req, Ok(Outcome::Settings(self.settings_view())));
-                }
+                reply_to(&outbox, req, r);
             }
             Internal::Added { outbox, req, device, outcome } => {
                 let wake = matches!(outcome, Outcome::Added { batch: Some(_), .. })
@@ -1357,14 +1243,6 @@ impl Engine {
                 reply_to(&outbox, req, Ok(Outcome::Done));
             }
             Internal::Export(msg) => self.on_export(msg),
-            Internal::Watched { device, files } => {
-                if files > 0 {
-                    if let Some(r) = self.runners.get(&device) {
-                        r.handle.send(Command::Wake);
-                    }
-                    self.dirty = true;
-                }
-            }
         }
     }
 
@@ -1834,21 +1712,6 @@ fn add_files(
     Ok(Outcome::Added { batch, files, skipped_non_video, unreadable })
 }
 
-/// Thêm tệp mới của thư mục theo dõi vào hàng đợi (một lô, nhãn = tên thư mục), bỏ tệp đã có trong hàng đợi / "Đã
-/// gửi" / vừa tải về (`watch::plan`). Trả số tệp đã thêm.
-fn add_watched(store: &SharedStore, device: &DeviceId, ready: &Ready) -> Result<u64, String> {
-    let mut store = lock(store);
-    let uploads = store.uploads().map_err(|e| e.to_string())?;
-    let downloads = store.downloads().map_err(|e| e.to_string())?;
-    let plan = watch::plan(ready, &uploads, &downloads);
-    if plan.files.is_empty() {
-        return Ok(0);
-    }
-    store.add_batch(device, &plan, now_ms()).map_err(|e| e.to_string())?;
-    log::info!("engine: watch folder queued {} file(s) for {device}", plan.files.len());
-    Ok(plan.files.len() as u64)
-}
-
 /// Thư mục tải về: tạo nếu chưa có, rồi thử ghi một tệp tạm (quyền, ổ chỉ đọc, ổ mạng rớt).
 fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
     let probe = dir.join(format!(".ferry-write-test-{}", std::process::id()));
@@ -2022,7 +1885,6 @@ mod tests {
             i18n: I18n::new(Language::En),
             autostart: |_| Ok(()),
             autostart_error: None,
-            watch_stable_for: Duration::from_millis(300),
             export_dir: dir.join("clipboard"),
             clipboard: crate::clipboard::Clipboard { set_files: fake_clipboard_set, clear: || {} },
         };
@@ -2407,61 +2269,6 @@ mod tests {
         }
     }
 
-    /// gd1_13 (mức engine): bật thư mục theo dõi ⇒ tệp mới ở thư mục con chảy sang điện thoại với `dir` giữ cây (C-W3);
-    /// đổi tên sau khi gửi không gửi lại (C2); tắt ⇒ tệp mới không vào hàng đợi.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn gd1_13_watch_folder_queues_new_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let phone = FakePhone::start().await;
-        let rig = start(tmp.path(), &phone, None).await;
-        let e = &rig.engine;
-        let root = tmp.path().join("Gửi");
-        std::fs::create_dir_all(root.join("Phim")).unwrap();
-        std::fs::write(root.join("cũ.mp4"), b"existing").unwrap();
-        let on = WatchFolder { enabled: true, path: Some(root.clone()) };
-        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: on }).await).watch_folder.path, Some(root.clone()));
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let src = root.join("Phim").join("a.mp4");
-        std::fs::write(&src, vec![3u8; 300 * 1024]).unwrap();
-        let uploads = || lock(&rig.store).uploads().unwrap();
-        wait_for("watched file sent", || {
-            let u = uploads();
-            u.len() == 1 && matches!(u[0].state, UploadState::Done { .. })
-        })
-        .await;
-        let u = uploads();
-        // `watch` theo dõi thư mục đã `canonicalize`: macOS `/var/…` của thư mục tạm là `/private/var/…`.
-        assert_eq!(u[0].path, src.canonicalize().unwrap());
-        assert_eq!(u[0].dir, "Gửi/Phim", "C-W3: tree kept like copy/paste");
-
-        std::fs::rename(&src, root.join("Phim").join("b.mp4")).unwrap();
-        tokio::time::sleep(Duration::from_millis(1200)).await;
-        assert_eq!(uploads().len(), 1, "C2: rename is not a new file; old file never sent");
-
-        let off = WatchFolder { enabled: false, path: Some(root.clone()) };
-        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: off }).await).watch_error, None);
-        std::fs::write(root.join("sau.mp4"), b"later").unwrap();
-        tokio::time::sleep(Duration::from_millis(1200)).await;
-        assert_eq!(uploads().len(), 1, "disabled watch adds nothing");
-
-        // Thư mục không đọc được ⇒ lệnh vẫn lưu, màn cài đặt nhận lỗi để hiện (bỏ qua khi chạy bằng root).
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let locked = tmp.path().join("khoá");
-            std::fs::create_dir(&locked).unwrap();
-            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-            if std::fs::read_dir(&locked).is_err() {
-                let bad = WatchFolder { enabled: true, path: Some(locked.clone()) };
-                let v = view(ask(e, SettingsOp::SetWatchFolder { folder: bad.clone() }).await);
-                assert_eq!(v.watch_folder, bad);
-                assert!(v.watch_error.is_some(), "watch error reaches the settings screen");
-            }
-            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-    }
-
     /// C1 (gd1_12, mức engine): đổi từng mục qua IPC ⇒ `config.json` đúng khoá camelCase, đọc lại còn; lỗi nói rõ.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn c1_settings_are_applied_and_saved() {
@@ -2494,12 +2301,6 @@ mod tests {
         let v = view(ask(e, SettingsOp::SetThemePreset { preset: "rose-red".into() }).await);
         assert_eq!((v.theme, v.theme_preset.as_str()), (ferry_core::config::ThemeChoice::Dark, "rose-red"));
 
-        let watch = WatchFolder { enabled: true, path: Some(tmp.path().to_path_buf()) };
-        assert_eq!(view(ask(e, SettingsOp::SetWatchFolder { folder: watch.clone() }).await).watch_folder, watch);
-        let missing = WatchFolder { enabled: true, path: Some(tmp.path().join("không có")) };
-        let r = ask(e, SettingsOp::SetWatchFolder { folder: missing }).await;
-        assert_eq!(r, Outcome::Failed { error: CommandError::InvalidInput });
-
         let v = view(ask(e, SettingsOp::RenameDevice { device: device(), name: "  Máy của mẹ ".into() }).await);
         assert_eq!(v.devices[0].display_name(), "Máy của mẹ");
         let r = ask(e, SettingsOp::RenameDevice { device: DeviceId("zz".into()), name: "x".into() }).await;
@@ -2516,7 +2317,6 @@ mod tests {
             serde_json::from_slice(&std::fs::read(tmp.path().join("config.json")).unwrap()).unwrap();
         assert_eq!(json["downloadDir"], dl.to_string_lossy().as_ref());
         assert_eq!(json["autostart"], true);
-        assert_eq!(json["watchFolder"]["enabled"], true);
         assert_eq!(json["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(json["language"], "vi");
         let reread = config::load(&tmp.path().join("config.json")).unwrap();

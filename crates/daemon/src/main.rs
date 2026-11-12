@@ -107,7 +107,6 @@ fn main() -> ExitCode {
             i18n: I18n::new(language),
             autostart: autostart::apply,
             autostart_error,
-            watch_stable_for: ferry_core::watch::STABLE_FOR,
             export_dir: export_dir.clone(),
             clipboard: clipboard::Clipboard::OS,
         };
