@@ -18,7 +18,7 @@ chỉ mở vài lần.
 
 | Crate | Loại | Việc | Không được mang |
 | --- | --- | --- | --- |
-| `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + quét LAN dự phòng + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `watch` (thư mục theo dõi), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
+| `crates/core` — `ferry-core` | lib | `protocol` (kiểu JSON + header §6), `client` (HTTP §6.3–6.5), `discovery` (mDNS §6.2 + quét LAN dự phòng + địa chỉ tay), `pairing` (ghép + kho khoá), `device` (máy trạng thái thiết bị §5), `queue` (hàng đợi bền + máy trạng thái mục §5), `transfer` (chạy hàng đợi: upload nối tiếp, tải về `Range`), `config`, `paths`, `i18n`, `logging`, `ipc` | UI, GPU |
 | `crates/daemon` — bin `ferry` | bin | runtime tokio của lõi, khay (3 trạng thái), IPC server, bật tiến trình UI, một instance, thông báo hệ thống, autostart | GPUI, materiant |
 | `crates/ui` — bin `ferry-ui` | bin | một cửa sổ vỏ Groovex: cột trái (Gửi tệp, Thư viện điện thoại; Cài đặt ở góc dưới) + trang bên phải (vùng thả + hàng đợi, thư viện, thêm điện thoại, cài đặt) — GPUI + materiant; chỉ vẽ ảnh chụp trạng thái nhận qua IPC và gửi lệnh | mạng, kho khoá, SQLite |
 | `crates/core/tests/fake_phone` | test | server giả trong tiến trình đúng hợp đồng §6 (đứt giữa khúc, `409`, `404`, `507`, `401`, `423`, `503`) | — |
@@ -114,7 +114,7 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   vì qua router, mDNS thì không bao giờ qua router) ⇒ quét subnet của PC cũng không thấy: phải quét `/24` của IP điện thoại
   từng dùng. Quét đầy đủ: `PhoneOp::ScanLan` do màn Thêm điện thoại gửi lúc mở rồi 15 s một lần khi danh sách trống
   (`RESCAN_EVERY`), daemon gộp lệnh trùng + cách nhau ≥ 10 s; subnet của PC trọn tới `/22` + `/24` quanh IP điện thoại từng
-  dùng (`Engine::phone_hints`: sổ thiết bị + địa chỉ tay). Quét thưa: máy đã ghép nối hỏng mọi địa chỉ ⇒ `maybe_offline_scan`
+  dùng (`Engine::phone_hints`: sổ thiết bị, gồm địa chỉ nhập tay ở màn Thêm điện thoại). Quét thưa: máy đã ghép nối hỏng mọi địa chỉ ⇒ `maybe_offline_scan`
   chỉ dải `/24` của máy đó, ≥ 5 phút một lần (`OFFLINE_SCAN_EVERY`). Nối TCP 600 ms, 128 cùng lúc (macOS trần 256 fd),
   chỉ nhận `info.app` = `protocol::APP` (/24 ~1–2,4 s). Máy quét thấy đi đường như địa chỉ tay (`apply_untrusted_info`: máy có token thì
   nối lại kèm token, không thành NeedsRepair). Thử tay: `FERRY_SCAN=1 cargo run -p ferry-core --example discover`.
@@ -161,6 +161,4 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   `Ferry.app` lấy từ `packaging/macos/Info.plist`; exe trần bản dev lấy `Info.plist` nhúng vào `__TEXT,__info_plist` bởi
   `crates/ui/build.rs` (chỉ debug) — thiếu thì hiện "ferry-ui". Thử tự động: `osascript` đọc `menu bar 1` của tiến trình, bấm
   nút native qua subrole `AXCloseButton` / `AXMinimizeButton` (nút xanh là `AXFullScreenButton`).
-- **macOS: thư mục tạm là `/var/…` → `/private/var/…`**; `watch` so theo đường dẫn `canonicalize`. FSEvents nhận theo dõi
-  cả thư mục không đọc được (không lỗi) ⇒ `FolderWatcher::start` soát `read_dir` trước để màn cài đặt vẫn báo lỗi.
 - RSS của `ferry` trên macOS ~44 MB là trang AppKit dùng chung; số thật là `footprint -p <pid>` (≈ 10 MB lúc rảnh, gd1_01).
