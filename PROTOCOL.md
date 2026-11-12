@@ -24,7 +24,8 @@ mình, dùng hằng ngày**: ghép một lần, sau đó không phải gõ gì n
 ## 2. Triết lý thiết kế
 
 1. **Không bắt người dùng nghĩ về mạng.** Không bao giờ hỏi IP/cổng ở luồng chính: dò bằng mDNS, nhớ thiết bị theo
-   `id` (không theo IP — IP DHCP đổi hoài). Ô "nhập địa chỉ tay" chỉ nằm trong mục nâng cao (mạng chặn multicast).
+   `id` (không theo IP — IP DHCP đổi hoài). Ô "nhập địa chỉ tay" chỉ nằm ở màn Thêm điện thoại
+   (mạng chặn multicast; Cài đặt không còn danh sách địa chỉ tay — gỡ 12/11/2026).
 2. **Ghép một lần, tin lâu dài.** PIN 6 số chỉ dùng lúc ghép. Sau đó dùng token lâu dài, cất trong kho khoá của hệ
    điều hành (Keychain / Credential Manager / Secret Service) — không bao giờ ghi ra file cấu hình thường.
 3. **Hàng đợi là trung tâm, không phải nút "Gửi".** Mọi thứ người dùng thả vào thành một mục trong hàng đợi bền
@@ -82,7 +83,7 @@ pc-app/
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → [icon WiFi ở thanh điều hướng đáy] → Bật “Cho phép nhận”" (màn Đồng bộ WiFi). Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
 5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục theo dõi, thư mục lưu file tải về, khởi động cùng
-   hệ thống, địa chỉ tay, ngôn ngữ, giao diện. Không có giới hạn băng thông (bỏ 12/11/2026).
+   hệ thống, ngôn ngữ, giao diện. Không có giới hạn băng thông, không có địa chỉ tay (bỏ 12/11/2026).
 
 6. **Trình duyệt điện thoại kiểu Explorer** (một component, dùng ở hộp chọn đích khi gửi và ở tab thư viện điện thoại):
    - Thanh trên: nút Lùi / Tiến / Lên, **thanh địa chỉ dạng breadcrumb** (`Pixel 8 › Chuyến đi › Ngày 1`, bấm từng đoạn

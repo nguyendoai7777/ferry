@@ -196,14 +196,12 @@ enum Internal {
         addr: SocketAddr,
         info: Info,
     },
-    /// `info` của địa chỉ nhập tay. `outbox = None` ⇒ địa chỉ đã lưu, hỏi lúc khởi động (không ai chờ trả lời).
-    /// `remember` ⇒ lệnh cài đặt `AddAddress`: trả lời được thì lưu chuỗi này vào `manualAddresses`.
+    /// `info` của địa chỉ nhập tay ở màn Thêm điện thoại (`PhoneOp::AddAddress`).
     Probed {
-        outbox: Option<Outbox>,
+        outbox: Outbox,
         req: u64,
         addr: SocketAddr,
         result: Result<Info, CommandError>,
-        remember: Option<String>,
     },
     /// Cài đặt cần đĩa / OS (soát thư mục, `schtasks`) xong trong `spawn_blocking` — áp + lưu ở vòng chính.
     Settled {
@@ -411,7 +409,6 @@ impl Engine {
         for id in paired {
             engine.ensure_runner(&id);
         }
-        engine.probe_manual_addresses();
         engine.restart_watch(None);
         (engine, Receivers { transfer, internal, browser, watch })
     }
@@ -638,7 +635,7 @@ impl Engine {
                         log::info!("engine: manual address {addr}: {e}");
                         CommandError::Unreachable
                     });
-                    let _ = tx.send(Internal::Probed { outbox: Some(outbox), req, addr, result, remember: None });
+                    let _ = tx.send(Internal::Probed { outbox, req, addr, result });
                 });
                 None
             }
@@ -860,18 +857,6 @@ impl Engine {
                 self.dirty = true;
                 self.save_config();
             }
-            SettingsOp::AddAddress { address } => {
-                self.refresh_locals();
-                let addr = match address::parse_address(&address, &self.locals) {
-                    Ok(a) => a,
-                    Err(AddressError::Invalid) => return Some(Err(CommandError::InvalidInput)),
-                    Err(AddressError::UnknownInterface(name)) => {
-                        return Some(Err(CommandError::UnknownInterface { name }));
-                    }
-                };
-                self.spawn_probe(Some(outbox.clone()), req, addr, Some(address.trim().to_owned()));
-                return None;
-            }
             SettingsOp::SetTheme { theme } => {
                 if self.config.theme != theme {
                     self.config.theme = theme;
@@ -882,13 +867,6 @@ impl Engine {
                 let preset = preset.trim().to_owned();
                 if self.config.theme_preset != preset {
                     self.config.theme_preset = preset;
-                    self.persist();
-                }
-            }
-            SettingsOp::RemoveAddress { address } => {
-                let before = self.config.manual_addresses.len();
-                self.config.manual_addresses.retain(|a| a != address.trim());
-                if self.config.manual_addresses.len() != before {
                     self.persist();
                 }
             }
@@ -925,7 +903,6 @@ impl Engine {
             autostart_error: self.autostart_error.clone(),
             watch_folder: c.watch_folder.clone(),
             watch_error: self.watch_error.clone(),
-            manual_addresses: c.manual_addresses.clone(),
             devices: c
                 .devices
                 .iter()
@@ -944,39 +921,15 @@ impl Engine {
         }
     }
 
-    /// Địa chỉ tay đã lưu: hỏi `info` một lần lúc khởi động (mạng chặn mDNS vẫn thấy điện thoại chưa ghép; điện thoại đã
-    /// ghép có token thì nối như thường). Hỏng ⇒ chỉ log.
-    fn probe_manual_addresses(&mut self) {
-        let saved = self.config.manual_addresses.clone();
-        for text in saved {
-            match address::parse_address(&text, &self.locals) {
-                Ok(addr) => self.spawn_probe(None, 0, addr, None),
-                Err(e) => log::warn!("engine: skip manual address {text:?}: {e}"),
-            }
-        }
-    }
-
-    /// IPv4 điện thoại từng dùng (sổ thiết bị + địa chỉ tay đã lưu) — gợi ý dải quét (PROTOCOL 6.2 dải 2).
+    /// IPv4 điện thoại từng dùng (sổ thiết bị: địa chỉ đã ghép, kể cả nhập tay ở màn Thêm điện thoại) — gợi ý dải quét (PROTOCOL 6.2 dải 2).
     fn phone_hints(&self, only_offline_paired: bool) -> Vec<std::net::IpAddr> {
-        let mut out: Vec<std::net::IpAddr> = self
-            .devices
+        self.devices
             .iter()
             .filter(|d| !only_offline_paired || (d.state.has_token() && d.state != DeviceState::Online))
             .flat_map(|d| self.devices.addresses(&d.id))
             .map(|a| a.ip())
             .filter(std::net::IpAddr::is_ipv4)
-            .collect();
-        if !only_offline_paired {
-            out.extend(
-                self.config
-                    .manual_addresses
-                    .iter()
-                    .filter_map(|t| address::parse_address(t, &self.locals).ok())
-                    .map(|a| a.ip())
-                    .filter(std::net::IpAddr::is_ipv4),
-            );
-        }
-        out
+            .collect()
     }
 
     /// Lượt quét đầy đủ cho màn Thêm điện thoại: subnet của PC + dải điện thoại từng dùng.
@@ -1025,17 +978,6 @@ impl Engine {
             let ev = self.devices.info_ok(info, addr, now);
             self.on_device_events(ev);
         }
-    }
-
-    fn spawn_probe(&self, outbox: Option<Outbox>, req: u64, addr: SocketAddr, remember: Option<String>) {
-        let tx = self.internal_tx.clone();
-        tokio::spawn(async move {
-            let result = discovery::probe(addr).await.map_err(|e| {
-                log::info!("engine: manual address {addr}: {e}");
-                CommandError::Unreachable
-            });
-            let _ = tx.send(Internal::Probed { outbox, req, addr, result, remember });
-        });
     }
 
     // ---- thư mục theo dõi (gd1_13) ----
@@ -1319,27 +1261,12 @@ impl Engine {
                     self.start_full_scan();
                 }
             }
-            Internal::Probed { outbox, req, addr, result, remember } => {
-                let remembered = remember.is_some();
+            Internal::Probed { outbox, req, addr, result } => {
                 let r = result.map(|info| {
                     self.apply_untrusted_info(&info, addr, now);
-                    if let Some(text) = remember
-                        && !self.config.manual_addresses.contains(&text)
-                    {
-                        self.config.manual_addresses.push(text);
-                        self.persist();
-                    }
                     Outcome::Found { device: info.id, name: info.name }
                 });
-                let r = if remembered { r.map(|_| Outcome::Settings(self.settings_view())) } else { r };
-                match outbox {
-                    Some(outbox) => reply_to(&outbox, req, r),
-                    None => {
-                        if let Err(e) = r {
-                            log::info!("engine: saved manual address {addr} did not answer: {e:?}");
-                        }
-                    }
-                }
+                reply_to(&outbox, req, r);
             }
             Internal::Settled { outbox, req, change } => {
                 let restart = matches!(&change, Settled::WatchFolder(f, Ok(())) if *f != self.config.watch_folder);
@@ -2578,14 +2505,6 @@ mod tests {
         let r = ask(e, SettingsOp::RenameDevice { device: DeviceId("zz".into()), name: "x".into() }).await;
         assert_eq!(r, Outcome::Failed { error: CommandError::UnknownDevice });
 
-        let addr = phone.v4().to_string();
-        let v = view(ask(e, SettingsOp::AddAddress { address: addr.clone() }).await);
-        assert_eq!(v.manual_addresses, vec![addr.clone()]);
-        let r = ask(e, SettingsOp::AddAddress { address: "127.0.0.1:9".into() }).await;
-        assert_eq!(r, Outcome::Failed { error: CommandError::Unreachable }, "nothing listens there");
-        let r = ask(e, SettingsOp::AddAddress { address: "không phải địa chỉ".into() }).await;
-        assert_eq!(r, Outcome::Failed { error: CommandError::InvalidInput });
-
         let v = view(ask(e, SettingsOp::SetLanguage { language: ferry_core::i18n::LanguagePref::Vi }).await);
         assert_eq!(v.language, ferry_core::i18n::LanguagePref::Vi);
         wait_for("tray in Vietnamese", || {
@@ -2598,14 +2517,10 @@ mod tests {
         assert_eq!(json["downloadDir"], dl.to_string_lossy().as_ref());
         assert_eq!(json["autostart"], true);
         assert_eq!(json["watchFolder"]["enabled"], true);
-        assert_eq!(json["manualAddresses"][0], addr.as_str());
         assert_eq!(json["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(json["language"], "vi");
         let reread = config::load(&tmp.path().join("config.json")).unwrap();
         assert_eq!(reread.devices[0].alias.as_deref(), Some("Máy của mẹ"));
-
-        let v = view(ask(e, SettingsOp::RemoveAddress { address: addr }).await);
-        assert!(v.manual_addresses.is_empty());
         rig.engine.shutdown();
     }
 

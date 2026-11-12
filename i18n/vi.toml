@@ -346,19 +346,10 @@ language_system = "Theo hệ thống"
 language_vi = "Tiếng Việt"
 language_en = "English"
 
-[settings.advanced]
-addresses = "Địa chỉ tay"
-addresses_hint = "Dùng khi mạng chặn tự tìm điện thoại. Nhập dạng địa chỉ:cổng."
-add = "Thêm"
-remove = "Xoá"
-
 [settings.error]
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
 unknown_device = "Không thấy điện thoại này trong danh sách — đóng cửa sổ rồi mở lại"
 offline = "Điện thoại chưa kết nối — bật Đồng bộ WiFi trên điện thoại rồi thử lại"
 invalid_path = "Thư mục không dùng được — chọn một thư mục khác"
-invalid_address = "Địa chỉ không đúng dạng — nhập như 192.168.1.9:8080"
 not_writable = "Không ghi được vào thư mục này — chọn thư mục khác hoặc cấp quyền ghi"
-unreachable = "Không nối được địa chỉ này — kiểm tra điện thoại đã bật Đồng bộ WiFi và cùng mạng"
-unknown_interface = "Máy này không có card mạng {name} — kiểm tra lại địa chỉ"
 internal = "Ferry gặp lỗi khi lưu — thử lại, nếu vẫn lỗi hãy khởi động lại Ferry"

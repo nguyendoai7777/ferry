@@ -346,19 +346,10 @@ language_system = "Follow the system"
 language_vi = "Tiếng Việt"
 language_en = "English"
 
-[settings.advanced]
-addresses = "Manual addresses"
-addresses_hint = "Use when the network blocks automatic phone discovery. Enter address:port."
-add = "Add"
-remove = "Remove"
-
 [settings.error]
 no_daemon = "Ferry isn't running — open Ferry, then try again"
 unknown_device = "This phone isn't in the list — close this window and open it again"
 offline = "The phone isn't connected — turn on WiFi Sync on the phone, then try again"
 invalid_path = "This folder can't be used — choose another folder"
-invalid_address = "That address isn't valid — enter it like 192.168.1.9:8080"
 not_writable = "Can't write to this folder — choose another folder or allow writing to it"
-unreachable = "Can't reach this address — check that the phone has WiFi Sync on and is on the same network"
-unknown_interface = "This computer has no network card named {name} — check the address"
 internal = "Ferry hit an error while saving — try again, and restart Ferry if it keeps failing"

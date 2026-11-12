@@ -31,10 +31,6 @@ pub struct Config {
     pub autostart: bool,
     /// Thư mục theo dõi (gd1_12 lưu, gd1_13 chạy).
     pub watch_folder: WatchFolder,
-    /// Địa chỉ nhập tay ở "Nâng cao" (`ip:port`, `[v6]:port`, `[fe80::x%iface]:port`): daemon hỏi `info` lúc khởi động
-    /// để điện thoại vẫn hiện khi mạng chặn mDNS (gd1_12).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub manual_addresses: Vec<String>,
     /// Nền giao diện của cửa sổ: sáng / tối / theo hệ thống (mặc định). Chỉ `ferry-ui` đọc để vẽ.
     pub theme: ThemeChoice,
     /// Bảng màu: khoá preset của materiant (`default`, `deeppink`, `rose-red`, `rebecca-purple`); vắng / rỗng ⇒
@@ -286,7 +282,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let defaults = serde_json::to_value(Config::default()).unwrap();
-        for key in ["manualAddresses", "downloadDir", "themePreset"] {
+        for key in ["downloadDir", "themePreset"] {
             assert!(defaults.get(key).is_none(), "{key} stays out of the file when unset");
         }
         assert_eq!(defaults["autostart"], false);
@@ -300,7 +296,6 @@ mod tests {
             download_dir: Some(PathBuf::from("/tmp/nhận")),
             autostart: true,
             watch_folder: WatchFolder { enabled: true, path: Some(PathBuf::from("/tmp/theo dõi")) },
-            manual_addresses: vec!["192.168.1.9:8080".into(), "[fd12::5]:8080".into()],
             theme: ThemeChoice::Dark,
             theme_preset: "rose-red".into(),
             devices: vec![PairedDevice {
@@ -315,7 +310,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(v["autostart"], true);
         assert_eq!(v["watchFolder"], serde_json::json!({ "enabled": true, "path": "/tmp/theo dõi" }));
-        assert_eq!(v["manualAddresses"][1], "[fd12::5]:8080");
         assert_eq!(v["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(v["downloadDir"], "/tmp/nhận");
         assert_eq!(v["language"], "en");
@@ -323,12 +317,16 @@ mod tests {
         assert_eq!(load(&path).unwrap(), config);
     }
 
-    /// Khoá `speedLimitMbPerSec` của bản cũ (giới hạn tốc độ, gỡ 12/11/2026) vẫn đọc được: bỏ qua, không lỗi.
+    /// Khoá đã gỡ 12/11/2026 (`speedLimitMbPerSec` — giới hạn tốc độ, `manualAddresses` — địa chỉ tay của Cài đặt) vẫn đọc
+    /// được: bỏ qua, không lỗi, không ghi lại.
     #[test]
-    fn legacy_speed_limit_key_is_ignored() {
-        let c: Config = serde_json::from_str(r#"{"speedLimitMbPerSec":5,"autostart":true}"#).unwrap();
+    fn legacy_removed_keys_are_ignored() {
+        let c: Config =
+            serde_json::from_str(r#"{"speedLimitMbPerSec":5,"manualAddresses":["192.168.1.9:8080"],"autostart":true}"#)
+                .unwrap();
         assert!(c.autostart);
-        assert!(serde_json::to_value(&c).unwrap().get("speedLimitMbPerSec").is_none());
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("speedLimitMbPerSec").is_none() && v.get("manualAddresses").is_none());
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! `Reply` cho lệnh của nó. Tách khỏi `daemon_link` (kết nối vai `Ui` + kho trạng thái của cửa sổ chính, gd1_08) để màn
 //! cài đặt không phụ thuộc kho đó.
 //!
-//! [`SettingsClient::call`] **chặn** tới khi có trả lời (lệnh đường dẫn / `AddAddress` có thể mất vài giây): gọi trong
+//! [`SettingsClient::call`] **chặn** tới khi có trả lời (lệnh đường dẫn có thể mất vài giây): gọi trong
 //! `cx.background_executor().spawn(…)`, không gọi trên luồng vẽ. Mất daemon ⇒ lần gọi sau tự nối lại một lần.
 
 use std::io;

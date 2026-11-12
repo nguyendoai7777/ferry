@@ -21,7 +21,7 @@ kéo video về máy; khay + thông báo; bản cài ba OS.
 | `gd1_09` `add-phone` | màn thêm điện thoại 3 bước (hướng dẫn, danh sách dò thấy, PIN) | 07 | sonnet |
 | `gd1_10` `download-runner` | tải về nối tiếp `Range` + `If-Range` / `ETag`, `.part`, thư mục lưu | 03, 07 | opus |
 | `gd1_11` `phone-library` | tab thư viện điện thoại (dùng lại `PhoneBrowser`) + "Tải về…" | 08, 10 | sonnet |
-| `gd1_12` `settings` | cài đặt: thiết bị đã ghép, thư mục lưu / theo dõi, giới hạn băng thông (gỡ 12/11/2026), khởi động cùng máy, địa chỉ tay | 07 | sonnet |
+| `gd1_12` `settings` | cài đặt: thiết bị đã ghép, thư mục lưu / theo dõi, giới hạn băng thông (gỡ 12/11/2026), khởi động cùng máy, địa chỉ tay (gỡ 12/11/2026) | 07 | sonnet |
 | `gd1_13` `watch-folder` | thư mục "Gửi sang điện thoại": tệp mới ổn định ⇒ vào hàng đợi | 04, 12 | opus |
 | `gd1_14` `packaging` | `build.sh` / `build.ps1`, bản cài ba OS, trang giấy phép bên thứ ba, nối `build.*` / `tag.*` gốc | 08–13 | opus |
 

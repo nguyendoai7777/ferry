@@ -168,43 +168,20 @@ pub enum SettingsOp {
     /// Đọc cài đặt hiện tại.
     Get,
     /// Đổi ngôn ngữ: khay, thông báo đổi ngay; cửa sổ khác đổi khi mở lại.
-    SetLanguage {
-        language: LanguagePref,
-    },
+    SetLanguage { language: LanguagePref },
     /// Thư mục "Tải về máy". `None` ⇒ mặc định của OS. Không tạo / ghi được ⇒ `NotWritable`; đường dẫn tương đối ⇒
     /// `InvalidInput`.
-    SetDownloadDir {
-        path: Option<PathBuf>,
-    },
+    SetDownloadDir { path: Option<PathBuf> },
     /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
-    SetAutostart {
-        enabled: bool,
-    },
+    SetAutostart { enabled: bool },
     /// Thư mục theo dõi (gd1_13 chạy). `enabled` mà `path` không phải thư mục có thật ⇒ `InvalidInput`.
-    SetWatchFolder {
-        folder: WatchFolder,
-    },
+    SetWatchFolder { folder: WatchFolder },
     /// Tên hiển thị trên PC; chuỗi trắng ⇒ về tên điện thoại báo. Không có trong sổ đã ghép ⇒ `UnknownDevice`.
-    RenameDevice {
-        device: DeviceId,
-        name: String,
-    },
-    /// Thêm địa chỉ tay (mọi dạng `parse_address`): hỏi `info` trước, trả lời được mới lưu. Lỗi như
-    /// [`PhoneOp::AddAddress`] (`InvalidInput`, `UnknownInterface`, `Unreachable`).
-    AddAddress {
-        address: String,
-    },
-    RemoveAddress {
-        address: String,
-    },
+    RenameDevice { device: DeviceId, name: String },
     /// Nền giao diện (sáng / tối / hệ thống). Chỉ lưu; cửa sổ tự áp ngay khi người dùng chọn.
-    SetTheme {
-        theme: ThemeChoice,
-    },
+    SetTheme { theme: ThemeChoice },
     /// Bảng màu theo khoá preset materiant; rỗng ⇒ mặc định. Khoá lạ vẫn lưu (UI về mặc định khi vẽ).
-    SetThemePreset {
-        preset: String,
-    },
+    SetThemePreset { preset: String },
 }
 
 /// Cài đặt cho màn hình (PROTOCOL 4.5). Không token.
@@ -223,7 +200,6 @@ pub struct SettingsView {
     /// Bật mà không theo dõi được thư mục (chữ của OS, đã log: thư mục mất, không quyền, hết inotify watch) — gd1_13.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch_error: Option<String>,
-    pub manual_addresses: Vec<String>,
     /// Điện thoại đã ghép, thứ tự ghép.
     pub devices: Vec<DeviceSetting>,
     /// Nền giao diện (thêm sau gd1_14; vắng ⇒ hệ thống).
@@ -1024,7 +1000,6 @@ mod tests {
             autostart_error: None,
             watch_folder: WatchFolder::default(),
             watch_error: None,
-            manual_addresses: vec![],
             devices: vec![DeviceSetting {
                 id: dev.clone(),
                 name: "Pixel".into(),
@@ -1040,7 +1015,7 @@ mod tests {
                 concat!(
                     r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
                     r#""downloadDirCustom":true,"autostart":true,"autostartError":null,"#,
-                    r#""watchFolder":{"enabled":false},"manualAddresses":[],"#,
+                    r#""watchFolder":{"enabled":false},"#,
                     r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}],"#,
                     r#""theme":"dark","themePreset":"deeppink"}}"#
                 ),

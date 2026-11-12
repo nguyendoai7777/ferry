@@ -1,7 +1,7 @@
 //! Trang Cài đặt (gd1_12, PROTOCOL 4.5). Nằm trong cửa sổ chính, mở bằng mục Cài đặt ở đáy cột trái (hoặc menu khay
 //! "Cài đặt…"). Bố cục theo Cài đặt của macOS / iOS (12/11/2026): các card `CardGroup::standalone` không tiêu đề, mỗi mục
-//! một dòng có đường kẻ chia — Ngôn ngữ; Giao diện (nền + bảng màu, như Groovex); Tệp + hệ thống + địa chỉ tay. Không
-//! có giới hạn tốc độ (gỡ 12/11/2026: luôn gửi hết cỡ).
+//! một dòng có đường kẻ chia — Ngôn ngữ; Giao diện (nền + bảng màu, như Groovex); Tệp + hệ thống. Không có giới
+//! hạn tốc độ, không có địa chỉ tay (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn Thêm điện thoại).
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
@@ -14,12 +14,11 @@ use ferry_core::ipc::{CommandError, SettingsOp, SettingsView};
 use materiant::button::segmented::SegmentedButtons;
 use materiant::button::{Button, Size};
 use materiant::card::CardGroup;
-use materiant::field::input::TextField;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, PathPromptOptions, Render,
-    SharedString, WeakEntity, Window, div, px,
+    self, App, AppContext, ClickEvent, Context, EventEmitter, IntoElement, PathPromptOptions, Render, SharedString,
+    Window, div, px,
 };
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
@@ -40,22 +39,14 @@ enum Section {
     Appearance,
     Files,
     System,
-    Advanced,
 }
 
 impl Section {
-    const COUNT: usize = 5;
+    const COUNT: usize = 4;
 
     fn ix(self) -> usize {
         self as usize
     }
-}
-
-/// Việc làm thêm khi lệnh thành công.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum After {
-    Nothing,
-    ClearAddress,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,26 +61,22 @@ enum Load {
     Ready,
 }
 
-/// Khoá i18n (+ tham số `{name}` nếu có) cho một lỗi, theo mục gây ra — không bao giờ nói mã lỗi.
-fn error_key(section: Section, error: &CallError) -> (&'static str, Option<String>) {
+/// Khoá i18n cho một lỗi, theo mục gây ra — không bao giờ nói mã lỗi.
+fn error_key(section: Section, error: &CallError) -> &'static str {
     let command = match error {
-        CallError::NoDaemon => return ("settings.error.no_daemon", None),
+        CallError::NoDaemon => return "settings.error.no_daemon",
         CallError::Failed(c) => c,
     };
-    let key = match command {
+    match command {
         CommandError::UnknownDevice | CommandError::NotPaired => "settings.error.unknown_device",
         CommandError::Offline => "settings.error.offline",
         CommandError::NotWritable => "settings.error.not_writable",
-        CommandError::Unreachable | CommandError::OtherPhone => "settings.error.unreachable",
-        CommandError::UnknownInterface { name } => return ("settings.error.unknown_interface", Some(name.clone())),
         CommandError::InvalidInput => match section {
             Section::Files => "settings.error.invalid_path",
-            Section::Advanced => "settings.error.invalid_address",
             Section::Language | Section::System | Section::Appearance => "settings.error.internal",
         },
         _ => "settings.error.internal",
-    };
-    (key, None)
+    }
 }
 
 fn language_index(language: LanguagePref) -> usize {
@@ -128,7 +115,6 @@ pub struct SettingsPage {
     data: Option<SettingsView>,
     busy: [bool; Section::COUNT],
     errors: [Option<SharedString>; Section::COUNT],
-    address: Entity<TextField>,
     /// Giao diện vừa đổi trên cửa sổ, chưa gửi daemon.
     appearance_dirty: bool,
 }
@@ -137,15 +123,6 @@ impl EventEmitter<SettingsEvent> for SettingsPage {}
 
 impl SettingsPage {
     pub fn new(i18n: I18n, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
-        let this: WeakEntity<SettingsPage> = cx.entity().downgrade();
-        let address = cx.new(|cx| {
-            let this = this.clone();
-            TextField::new("settings-address", window, cx).placeholder("192.168.1.9:8080").on_submit(
-                move |_, window, cx| {
-                    this.update(cx, |page, cx| page.add_address(window, cx)).ok();
-                },
-            )
-        });
         let mut page = SettingsPage {
             client: SettingsClient::new(),
             i18n,
@@ -153,7 +130,6 @@ impl SettingsPage {
             data: None,
             busy: [false; Section::COUNT],
             errors: Default::default(),
-            address,
             appearance_dirty: false,
         };
         page.reload(window, cx);
@@ -216,7 +192,6 @@ impl SettingsPage {
     fn run(
         &mut self,
         section: Section,
-        after: After,
         job: impl FnOnce(&SettingsClient) -> Result<SettingsView, CallError> + Send + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -231,7 +206,7 @@ impl SettingsPage {
         let task = cx.background_spawn(async move { job(&client) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
-            this.update_in(cx, |page, window, cx| page.finished(section, after, result, window, cx)).ok();
+            this.update_in(cx, |page, window, cx| page.finished(section, result, window, cx)).ok();
         })
         .detach();
     }
@@ -239,27 +214,16 @@ impl SettingsPage {
     fn finished(
         &mut self,
         section: Section,
-        after: After,
         result: Result<SettingsView, CallError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.busy[section.ix()] = false;
         match result {
-            Ok(view) => {
-                self.apply_view(view, cx);
-                if after == After::ClearAddress {
-                    self.address.update(cx, |field, cx| field.clear(window, cx));
-                }
-            }
+            Ok(view) => self.apply_view(view, cx),
             Err(err) => {
                 log::info!("settings: {section:?} failed: {err:?}");
-                let (key, name) = error_key(section, &err);
-                let text = match name {
-                    Some(name) => self.i18n.t_args(key, &[("name", &name)]),
-                    None => self.i18n.t(key).to_owned(),
-                };
-                self.errors[section.ix()] = Some(text.into());
+                self.errors[section.ix()] = Some(self.t(error_key(section, &err)));
             }
         }
         if section == Section::Appearance {
@@ -269,7 +233,7 @@ impl SettingsPage {
     }
 
     fn run_op(&mut self, section: Section, op: SettingsOp, window: &mut Window, cx: &mut Context<Self>) {
-        self.run(section, After::Nothing, move |c| c.call(Request::Settings(op)).and_then(expect_settings), window, cx);
+        self.run(section, move |c| c.call(Request::Settings(op)).and_then(expect_settings), window, cx);
     }
 
     // ----- giao diện -----
@@ -297,7 +261,6 @@ impl SettingsPage {
         let (theme, preset) = (data.theme, data.theme_preset.clone());
         self.run(
             Section::Appearance,
-            After::Nothing,
             move |c| {
                 c.call(Request::Settings(SettingsOp::SetTheme { theme }))?;
                 c.call(Request::Settings(SettingsOp::SetThemePreset { preset })).and_then(expect_settings)
@@ -342,22 +305,6 @@ impl SettingsPage {
         self.run_op(
             Section::Files,
             SettingsOp::SetWatchFolder { folder: WatchFolder { enabled: on, path } },
-            window,
-            cx,
-        );
-    }
-
-    // ----- nâng cao -----
-
-    fn add_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let address = self.address.read(cx).value(cx).trim().to_owned();
-        if address.is_empty() || self.busy[Section::Advanced.ix()] {
-            return;
-        }
-        self.run(
-            Section::Advanced,
-            After::ClearAddress,
-            move |c| c.call(Request::Settings(SettingsOp::AddAddress { address })).and_then(expect_settings),
             window,
             cx,
         );
@@ -443,33 +390,13 @@ impl SettingsPage {
             .child(palette)
     }
 
-    /// Tệp, khởi động cùng hệ thống, địa chỉ tay — một card, mỗi mục một dòng có đường kẻ chia (kiểu Cài đặt iOS).
+    /// Tệp + khởi động cùng hệ thống — một card, mỗi mục một dòng có đường kẻ chia (kiểu Cài đặt iOS).
     fn render_general(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
-        let mut group = CardGroup::new().standalone().child(self.render_download(data, cx));
-        group = group.child(self.render_watch(data, cx)).child(self.render_autostart(data, cx));
-        group = group.child(self.render_address_input(cx));
-        let busy = self.busy[Section::Advanced.ix()];
-        group.children(data.manual_addresses.iter().enumerate().map(|(ix, address)| {
-            let target = address.clone();
-            cell(setting_row(
-                cx,
-                address.clone().into(),
-                None,
-                Button::new(("settings-address-remove", ix), self.t("settings.advanced.remove"))
-                    .text()
-                    .danger()
-                    .size(Size::Sm)
-                    .disabled(busy)
-                    .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| {
-                        page.run_op(
-                            Section::Advanced,
-                            SettingsOp::RemoveAddress { address: target.clone() },
-                            window,
-                            cx,
-                        );
-                    })),
-            ))
-        }))
+        CardGroup::new()
+            .standalone()
+            .child(self.render_download(data, cx))
+            .child(self.render_watch(data, cx))
+            .child(self.render_autostart(data, cx))
     }
 
     fn render_download(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -562,31 +489,6 @@ impl SettingsPage {
             .map(|error| danger_line(self.i18n.t_args("settings.system.autostart_error", &[("error", error)]), cx));
         cell(row).children(autostart_error).children(self.error_line(Section::System, cx))
     }
-
-    /// Địa chỉ tay: nhãn + gợi ý, ô nhập + nút Thêm ngay dưới trong cùng dòng; mỗi địa chỉ đã thêm là một dòng sau đó.
-    fn render_address_input(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let busy = self.busy[Section::Advanced.ix()];
-        let input =
-            div().flex().items_center().gap_2().child(div().flex_1().min_w_0().child(self.address.clone())).child(
-                Button::new("settings-address-add", self.t("settings.advanced.add"))
-                    .disabled(busy)
-                    .on_click(cx.listener(|page, _: &ClickEvent, window, cx| page.add_address(window, cx))),
-            );
-        cell(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(setting_row(
-                    cx,
-                    self.t("settings.advanced.addresses"),
-                    Some(self.t("settings.advanced.addresses_hint")),
-                    div(),
-                ))
-                .child(input),
-        )
-        .children(self.error_line(Section::Advanced, cx))
-    }
 }
 
 /// Đệm của một dòng trong card (một tầng đệm duy nhất; card không đặt đệm). Lỗi của dòng nằm ngay dưới, cùng ô.
@@ -661,16 +563,11 @@ mod tests {
     fn errors_become_actionable_keys_per_section() {
         use CommandError::*;
         let failed = |c| CallError::Failed(c);
-        assert_eq!(error_key(Section::Files, &failed(InvalidInput)).0, "settings.error.invalid_path");
-        assert_eq!(error_key(Section::Advanced, &failed(InvalidInput)).0, "settings.error.invalid_address");
-        assert_eq!(error_key(Section::Files, &failed(NotWritable)).0, "settings.error.not_writable");
-        assert_eq!(error_key(Section::Advanced, &failed(Unreachable)).0, "settings.error.unreachable");
-        assert_eq!(
-            error_key(Section::Advanced, &failed(UnknownInterface { name: "en9".into() })),
-            ("settings.error.unknown_interface", Some("en9".into()))
-        );
-        assert_eq!(error_key(Section::System, &failed(Internal)).0, "settings.error.internal");
-        assert_eq!(error_key(Section::System, &CallError::NoDaemon).0, "settings.error.no_daemon");
+        assert_eq!(error_key(Section::Files, &failed(InvalidInput)), "settings.error.invalid_path");
+        assert_eq!(error_key(Section::System, &failed(InvalidInput)), "settings.error.internal");
+        assert_eq!(error_key(Section::Files, &failed(NotWritable)), "settings.error.not_writable");
+        assert_eq!(error_key(Section::System, &failed(Internal)), "settings.error.internal");
+        assert_eq!(error_key(Section::System, &CallError::NoDaemon), "settings.error.no_daemon");
     }
 
     #[test]
@@ -703,7 +600,7 @@ mod tests {
     #[test]
     fn appearance_errors_and_choices_have_keys() {
         assert_eq!(
-            error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)).0,
+            error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)),
             "settings.error.internal"
         );
         let keys: Vec<_> = ThemeChoice::ALL.iter().map(|c| theme_choice_key(*c)).collect();
