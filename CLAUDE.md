@@ -157,6 +157,10 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   nhạt (`table::HIDDEN_ICON_OPACITY`, bảng + cây), cho gõ tên bắt đầu bằng `.` (`edit::sanitize_name`). Chép sang máy
   (`export::keep_hidden`) giữ dấu chấm đầu; "Tải về máy" (`sanitize_file_name`) vẫn cắt nó. App điện thoại bản cũ còn
   giấu / cấm mục ẩn ⇒ tạo thư mục ẩn nhận `403` / `400` tới khi app cập nhật.
+- **macOS hiện hộp "Choose Application — Where is use_default?"** (gặp 12/11/2026, bản dev): `notify-rust` qua
+  `mac-notification-sys` chưa được khai app gửi thì chạy AppleScript `get id of application "use_default"`. `notify::show`
+  khai một lần trước (`macos::ensure_application`: mã bundle của `Ferry.app`, exe chưa đóng gói dùng `com.apple.Finder`).
+  Không gọi `notify_rust` ở chỗ khác mà bỏ qua bước này.
 - **iPhone tắt server khi app xuống nền** (gặp 12/11/2026, iPhone `805b…` ở `192.168.4.109`): iOS treo app ⇒ server chết,
   thường không kịp gửi mDNS "goodbye" ⇒ instance còn trong sổ (`Device::mdns`). Mở lại app, iPhone quảng bá lại cùng tên:
   `Devices::announce` hẹn thử `info` ngay **mỗi lần** quảng bá khi máy có token mà chưa Online (trước chỉ lần thấy đầu ⇒ phải
