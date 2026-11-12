@@ -375,6 +375,14 @@ impl FakePhone {
         Some(ExtraListener { addr, task })
     }
 
+    /// Nghe lại đúng địa chỉ cũ sau [`FakePhone::stop`] — iPhone mở lại app, server lên lại cùng IP:cổng.
+    #[allow(dead_code)]
+    pub async fn listen_at(&self, addr: SocketAddr) -> Option<ExtraListener> {
+        let l = TcpListener::bind(addr).await.ok()?;
+        let task = tokio::spawn(accept_loop(l, self.state.clone(), self.connections.clone()));
+        Some(ExtraListener { addr, task })
+    }
+
     /// Phiên upload đang mở: `(uid, offset)` — kiểm "không tạo phiên mới" khi đổi địa chỉ.
     pub fn uploads_in_progress(&self) -> Vec<(String, u64)> {
         self.st().sessions.iter().map(|(k, v)| (k.clone(), v.offset)).collect()

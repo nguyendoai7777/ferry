@@ -2,6 +2,7 @@
 //! Là một `Entity` GPUI; view nghe `ModelEvent`. UI không giữ mutex nào chung với luồng đọc IPC (`daemon_link`).
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use ferry_core::browse::FsCache;
 use ferry_core::device::{DeviceId, DeviceState};
@@ -11,7 +12,7 @@ use ferry_core::ipc::{
 };
 use ferry_core::protocol::{LibraryItem, feature};
 use ferry_core::view::{CachedData, ClipPath, ClipState, ViewState, WindowState};
-use materiant::gpui_kit::{Context, EventEmitter};
+use materiant::gpui_kit::{AsyncApp, Context, EventEmitter, WeakEntity};
 
 use crate::ui_state::UiState;
 
@@ -39,6 +40,10 @@ pub struct ClipEntry {
     pub folder: bool,
 }
 
+/// "Đang kết nối lại…" hiện tối đa chừng này sau khi bấm "Kết nối lại" (thử `info` + quét LAN thường xong trong vài
+/// giây); máy lên `Online` / cần ghép lại thì tắt sớm theo ảnh chụp.
+pub const RECONNECT_SHOWN: Duration = Duration::from_secs(8);
+
 pub struct Model {
     pub snapshot: Snapshot,
     /// Đã nhận ít nhất một `Snapshot` (trước đó chưa biết gì về thiết bị).
@@ -54,6 +59,9 @@ pub struct Model {
     pub restore: Option<ViewState>,
     sender: Option<Sender<UiToDaemon>>,
     next_req: u64,
+    /// Máy đang "Kết nối lại" → lượt bấm (lượt mới thay hạn của lượt cũ).
+    reconnecting: HashMap<DeviceId, u64>,
+    reconnect_seq: u64,
 }
 
 impl EventEmitter<ModelEvent> for Model {}
@@ -89,6 +97,8 @@ impl Model {
             restore: None,
             sender,
             next_req: 1,
+            reconnecting: HashMap::new(),
+            reconnect_seq: 0,
         }
     }
 
@@ -121,6 +131,35 @@ impl Model {
 
     pub fn phone(&mut self, op: PhoneOp) -> Option<u64> {
         self.send(|req| UiToDaemon::Phone { req, op })
+    }
+
+    /// "Kết nối lại" máy đã ghép chưa Online: daemon thử nối + quét LAN ngay; UI hiện "Đang kết nối lại…" tới khi máy
+    /// đổi trạng thái hoặc hết [`RECONNECT_SHOWN`].
+    pub fn reconnect(&mut self, id: DeviceId, cx: &mut Context<Self>) {
+        if self.phone(PhoneOp::Reconnect { device: id.clone() }).is_none() {
+            return;
+        }
+        self.reconnect_seq += 1;
+        let seq = self.reconnect_seq;
+        self.reconnecting.insert(id.clone(), seq);
+        let timer = cx.background_executor().timer(RECONNECT_SHOWN);
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            timer.await;
+            let _ = this.update(cx, |m, cx| {
+                if m.reconnecting.get(&id) == Some(&seq) {
+                    m.reconnecting.remove(&id);
+                    cx.emit(ModelEvent::Changed);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.emit(ModelEvent::Changed);
+        cx.notify();
+    }
+
+    pub fn is_reconnecting(&self, id: &DeviceId) -> bool {
+        self.reconnecting.contains_key(id)
     }
 
     pub fn library(&mut self, op: LibraryOp) -> Option<u64> {
@@ -238,6 +277,11 @@ impl Model {
                 self.snapshot = s;
                 self.ready = true;
                 self.fix_selection();
+                // Đã có kết quả (Online / cần ghép lại / bị quên) ⇒ thôi "Đang kết nối lại…".
+                let devices = &self.snapshot.devices;
+                self.reconnecting.retain(|id, _| {
+                    devices.iter().any(|d| &d.id == id && matches!(d.state, DeviceState::Offline | DeviceState::Paired))
+                });
                 cx.emit(ModelEvent::Changed);
                 cx.notify();
             }

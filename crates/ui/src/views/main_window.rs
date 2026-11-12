@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use ferry_core::device::DeviceId;
+use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{Action, CommandError, Outcome, PhoneOp, QueueOp};
 use ferry_core::queue::BatchId;
@@ -32,7 +32,7 @@ use materiant::window::DragRegionExt;
 
 use super::add_phone::{AddPhoneEvent, AddPhoneView};
 use super::app_bar::{self, AppBar, CaptionLabels};
-use super::device_header::device_header;
+use super::device_header::{Reconnect, device_header};
 use super::devices::{DevicesEvent, DevicesPage};
 use super::drop_zone::drop_zone;
 use super::phone_browser::{BrowserEvent, BrowserMode, BrowserStart, PhoneBrowser};
@@ -449,7 +449,12 @@ impl MainWindow {
         let view = cx.new(|cx| DevicesPage::new(model, i18n, window, cx));
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &DevicesEvent, window, cx| match ev {
             DevicesEvent::AddPhone => this.open_add_phone(None, NavItem::Devices, window, cx),
-            DevicesEvent::Repair(id) => this.open_add_phone(Some(id.clone()), NavItem::Devices, window, cx),
+            DevicesEvent::Repair(id) => {
+                let state = this.model.read(cx).snapshot.devices.iter().find(|d| &d.id == id).map(|d| d.state);
+                if let Some(state) = state {
+                    this.reconnect(id.clone(), state, NavItem::Devices, window, cx);
+                }
+            }
             DevicesEvent::Browse(id) => this.open_library(id.clone(), None, window, cx),
         });
         self.show(Page::Devices { view, _sub: sub });
@@ -477,6 +482,27 @@ impl MainWindow {
 
     /// "Thêm điện thoại" (PROTOCOL 4.4). `repair`: mở thẳng bước PIN cho máy cần ghép lại / kết nối lại. `origin`: trang
     /// về khi xong hoặc quay lại.
+    /// "Kết nối lại" / "Ghép lại" của máy đang chọn: cần ghép lại ⇒ bước PIN; chỉ Offline ⇒ daemon thử nối + quét ngay.
+    fn reconnect_current(&mut self, origin: NavItem, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, state)) = self.model.read(cx).current().map(|d| (d.id.clone(), d.state)) else { return };
+        self.reconnect(id, state, origin, window, cx);
+    }
+
+    fn reconnect(
+        &mut self,
+        id: DeviceId,
+        state: DeviceState,
+        origin: NavItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if state == DeviceState::NeedsRepair {
+            self.open_add_phone(Some(id), origin, window, cx);
+        } else {
+            self.model.update(cx, |m, cx| m.reconnect(id, cx));
+        }
+    }
+
     fn open_add_phone(
         &mut self,
         repair: Option<DeviceId>,
@@ -682,6 +708,8 @@ impl MainWindow {
             let w2 = weak.clone();
             let w3 = weak.clone();
             let ids: Vec<DeviceId> = paired.iter().map(|d| d.id.clone()).collect();
+            let reconnecting =
+                selected.and_then(|i| paired.get(i)).is_some_and(|d| self.model.read(cx).is_reconnecting(&d.id));
             device_header(
                 &i18n,
                 &paired,
@@ -694,12 +722,12 @@ impl MainWindow {
                 Rc::new(move |window, cx| {
                     let _ = w2.update(cx, |this, cx| this.open_add_phone(None, NavItem::Send, window, cx));
                 }),
-                Rc::new(move |window, cx| {
-                    let _ = w3.update(cx, |this, cx| {
-                        let id = this.model.read(cx).current().map(|d| d.id.clone());
-                        this.open_add_phone(id, NavItem::Send, window, cx);
-                    });
-                }),
+                Reconnect {
+                    busy: reconnecting,
+                    on_click: Rc::new(move |window, cx| {
+                        let _ = w3.update(cx, |this, cx| this.reconnect_current(NavItem::Send, window, cx));
+                    }),
+                },
                 cx,
             )
         };

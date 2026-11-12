@@ -119,6 +119,8 @@ placeholder = "Drop files here to send them to your phone"
 [main]
 add_phone = "Add phone"
 reconnect = "Reconnect"
+reconnecting = "Reconnecting…"
+repair = "Pair again"
 no_phone = "No phone yet"
 no_phone_hint = "Pair a phone to start sending files."
 phone_online = "Connected"

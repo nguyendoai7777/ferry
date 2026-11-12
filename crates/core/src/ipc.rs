@@ -124,6 +124,10 @@ pub enum PhoneOp {
     /// Màn Thêm điện thoại gửi lúc mở rồi định kỳ khi danh sách trống. Đang quét ⇒ chờ chung lượt đó; vừa quét xong (<
     /// [`SCAN_MIN_INTERVAL_SECS`]) ⇒ trả ngay. Trả [`Outcome::Scanned`].
     ScanLan,
+    /// Nút "Kết nối lại" của máy đã ghép chưa `Online`: thử `info` kèm token ngay + một lượt quét LAN ngay (không chờ
+    /// lịch thử / lịch quét). Trả `Done` khi đã bắt đầu — kết quả đến qua snapshot (`Online` / `NeedsRepair` / vẫn
+    /// `Offline`); máy lạ / chưa ghép ⇒ `UnknownDevice`.
+    Reconnect { device: DeviceId },
 }
 
 /// Hai lượt quét LAN cách nhau ít nhất chừng này giây (nhiều cửa sổ / lệnh dồn không làm quét dày).

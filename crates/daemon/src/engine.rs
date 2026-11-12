@@ -594,6 +594,21 @@ impl Engine {
                 });
                 None
             }
+            PhoneOp::Reconnect { device } => {
+                if !self.devices.retry_now(&device, Instant::now()) {
+                    let online = self.devices.get(&device).is_some_and(|d| d.state == DeviceState::Online);
+                    return Some(if online { Ok(Outcome::Done) } else { Err(CommandError::UnknownDevice) });
+                }
+                log::info!("engine: reconnect {device} (asked by the user)");
+                self.probe_device(&device, None);
+                // Quét ngay (subnet PC + dải điện thoại từng dùng) — điện thoại đổi IP / mDNS bị chặn vẫn tìm lại được.
+                match self.scan_running {
+                    Some(true) => {}
+                    Some(false) => self.full_scan_wanted = true,
+                    None => self.start_full_scan(),
+                }
+                Some(Ok(Outcome::Done))
+            }
             PhoneOp::ScanLan => {
                 match self.scan_running {
                     Some(true) => {}
@@ -2138,6 +2153,43 @@ mod tests {
         let op = LibraryOp::Dirs { device: device(), path: String::new() };
         rig.engine.send(Input::Request { outbox: outbox.clone(), req: 4, op: Op::Library(op) });
         let (_rx, _) = collect(rx, move |m| has_browse(m, false)).await;
+        rig.engine.shutdown();
+    }
+
+    /// "Kết nối lại": máy Offline (server tắt rồi bật lại cùng địa chỉ, không mDNS) lên Online ngay, không chờ lượt thử
+    /// hẹn sẵn (`FAST_PROBE_INTERVAL`); máy lạ ⇒ `UnknownDevice`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reconnect_probes_at_once() {
+        let state_is = |want: DeviceState| move |m: &DaemonToUi| matches!(m, DaemonToUi::Snapshot(s) if s.devices.iter().any(|d| d.id == device() && d.state == want));
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, is_online).await;
+
+        phone.stop();
+        let op = LibraryOp::List { device: device() };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 1, op: Op::Library(op) });
+        let (rx, _) = collect(rx, state_is(DeviceState::Offline)).await;
+
+        let _back = phone.listen_at(phone.v4()).await.expect("rebind the phone's address");
+        let asked = Instant::now();
+        rig.engine.send(Input::Request {
+            outbox: outbox.clone(),
+            req: 2,
+            op: Op::Phone(PhoneOp::Reconnect { device: device() }),
+        });
+        let (rx, _) = collect(rx, state_is(DeviceState::Online)).await;
+        assert!(asked.elapsed() < ferry_core::device::FAST_PROBE_INTERVAL / 2, "took {:?}", asked.elapsed());
+
+        let op = PhoneOp::Reconnect { device: DeviceId("nope".into()) };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 3, op: Op::Phone(op) });
+        let (_rx, got) = collect(rx, |m| matches!(m, DaemonToUi::Reply { req: 3, .. })).await;
+        assert!(matches!(
+            &got.last().unwrap().1,
+            DaemonToUi::Reply { outcome: Outcome::Failed { error: CommandError::UnknownDevice }, .. }
+        ));
         rig.engine.shutdown();
     }
 

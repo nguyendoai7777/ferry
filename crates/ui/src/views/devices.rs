@@ -34,7 +34,8 @@ use crate::model::{Model, ModelEvent};
 pub enum DevicesEvent {
     /// "Thêm điện thoại".
     AddPhone,
-    /// "Ghép lại": màn Thêm điện thoại ở thẳng bước PIN cho máy này.
+    /// "Ghép lại" (cần ghép lại ⇒ bước PIN) / "Kết nối lại" (chỉ Offline ⇒ daemon thử nối + quét ngay) — cửa sổ chính
+    /// chọn theo trạng thái lúc bấm.
     Repair(DeviceId),
     /// "Duyệt tệp" trên điện thoại này.
     Browse(DeviceId),
@@ -292,6 +293,7 @@ impl DevicesPage {
     fn render_item(&self, ix: usize, device: &DeviceView, same_name: bool, cx: &mut Context<Self>) -> CardItem {
         let setting = self.settings.as_ref().and_then(|s| s.devices.iter().find(|d| d.id == device.id));
         let busy = self.forget_req.is_some() || self.rename_req.is_some();
+        let reconnecting = self.model.read(cx).is_reconnecting(&device.id);
         let badge = {
             let b = Badge::new(self.i18n.t(state_key(device.state)).to_owned());
             match state_tone(device.state) {
@@ -326,10 +328,19 @@ impl DevicesPage {
             .items_center()
             .gap_1()
             .when(needs_reconnect(device.state), |d| {
+                let (label, busy) = match device.state {
+                    DeviceState::NeedsRepair => ("devices.repair", false),
+                    _ if reconnecting => ("main.reconnecting", true),
+                    _ => ("main.reconnect", false),
+                };
                 d.child(
-                    Button::new(("devices-repair", ix), self.i18n.t("devices.repair")).size(Size::Sm).tonal().on_click(
-                        cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(DevicesEvent::Repair(id_repair.clone()))),
-                    ),
+                    Button::new(("devices-repair", ix), self.i18n.t(label))
+                        .size(Size::Sm)
+                        .tonal()
+                        .disabled(busy)
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                            cx.emit(DevicesEvent::Repair(id_repair.clone()))
+                        })),
                 )
             })
             .child(

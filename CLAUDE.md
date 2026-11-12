@@ -162,7 +162,11 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   `Devices::announce` hẹn thử `info` ngay **mỗi lần** quảng bá khi máy có token mà chưa Online (trước chỉ lần thấy đầu ⇒ phải
   chờ lượt 60 s). Không thấy mDNS thì máy vừa Online trong 10 phút (`FAST_PROBE_WINDOW`, `Device::online_at`) được thử
   10 s một lần (`FAST_PROBE_INTERVAL`), sau đó về 60 s. iPhone gửi cả `169.254.x` (AWDL) trong `info.addresses` ⇒
-  `address::from_info` bỏ link-local cả IPv4 lẫn IPv6.
+  `address::from_info` bỏ link-local cả IPv4 lẫn IPv6. iPhone còn hay **ngừng quảng bá mDNS mà server vẫn sống**: Online
+  → Offline vì mất mDNS (`Devices::tick` / `lose`) phải hẹn thử `info` (nhịp nhanh) — trước đó không hẹn gì nên chỉ lượt
+  quét LAN 5 phút (`OFFLINE_SCAN_EVERY`) kéo về. Nút "Kết nối lại" (máy Offline) gửi `PhoneOp::Reconnect`: daemon thử
+  `info` + quét LAN ngay, UI hiện "Đang kết nối lại…" (`Model::reconnect`, tối đa `RECONNECT_SHOWN`); chỉ `NeedsRepair`
+  mới mở bước PIN (nút "Ghép lại").
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

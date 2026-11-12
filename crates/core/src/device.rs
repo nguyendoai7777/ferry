@@ -325,7 +325,7 @@ impl Devices {
                 d.withdrawn_at = None;
             }
             ev.push(DeviceEvent::Lost { id: other.clone() });
-            self.apply(&other, DeviceInput::Lost, &mut ev);
+            self.lose(&other, now, &mut ev);
         }
 
         let before = self.addresses(&id);
@@ -388,9 +388,36 @@ impl Devices {
                 d.withdrawn_at = None;
             }
             ev.push(DeviceEvent::Lost { id: id.clone() });
-            self.apply(&id, DeviceInput::Lost, &mut ev);
+            self.lose(&id, now, &mut ev);
         }
         ev
+    }
+
+    /// Mất mDNS. Máy có token đang `Online` ⇒ `Offline` và hẹn thử `info` (nhịp nhanh): iPhone ngừng quảng bá mà server
+    /// vẫn sống, hay quay lại mà không quảng bá lại — không hẹn thì chỉ còn lượt quét LAN thưa kéo nó về.
+    fn lose(&mut self, id: &DeviceId, now: Instant, ev: &mut Vec<DeviceEvent>) {
+        if let Some(d) = self.devices.get_mut(id) {
+            if d.state == DeviceState::Online {
+                d.online_at = Some(now);
+            }
+            if matches!(d.state, DeviceState::Online | DeviceState::Paired) && d.next_probe.is_none() {
+                d.next_probe = Some(now + d.probe_gap(now));
+            }
+        }
+        self.apply(id, DeviceInput::Lost, ev);
+    }
+
+    /// Người dùng bấm "Kết nối lại": máy có token chưa `Online` thử `info` ngay (engine kèm một lượt quét LAN).
+    /// `false` ⇒ không có máy / chưa ghép / đang `Online` — không có gì để nối lại.
+    pub fn retry_now(&mut self, id: &DeviceId, now: Instant) -> bool {
+        let Some(d) = self.devices.get_mut(id) else { return false };
+        if !matches!(d.state, DeviceState::Paired | DeviceState::Offline | DeviceState::NeedsRepair) {
+            return false;
+        }
+        // Lượt kế tính lại từ lúc này: người dùng vừa hỏi, coi như "vừa thấy" — nhịp nhanh trong cửa sổ kế.
+        d.online_at = Some(now);
+        d.next_probe = Some(now + d.probe_gap(now));
+        true
     }
 
     /// Thiết bị có token, chưa `Online`, đến lượt thử `info` (mỗi [`PROBE_INTERVAL`]). Hẹn lượt kế luôn.
@@ -708,6 +735,59 @@ mod tests {
         devs.connect_failed(&id, late);
         assert_eq!(devs.due_probes(late + PROBE_INTERVAL), vec![id.clone()]);
         assert_eq!(devs.next_deadline(), Some(late + PROBE_INTERVAL + PROBE_INTERVAL));
+    }
+
+    #[test]
+    fn online_phone_losing_mdns_is_probed_again() {
+        // iPhone (gặp 12/11/2026): ngừng quảng bá mDNS mà server vẫn sống ⇒ Online → Offline vì mất mDNS; phải hẹn thử
+        // `info` (10 s), không thì chỉ lượt quét LAN 5 phút kéo về.
+        let t0 = Instant::now();
+        let saved = PairedDevice {
+            id: DeviceId("ip".into()),
+            name: "iPhone".into(),
+            addresses: vec!["192.168.1.109:8080".into()],
+            alias: None,
+        };
+        let mut devs = Devices::from_config(&[saved], locals(), t0);
+        let id = DeviceId("ip".into());
+        devs.announce(ann("ip", &["192.168.1.109:8080"]), t0);
+        devs.due_probes(t0);
+        devs.info_ok(&info("ip", true), sa("192.168.1.109:8080"), t0);
+        assert_eq!(devs.next_deadline(), None);
+
+        let t1 = t0 + Duration::from_secs(5);
+        devs.withdraw("Pixel ip._vpsync._tcp.local.", t1);
+        let lost_at = t1 + LOST_AFTER;
+        let ev = devs.tick(lost_at);
+        assert_eq!(states(&ev), vec![(S::Online, S::Offline)]);
+        assert_eq!(devs.next_deadline(), Some(lost_at + FAST_PROBE_INTERVAL));
+        assert_eq!(devs.due_probes(lost_at + FAST_PROBE_INTERVAL), vec![id.clone()]);
+        devs.info_ok(&info("ip", true), sa("192.168.1.109:8080"), lost_at + FAST_PROBE_INTERVAL);
+        assert_eq!(devs.get(&id).unwrap().state, S::Online);
+    }
+
+    #[test]
+    fn reconnect_button_retries_now_only_for_paired_phones() {
+        let t0 = Instant::now();
+        let saved = PairedDevice {
+            id: DeviceId("ip".into()),
+            name: "iPhone".into(),
+            addresses: vec!["192.168.1.109:8080".into()],
+            alias: None,
+        };
+        let mut devs = Devices::from_config(&[saved], locals(), t0);
+        let id = DeviceId("ip".into());
+        devs.due_probes(t0);
+        devs.connect_failed(&id, t0);
+        assert_eq!(devs.get(&id).unwrap().state, S::Offline);
+        // Rớt đã lâu (nhịp thưa) ⇒ bấm "Kết nối lại": lượt kế về nhịp nhanh tính từ lúc bấm.
+        let late = t0 + FAST_PROBE_WINDOW + PROBE_INTERVAL;
+        assert!(devs.retry_now(&id, late));
+        assert_eq!(devs.next_deadline(), Some(late + FAST_PROBE_INTERVAL));
+        // Online / máy lạ ⇒ không có gì để nối lại.
+        devs.info_ok(&info("ip", true), sa("192.168.1.109:8080"), late);
+        assert!(!devs.retry_now(&id, late));
+        assert!(!devs.retry_now(&DeviceId("nope".into()), late));
     }
 
     #[test]
