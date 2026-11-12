@@ -757,7 +757,7 @@ impl Render for SettingsPage {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .py_5()
+                    .py_4()
                     .child(self.render_appearance(&data, cx))
                     .child(self.render_files(&data, cx))
                     .child(self.render_network(&data, cx))
@@ -767,7 +767,7 @@ impl Render for SettingsPage {
                     .vertical()
                     .flex_1()
                     .min_h_0()
-                    .padding_x(px(24.))
+                    .padding_x(px(16.))
                     .child(sections)
                     .into_any_element()
             }
