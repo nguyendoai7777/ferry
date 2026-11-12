@@ -197,6 +197,9 @@ từng tệp. Mỗi tệp vẫn là một mục riêng với máy trạng thái 
  "port":8080,"addresses":["192.168.1.23","fd12:3456:789a::23"],"features":["ipv6","dirs"]}
 ```
 - `paired` = `true` khi request kèm Bearer token hợp lệ. Dùng nó để kiểm token còn sống.
+- **`id` và token bền** (nhắc lại 12/11/2026, gặp thật: vivo đổi `id` + xoá token mỗi lần tắt / bật "Cho phép nhận" ⇒ PC
+  bắt ghép lại PIN): tắt / bật server, thoát app, khởi động lại máy **không** được đổi `id` hay huỷ token. PIN chỉ dùng
+  cho lần ghép đầu (hoặc sau "Quên các máy tính đã ghép"). PC nhận máy theo `id`; `id` đổi = máy lạ.
 - `port` + `addresses`: mọi địa chỉ LAN của điện thoại (IPv4 riêng + IPv6 global / ULA; **không** link-local — scope
   phía điện thoại vô nghĩa với PC). Thêm đường khi mDNS chỉ trả một họ địa chỉ hoặc IP đổi.
 - `features`: tính năng điện thoại có. Điện thoại cũ không có trường này = `[]`. `dirs` ⇒ nhận `X-File-Dir` (§6.5, §6.9); `batch` ⇒ nhận danh sách cả lô (§6.10); `browse` ⇒ duyệt bộ nhớ (§6.11); `edit` ⇒ thư mục mới / đổi tên / xoá (§6.12); `copy` ⇒ sao chép / dời trên điện thoại (§6.13); `fetch` ⇒ tải theo đường, Cắt / Sao chép sang máy tính (§6.14);
@@ -369,7 +372,8 @@ Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **c�
   - `files[]`: mọi tệp (không chỉ video). `id` chỉ có khi tệp nằm trong thư viện (dùng được với `/api/v1/file/<id>`,
     "Tải về máy"); thiếu ⇒ PC chỉ hiện, không tải.
   - `modified`: mili giây Unix. Thứ tự không quan trọng (PC tự sắp).
-  - **Ẩn**: mục bắt đầu bằng `.`; `Android/data`, `Android/obb` (Android không cho đọc). Thư mục `Android` vẫn liệt kê.
+  - **Mục ẩn** (tên bắt đầu bằng `.`) **vẫn liệt kê** (W-11, 12/11/2026) — PC tự nhận ra theo tên và vẽ nhạt hơn. Không
+    liệt kê: `Android/data`, `Android/obb` (Android không cho đọc). Thư mục `Android` vẫn liệt kê.
   - Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự) · `404` không có thư mục đó · `403` chưa / hết quyền.
 - **Ghi**: `POST /api/v1/uploads` với `X-File-Dir` trỏ vào `Android` hoặc con của nó, hoặc thư mục điện thoại không
   ghi được ⇒ `403` (PC: Failed, không thử lại). Thư mục chưa có ⇒ tạo khi commit như §6.9.
@@ -386,7 +390,8 @@ Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai k
 
 - **Chung**: Bearer. `path` làm sạch như `X-File-Dir` (§6.9: `/` hoặc `\` phân cách, ký tự cấm → `_`, bỏ đoạn rỗng và
   `.`). Lỗi chung: `400` `..` / quá 8 cấp / quá 255 ký tự / thân JSON sai · `403` không có `edit` (công tắc tắt, mất
-  quyền), hoặc chạm vùng cấm: **gốc** (`path` rỗng), `Android` và mọi thứ bên trong, mục có đoạn bắt đầu bằng `.` ·
+  quyền), hoặc chạm vùng cấm: **gốc** (`path` rỗng), `Android` và mọi thứ bên trong (mục ẩn — đoạn bắt đầu bằng `.` —
+  **được phép** từ W-11) ·
   `404` không có mục đó · `409` đã có mục cùng tên (so không phân biệt hoa thường, như hệ tệp của Android).
   Thân request `Content-Type: application/json`, ≤ 4 KB. Thư viện (`list`) đi theo ngay sau khi trả lời: tệp bị xoá
   mất khỏi `list`, tệp đổi tên / nằm trong thư mục đổi tên có `name` / `dir` mới (`id` được phép đổi).
@@ -394,7 +399,7 @@ Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai k
   sạch). Tạo luôn thư mục cha còn thiếu. `409` nếu đã có mục (tệp hoặc thư mục) ở đúng đường đó.
 - **Đổi tên** — `POST /api/v1/rename` `{"path":"Download/a.mp4","name":"b.mp4"}` ⇒ `200` `{"path":"Download/b.mp4"}`.
   Tệp hay thư mục đều được; chỉ đổi tên trong cùng thư mục (không dời). `name` là một đoạn tên: làm sạch như trên;
-  rỗng / `.` / `..` / bắt đầu bằng `.` / quá 255 byte UTF-8 ⇒ `400`. Trùng tên cũ ⇒ `200` không làm gì; chỉ khác hoa
+  rỗng / `.` / `..` / quá 255 byte UTF-8 ⇒ `400` (tên bắt đầu bằng `.` hợp lệ — tạo / đổi thành mục ẩn). Trùng tên cũ ⇒ `200` không làm gì; chỉ khác hoa
   thường ⇒ đổi (không `409`).
 - **Xoá** — `DELETE /api/v1/entries?path=<URL-encoded>` ⇒ `204`. Thư mục xoá cả cây con. Không có thùng rác, không
   hoàn tác — PC phải hỏi người dùng trước. Một request một mục; chọn nhiều thì PC gửi lần lượt.
@@ -432,11 +437,11 @@ Cắt) rồi dán vào trình quản lý tệp của máy (Files, Explorer, Find
   `416` (kèm `Content-Range: bytes */<cỡ>`), `Content-Length`, `Content-Disposition` có `filename*`, `Accept-Ranges:
   bytes`. **`ETag` bắt buộc** và đổi khi nội dung đổi (gợi ý: `"<size>-<modified>"`) — PC dùng nó để tải tiếp đúng tệp.
   `Content-Type` theo đuôi, không biết ⇒ `application/octet-stream`.
-- Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự, rỗng) · `403` không có `fetch` / mất quyền, hoặc mục ẩn (đoạn bắt đầu
-  bằng `.`), `Android/data`, `Android/obb` (như §6.11 — đọc được `Android/` thì tải được) · `404` không có tệp đó, hoặc
+- Lỗi: `400` `path` sai (`..`, quá 8 cấp / 255 ký tự, rỗng) · `403` không có `fetch` / mất quyền, hoặc
+  `Android/data`, `Android/obb` (như §6.11 — đọc được `Android/` thì tải được) · `404` không có tệp đó, hoặc
   `path` là thư mục. Thư mục không có route riêng: PC tự liệt kê cây bằng `GET /dirs` (§6.11) rồi tải từng tệp.
 - **Xoá thư mục chỉ khi rỗng** — `DELETE /api/v1/entries?path=<URL-encoded>&ifEmpty=1` (cần `edit`, §6.12): như xoá
-  thường nhưng thư mục còn mục bất kỳ (**kể cả mục ẩn** mà `dirs` không trả) ⇒ `409`, không xoá gì. Với tệp, `ifEmpty`
+  thường nhưng thư mục còn mục bất kỳ (**kể cả mục** `dirs` không trả) ⇒ `409`, không xoá gì. Với tệp, `ifEmpty`
   không có tác dụng. Điện thoại khai `fetch` + `edit` thì phải hiểu tham số này.
 - **PC — Sao chép sang máy**: tải mọi tệp đã chọn (thư mục: cả cây con theo `dirs`) vào một thư mục tạm riêng của app
   trên PC, giữ nguyên cây; đứt mạng thì tải tiếp bằng `Range` + `If-Range`, không đọc cả tệp vào RAM. Tải đủ mới đặt
