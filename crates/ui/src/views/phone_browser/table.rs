@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use ferry_core::browse::{Entry, EntryKind, SortKey};
+use ferry_core::browse::{Entry, EntryKind, Location, SortKey};
 use ferry_core::i18n::I18n;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{Context, IntoElement, MouseButton, SharedString, div, px};
@@ -122,6 +122,8 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                 "browser.loading"
             } else if !this.has_data() && this.offline {
                 "browser.offline_empty"
+            } else if this.query.is_empty() && this.at == Location::root() && this.has_data() {
+                if this.is_library() { "browser.root_hint_library" } else { "browser.root_hint" }
             } else if this.query.is_empty() && this.is_library() {
                 "browser.empty_library"
             } else if this.query.is_empty() {

@@ -15,10 +15,7 @@ use materiant::gpui_kit as gpui;
 use crate::platform::window_controls;
 use crate::views::main_window::MainWindow;
 
-gpui_kit::actions!(
-    ferry,
-    [About, OpenSettings, HideApp, HideOthers, ShowAll, Quit, Minimize, Zoom, CloseWindow]
-);
+gpui_kit::actions!(ferry, [About, OpenSettings, HideApp, HideOthers, ShowAll, Quit, Minimize, Zoom, CloseWindow]);
 
 /// Phím tắt chuẩn của macOS. Gọi một lần lúc khởi động (phím hiện cạnh mục menu).
 pub fn bind_keys(cx: &mut App) {

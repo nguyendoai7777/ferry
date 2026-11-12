@@ -212,8 +212,11 @@ impl Render for PhoneLibrary {
             .size_full()
             .flex()
             .flex_col()
+            // Pha bubble: ô con (ô tìm, ô đổi tên) vừa nhận focus thì giữ, chỉ lấy focus khi bấm vào chỗ trống.
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if let Ok(h) = w_focus.read_with(cx, |this, _| this.focus.clone()) {
+                if let Ok(h) = w_focus.read_with(cx, |this, _| this.focus.clone())
+                    && !h.contains_focused(window, cx)
+                {
                     window.focus(&h, cx);
                 }
             })

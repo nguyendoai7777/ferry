@@ -10,7 +10,7 @@ use materiant::gpui_kit::{Context, ElementId, IntoElement, SharedString, div, px
 use materiant::icon::{Icon, IconName};
 use materiant::list::VirtualList;
 use materiant::menu::ContextMenuExt;
-use materiant::theme::ActiveTheme;
+use materiant::theme::{ActiveTheme, Neutral};
 
 use super::PhoneBrowser;
 use crate::assets;
@@ -27,8 +27,14 @@ pub struct TreeRow {
     pub is_virtual: bool,
 }
 
-/// Dòng hiển thị của cây: gốc, rồi các thư mục theo trạng thái mở, rồi "Khác". Gốc luôn mở.
-pub fn flatten(tree: &Tree, open: &HashSet<String>, root_label: &str, other_label: &str) -> Vec<TreeRow> {
+/// Dòng hiển thị của cây: gốc (thiết bị), rồi các thư mục theo trạng thái mở, rồi "Khác". Gốc thu gọn được (`root_open`).
+pub fn flatten(
+    tree: &Tree,
+    open: &HashSet<String>,
+    root_open: bool,
+    root_label: &str,
+    other_label: &str,
+) -> Vec<TreeRow> {
     fn walk(nodes: &[DirNode], open: &HashSet<String>, depth: usize, out: &mut Vec<TreeRow>) {
         for n in nodes {
             let is_open = open.contains(&n.path);
@@ -50,10 +56,12 @@ pub fn flatten(tree: &Tree, open: &HashSet<String>, root_label: &str, other_labe
         label: root_label.to_owned(),
         depth: 0,
         has_children: !tree.roots.is_empty(),
-        open: true,
+        open: root_open,
         is_virtual: false,
     }];
-    walk(&tree.roots, open, 1, &mut out);
+    if root_open {
+        walk(&tree.roots, open, 1, &mut out);
+    }
     if tree.has_other {
         out.push(TreeRow {
             loc: Location::Other,
@@ -73,6 +81,8 @@ pub fn tree_view(
     cx: &mut Context<PhoneBrowser>,
 ) -> materiant::gpui_kit::AnyElement {
     let selected = rows.iter().position(|r| r.loc == this.at);
+    // Đang ở trong một thư mục: dòng thiết bị giữ nền nhạt (vẫn biết đang duyệt máy nào); dòng chọn là thư mục.
+    let device_bg = (this.at != Location::root()).then(|| cx.theme().colors().layer(Neutral::N100));
     let weak = cx.weak_entity();
     let click_rows = rows.clone();
     let count = rows.len();
@@ -93,7 +103,8 @@ pub fn tree_view(
                     Location::Dir(p) => p.clone(),
                     Location::Other => String::new(),
                 };
-                let chevron = if r.has_children && !path.is_empty() {
+                // Gốc (`path` rỗng) cũng có nút thu gọn; "Khác" không có con.
+                let chevron = if r.has_children && r.loc != Location::Other {
                     IconButton::new(
                         ElementId::Name(format!("tree-t-{ix}").into()),
                         if r.open { IconName::ChevronDown } else { IconName::ChevronRight },
@@ -102,7 +113,9 @@ pub fn tree_view(
                     .accessibility_label(r.label.clone())
                     .on_click(move |_, _, cx| {
                         let path = path.clone();
-                        let _ = toggle.update(cx, |this, cx| this.toggle_tree(&path, cx));
+                        let _ = toggle.update(cx, |this, cx| {
+                            if path.is_empty() { this.toggle_root(cx) } else { this.toggle_tree(&path, cx) }
+                        });
                     })
                     .into_any_element()
                 } else {
@@ -116,6 +129,8 @@ pub fn tree_view(
                         this.read(cx).tree_menu(&loc, &label, is_virtual, menu, &menu_weak, cx)
                     })
                     .size_full()
+                    .rounded(px(6.))
+                    .when_some(device_bg.filter(|_| r.depth == 0 && r.loc == Location::root()), |d, bg| d.bg(bg))
                     .flex()
                     .items_center()
                     .gap_1()
@@ -163,14 +178,19 @@ mod tests {
     #[test]
     fn flatten_follows_open_state() {
         let tree = build_tree(&[item(Some("A/B")), item(Some("C")), item(None)], &[], &[]);
-        let closed = flatten(&tree, &HashSet::new(), "Pixel", "Khác");
+        let closed = flatten(&tree, &HashSet::new(), true, "Pixel", "Khác");
         let labels: Vec<_> = closed.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["Pixel", "A", "C", "Khác"]);
         let open: HashSet<String> = ["A".to_owned()].into();
-        let rows = flatten(&tree, &open, "Pixel", "Khác");
+        let rows = flatten(&tree, &open, true, "Pixel", "Khác");
         let labels: Vec<_> = rows.iter().map(|r| (r.label.as_str(), r.depth)).collect();
         assert_eq!(labels, [("Pixel", 0), ("A", 1), ("B", 2), ("C", 1), ("Khác", 0)]);
         assert!(rows[1].has_children && rows[1].open);
         assert!(!rows[4].has_children);
+        // Thu gọn gốc: chỉ còn dòng thiết bị + "Khác".
+        let folded = flatten(&tree, &open, false, "Pixel", "Khác");
+        let labels: Vec<_> = folded.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Pixel", "Khác"]);
+        assert!(folded[0].has_children && !folded[0].open);
     }
 }

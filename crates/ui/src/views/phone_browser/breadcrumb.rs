@@ -4,8 +4,15 @@ use ferry_core::browse::{self, Location};
 use materiant::button::{Button, IconButton, Size};
 use materiant::field::TextField;
 use materiant::gpui_kit::prelude::*;
-use materiant::gpui_kit::{Context, Entity, IntoElement, div, px};
+use std::time::Duration;
+
+use materiant::effect::ripple::{RippleConfig, RippleExt};
+use materiant::gpui_kit::base::Button as BaseButton;
+use materiant::gpui_kit::{
+    Animation, AnimationExt, Context, ElementId, Entity, IntoElement, Transformation, Window, div, percentage, px, svg,
+};
 use materiant::icon::{Icon, IconName};
+use materiant::style::ActiveTokens;
 use materiant::theme::ActiveTheme;
 
 use super::PhoneBrowser;
@@ -23,8 +30,10 @@ pub fn segments(device_name: &str, other_label: &str, at: &Location) -> Vec<(Str
 pub fn toolbar(
     this: &PhoneBrowser,
     search: &Entity<TextField>,
+    window: &mut Window,
     cx: &mut Context<PhoneBrowser>,
 ) -> materiant::gpui_kit::AnyElement {
+    let refresh = refresh_button(this, t_refresh(this), window, cx);
     let c = cx.theme().colors().clone();
     let t = |k: &str| this.i18n.t(k).to_owned();
     let segs = segments(&this.device_name, &t("browser.other"), &this.at);
@@ -77,13 +86,70 @@ pub fn toolbar(
                 })),
         )
         .child(crumbs)
-        .child(
-            IconButton::new("br-refresh", IconName::Refresh)
-                .size(Size::Sm)
-                .accessibility_label(t("browser.refresh"))
-                .loading(this.loading)
-                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-        )
+        .child(refresh)
         .child(div().w(px(180.)).flex_none().child(search.clone()))
+        .into_any_element()
+}
+
+fn t_refresh(this: &PhoneBrowser) -> materiant::gpui_kit::SharedString {
+    this.i18n.t("browser.refresh").to_owned().into()
+}
+
+/// Cạnh nút làm mới (= `Size::Sm` của IconButton), icon, bo góc mặc định của nút có nền (6 px), một vòng quay.
+const REFRESH_EDGE: f32 = 32.;
+const REFRESH_ICON: f32 = 18.;
+const REFRESH_RADIUS: f32 = 6.;
+const REFRESH_TURN: Duration = Duration::from_millis(600);
+
+/// Nút làm mới: ô vuông bo góc thường (không tròn), bấm thì icon quay đúng một vòng. Tự dựng vì `IconButton` dáng text
+/// luôn tròn và chỉ có spinner lặp (`loading`). Mỗi lần bấm tăng `refresh_spins` ⇒ id hoạt ảnh mới ⇒ chạy lại từ đầu.
+fn refresh_button(
+    this: &PhoneBrowser,
+    label: materiant::gpui_kit::SharedString,
+    window: &mut Window,
+    cx: &mut Context<PhoneBrowser>,
+) -> materiant::gpui_kit::AnyElement {
+    let c = cx.theme().colors().clone();
+    let focus = window.use_keyed_state("br-refresh-focus", cx, |_, cx| cx.focus_handle()).read(cx).clone();
+    let ring = materiant::style::focus_visible(&focus, window, cx);
+    let icon = svg().path(IconName::Refresh.path()).flex_none().size(px(REFRESH_ICON)).text_color(c.muted);
+    let spins = this.refresh_spins;
+    let glyph = if spins == 0 || cx.reduce_motion() {
+        icon.into_any_element()
+    } else {
+        icon.with_animation(
+            ElementId::from(("br-refresh-spin", spins)),
+            Animation::new(REFRESH_TURN).with_easing(materiant::gpui_kit::ease_in_out),
+            |icon, delta| icon.with_transformation(Transformation::rotate(percentage(delta))),
+        )
+        .into_any_element()
+    };
+    BaseButton::new("br-refresh")
+        .track_focus(&focus)
+        .accessibility_label(label)
+        .relative()
+        .flex_none()
+        .size(px(REFRESH_EDGE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(REFRESH_RADIUS))
+        .cursor_pointer()
+        .hover(|s| s.bg(c.text.opacity(0.09)))
+        .active(|s| s.bg(c.text.opacity(0.12)))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.refresh_spins += 1;
+            this.refresh(cx);
+        }))
+        .child(
+            div()
+                .id("br-refresh-ripple")
+                .absolute()
+                .inset_0()
+                .rounded(px(REFRESH_RADIUS))
+                .ripple(RippleConfig::default()),
+        )
+        .child(glyph)
+        .when(ring, |d| d.child(materiant::style::ring_overlay(cx.focus_ring_color(), px(REFRESH_RADIUS))))
         .into_any_element()
 }

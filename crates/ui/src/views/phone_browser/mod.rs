@@ -79,12 +79,16 @@ pub struct PhoneBrowser {
     search: Entity<TextField>,
     pub(crate) query: String,
     clear_search: bool,
+    /// Số lần bấm làm mới — id hoạt ảnh quay một vòng của nút (`breadcrumb::refresh_button`).
+    pub(crate) refresh_spins: usize,
     pub(crate) entries: Vec<Entry>,
     pub(crate) selected: BTreeSet<usize>,
     pub(crate) anchor: Option<usize>,
     suppress_select: bool,
     pub(crate) list: VirtualListHandle,
     tree_open: HashSet<String>,
+    /// Dòng thiết bị (gốc cây) đang mở.
+    root_open: bool,
     /// W-8: hộp thoại thư mục mới / đổi tên / xoá.
     edit_dialog: DialogHandle,
     edit: Option<edit::Edit>,
@@ -173,12 +177,14 @@ impl PhoneBrowser {
             search,
             query: String::new(),
             clear_search: false,
+            refresh_spins: 0,
             entries: Vec::new(),
             selected: BTreeSet::new(),
             anchor: None,
             suppress_select: false,
             list: VirtualListHandle::new(),
             tree_open,
+            root_open: true,
             edit_dialog: DialogHandle::new(cx),
             edit: None,
             name_field,
@@ -393,6 +399,11 @@ impl PhoneBrowser {
 
     fn recompute(&mut self, cx: &mut Context<Self>) {
         let mut entries = browse::list_entries(&self.items, &self.known, &self.virtual_dirs, &self.at, &self.query);
+        // Ở gốc, thư mục cấp một đã có ở cột cây bên trái ⇒ bảng không liệt kê lại, chỉ còn tệp nằm thẳng ở gốc. Đang tìm
+        // thì vẫn hiện để tìm được theo tên.
+        if self.at == Location::root() && self.query.trim().is_empty() {
+            entries.retain(|e| e.kind != EntryKind::Folder);
+        }
         browse::sort_entries(&mut entries, self.sort.0, self.sort.1);
         self.entries = entries;
         self.selected.clear();
@@ -439,6 +450,11 @@ impl PhoneBrowser {
             self.fetch_if_unloaded(&p, cx);
         }
         self.recompute(cx);
+    }
+
+    pub(crate) fn toggle_root(&mut self, cx: &mut Context<Self>) {
+        self.root_open = !self.root_open;
+        cx.notify();
     }
 
     pub(crate) fn toggle_tree(&mut self, path: &str, cx: &mut Context<Self>) {
@@ -496,7 +512,7 @@ impl Render for PhoneBrowser {
         let search = self.search.clone();
         let tree_rows = {
             let tree = browse::build_tree(&self.items, &self.known, &self.virtual_dirs);
-            tree::flatten(&tree, &self.tree_open, &self.device_name, self.i18n.t("browser.other"))
+            tree::flatten(&tree, &self.tree_open, self.root_open, &self.device_name, self.i18n.t("browser.other"))
         };
         let t = |key: &str| self.i18n.t(key).to_owned();
         let banner = if self.at == Location::Other {
@@ -512,7 +528,7 @@ impl Render for PhoneBrowser {
         } else {
             None
         };
-        let toolbar = breadcrumb::toolbar(self, &search, cx);
+        let toolbar = breadcrumb::toolbar(self, &search, window, cx);
         let tree_view = tree::tree_view(self, tree_rows, cx);
         let table_view = table::table_view(self, cx);
 

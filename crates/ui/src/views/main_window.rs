@@ -597,8 +597,11 @@ impl MainWindow {
             .flex()
             .flex_col()
             .on_mouse_down(materiant::gpui_kit::MouseButton::Left, move |_, window, cx| {
+                // Ô con vừa nhận focus (pha bubble) thì giữ: chỉ lấy focus khi bấm vào chỗ trống.
                 let handle = w_focus.read_with(cx, |this, _| this.focus.clone()).ok();
-                if let Some(h) = handle {
+                if let Some(h) = handle
+                    && !h.contains_focused(window, cx)
+                {
                     window.focus(&h, cx);
                 }
             })

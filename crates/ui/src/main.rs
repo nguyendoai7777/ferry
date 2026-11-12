@@ -24,9 +24,9 @@ use ferry_core::{VERSION, config, logging, paths};
 use materiant::gpui_kit::{
     self, ActivationPolicy, App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
 };
+use model::Model;
 use platform::window_controls;
 use views::app_bar;
-use model::Model;
 use views::main_window::MainWindow;
 
 /// Cỡ mở đầu của cửa sổ chính, px logic.
