@@ -157,6 +157,12 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   nhạt (`table::HIDDEN_ICON_OPACITY`, bảng + cây), cho gõ tên bắt đầu bằng `.` (`edit::sanitize_name`). Chép sang máy
   (`export::keep_hidden`) giữ dấu chấm đầu; "Tải về máy" (`sanitize_file_name`) vẫn cắt nó. App điện thoại bản cũ còn
   giấu / cấm mục ẩn ⇒ tạo thư mục ẩn nhận `403` / `400` tới khi app cập nhật.
+- **iPhone tắt server khi app xuống nền** (gặp 12/11/2026, iPhone `805b…` ở `192.168.4.109`): iOS treo app ⇒ server chết,
+  thường không kịp gửi mDNS "goodbye" ⇒ instance còn trong sổ (`Device::mdns`). Mở lại app, iPhone quảng bá lại cùng tên:
+  `Devices::announce` hẹn thử `info` ngay **mỗi lần** quảng bá khi máy có token mà chưa Online (trước chỉ lần thấy đầu ⇒ phải
+  chờ lượt 60 s). Không thấy mDNS thì máy vừa Online trong 10 phút (`FAST_PROBE_WINDOW`, `Device::online_at`) được thử
+  10 s một lần (`FAST_PROBE_INTERVAL`), sau đó về 60 s. iPhone gửi cả `169.254.x` (AWDL) trong `info.addresses` ⇒
+  `address::from_info` bỏ link-local cả IPv4 lẫn IPv6.
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

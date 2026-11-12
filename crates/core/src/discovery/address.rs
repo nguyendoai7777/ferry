@@ -208,7 +208,11 @@ pub fn from_info(addresses: &[String], port: u16) -> Vec<SocketAddr> {
     addresses
         .iter()
         .filter_map(|a| a.trim().parse::<IpAddr>().ok())
-        .filter(|ip| !matches!(ip, IpAddr::V6(v6) if is_link_local_v6(v6)))
+        // Link-local của điện thoại vô nghĩa với PC (scope phía điện thoại; iPhone gửi cả `169.254.x` của AWDL).
+        .filter(|ip| match ip {
+            IpAddr::V6(v6) => !is_link_local_v6(v6),
+            IpAddr::V4(v4) => !v4.is_link_local(),
+        })
         .map(|ip| SocketAddr::new(ip, port))
         .collect()
 }
@@ -367,7 +371,10 @@ mod tests {
 
     #[test]
     fn info_addresses_drop_link_local_and_junk() {
-        let got = from_info(&["192.168.1.23".into(), "fd12::23".into(), "fe80::1".into(), "nope".into()], 8081);
+        let got = from_info(
+            &["192.168.1.23".into(), "fd12::23".into(), "fe80::1".into(), "169.254.172.30".into(), "nope".into()],
+            8081,
+        );
         assert_eq!(got, vec![sa("192.168.1.23:8081"), sa("[fd12::23]:8081")]);
     }
 }

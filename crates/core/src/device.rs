@@ -34,6 +34,10 @@ pub const LOST_AFTER: Duration = Duration::from_secs(30);
 /// Thiết bị đã ghép mà không thấy qua mDNS (mạng chặn multicast, địa chỉ nhập tay): thử `info` theo địa chỉ đã lưu
 /// thưa cỡ này — không poll dày.
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(60);
+/// Máy vừa Online trong [`FAST_PROBE_WINDOW`] mà rớt: thử dày hơn — iPhone tắt server khi app xuống nền (iOS treo app,
+/// không kịp gửi mDNS "goodbye"), người dùng mở lại app là muốn thấy nối lại ngay, không đợi tới 1 phút.
+pub const FAST_PROBE_INTERVAL: Duration = Duration::from_secs(10);
+pub const FAST_PROBE_WINDOW: Duration = Duration::from_secs(600);
 
 /// Trạng thái thiết bị (`PROTOCOL.md` mục 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +164,8 @@ pub struct Device {
     withdrawn_at: Option<Instant>,
     /// Lần thử `info` kế (thiết bị có token mà chưa `Online`).
     next_probe: Option<Instant>,
+    /// Lần cuối biết chắc còn `Online` (trả `info` đúng, hoặc lúc rớt) — chọn nhịp thử lại ([`Self::probe_gap`]).
+    online_at: Option<Instant>,
 }
 
 impl Device {
@@ -176,6 +182,16 @@ impl Device {
             mdns: None,
             withdrawn_at: None,
             next_probe: None,
+            online_at: None,
+        }
+    }
+
+    /// Khoảng tới lần thử `info` kế khi chưa `Online`.
+    fn probe_gap(&self, now: Instant) -> Duration {
+        if self.online_at.is_some_and(|t| now.saturating_duration_since(t) < FAST_PROBE_WINDOW) {
+            FAST_PROBE_INTERVAL
+        } else {
+            PROBE_INTERVAL
         }
     }
 
@@ -331,10 +347,11 @@ impl Devices {
         }
         if first_sight {
             ev.push(DeviceEvent::Seen { id: id.clone(), name: d.name.clone() });
-            // Có token mà chưa Online ⇒ thử `info` ngay ("thấy lại → Online").
-            if d.state.has_token() && d.state != DeviceState::Online {
-                d.next_probe = Some(now);
-            }
+        }
+        // Có token mà chưa Online ⇒ thử `info` ngay ("thấy lại → Online") — cả khi instance chưa bị gỡ khỏi sổ: app iPhone
+        // mở lại quảng bá lại cùng tên mà lần xuống nền không có "goodbye" (engine bỏ lần thử trùng khi đang nối).
+        if d.state.has_token() && d.state != DeviceState::Online {
+            d.next_probe = Some(now);
         }
         self.apply(&id, DeviceInput::Seen, &mut ev);
         self.push_address_change(&id, before, &mut ev);
@@ -382,7 +399,7 @@ impl Devices {
         for d in self.devices.values_mut() {
             if d.next_probe.is_some_and(|t| t <= now) {
                 if matches!(d.state, DeviceState::Paired | DeviceState::Offline) && !d.known.is_empty() {
-                    d.next_probe = Some(now + PROBE_INTERVAL);
+                    d.next_probe = Some(now + d.probe_gap(now));
                     out.push(d.id.clone());
                 } else {
                     d.next_probe = None;
@@ -421,7 +438,10 @@ impl Devices {
         }
         self.apply(&id, DeviceInput::InfoOk { paired: info.paired }, &mut ev);
         if let Some(d) = self.devices.get_mut(&id) {
-            d.next_probe = (d.state == DeviceState::Paired).then_some(now + PROBE_INTERVAL);
+            if d.state == DeviceState::Online {
+                d.online_at = Some(now);
+            }
+            d.next_probe = (d.state == DeviceState::Paired).then_some(now + d.probe_gap(now));
         }
         self.push_address_change(&id, before, &mut ev);
         ev
@@ -458,8 +478,11 @@ impl Devices {
         let mut ev = Vec::new();
         if let Some(d) = self.devices.get_mut(id) {
             d.winner = None;
+            if d.state == DeviceState::Online {
+                d.online_at = Some(now);
+            }
             if d.state.has_token() {
-                d.next_probe = Some(now + PROBE_INTERVAL);
+                d.next_probe = Some(now + d.probe_gap(now));
             }
         }
         self.apply(id, DeviceInput::ConnectFailed, &mut ev);
@@ -652,6 +675,42 @@ mod tests {
     }
 
     #[test]
+    fn ios_app_reopened_reconnects_fast() {
+        // iPhone (gặp 12/11/2026): app xuống nền tắt server, không "goodbye" ⇒ instance mDNS vẫn trong sổ; mở lại app quảng
+        // bá lại cùng tên ⇒ phải thử `info` ngay; không thấy mDNS thì thử 10 s một lần trong 10 phút sau khi rớt.
+        let t0 = Instant::now();
+        let saved = PairedDevice {
+            id: DeviceId("ip".into()),
+            name: "iPhone".into(),
+            addresses: vec!["192.168.1.109:8080".into()],
+            alias: None,
+        };
+        let mut devs = Devices::from_config(&[saved], locals(), t0);
+        let id = DeviceId("ip".into());
+        devs.announce(ann("ip", &["192.168.1.109:8080"]), t0);
+        assert_eq!(devs.due_probes(t0), vec![id.clone()]);
+        devs.info_ok(&info("ip", true), sa("192.168.1.109:8080"), t0);
+        assert_eq!(devs.get(&id).unwrap().state, S::Online);
+
+        // Xuống nền: lệnh kế nối hỏng ⇒ Offline, thử lại sau 10 s (không phải 60 s).
+        let t1 = t0 + Duration::from_secs(30);
+        let ev = devs.connect_failed(&id, t1);
+        assert_eq!(states(&ev), vec![(S::Online, S::Offline)]);
+        assert_eq!(devs.next_deadline(), Some(t1 + FAST_PROBE_INTERVAL));
+
+        // Mở lại app: quảng bá lại cùng instance (chưa từng bị gỡ) ⇒ hẹn thử ngay.
+        let t2 = t1 + Duration::from_secs(3);
+        devs.announce(ann("ip", &["192.168.1.109:8080"]), t2);
+        assert_eq!(devs.due_probes(t2), vec![id.clone()]);
+
+        // Rớt đã lâu ⇒ về nhịp thưa 60 s.
+        let late = t1 + FAST_PROBE_WINDOW + Duration::from_secs(1);
+        devs.connect_failed(&id, late);
+        assert_eq!(devs.due_probes(late + PROBE_INTERVAL), vec![id.clone()]);
+        assert_eq!(devs.next_deadline(), Some(late + PROBE_INTERVAL + PROBE_INTERVAL));
+    }
+
+    #[test]
     fn paired_device_from_config_goes_online_then_offline_then_back() {
         let t0 = Instant::now();
         let saved = PairedDevice {
@@ -692,7 +751,8 @@ mod tests {
         assert_eq!(devs.get(&id).unwrap().winner(), None);
         let ev = devs.connect_failed(&id, t1);
         assert_eq!(states(&ev), vec![(S::Online, S::Offline)]);
-        assert_eq!(devs.next_deadline(), Some(t1 + PROBE_INTERVAL));
+        // Vừa còn Online ⇒ thử lại dày (iPhone mở lại app).
+        assert_eq!(devs.next_deadline(), Some(t1 + FAST_PROBE_INTERVAL));
 
         // Điện thoại đã quên PC ⇒ NeedsRepair; ghép lại ⇒ Paired.
         let ev = devs.info_ok(&info("aa", false), sa("192.168.1.99:8080"), t1);
