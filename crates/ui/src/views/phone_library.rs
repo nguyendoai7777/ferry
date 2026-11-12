@@ -16,7 +16,7 @@ use materiant::gpui_kit::{
 };
 use materiant::toast::{Toast, ToastKind, ToastSpec};
 
-use super::phone_browser::{BrowserMode, BrowserStart, PhoneBrowser};
+use super::phone_browser::{BrowserEvent, BrowserMode, BrowserStart, PhoneBrowser};
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
 
@@ -51,8 +51,15 @@ impl PhoneLibrary {
             let (m, i, d) = (model.clone(), i18n.clone(), device.clone());
             cx.new(|cx| PhoneBrowser::new(m, i, d, BrowserMode::Library, start, window, cx))
         };
-        let subs =
-            vec![cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx))];
+        let subs = vec![
+            cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx)),
+            // Dán (menu / phím tắt) tệp sao chép ở trình quản lý tệp của máy ⇒ gửi vào thư mục đã chọn.
+            cx.subscribe_in(&browser, window, |this, _, ev: &BrowserEvent, window, cx| {
+                if let BrowserEvent::PasteFiles { paths, dest_dir } = ev {
+                    this.send_to(paths.clone(), dest_dir.clone(), window, cx);
+                }
+            }),
+        ];
         let focus = cx.focus_handle();
         PhoneLibrary { model, i18n, device, browser, sending: None, focus, _subs: subs }
     }
@@ -96,6 +103,14 @@ impl PhoneLibrary {
             self.toast(window, cx, ToastKind::Warning, self.i18n.t("library.drop_other").to_owned());
             return;
         };
+        self.send_to(paths, dest_dir, window, cx);
+    }
+
+    /// Gửi `paths` vào `dest_dir` trên điện thoại (thả / dán).
+    fn send_to(&mut self, paths: Vec<PathBuf>, dest_dir: String, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() || self.sending.is_some() {
+            return;
+        }
         let op = QueueOp::AddFiles { device: self.device.clone(), paths, dest_dir };
         match self.model.update(cx, |m, _| m.queue(op)) {
             Some(req) => self.sending = Some(req),

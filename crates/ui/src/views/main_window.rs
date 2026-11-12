@@ -606,6 +606,8 @@ impl MainWindow {
                 cx.notify();
             }
             BrowserEvent::Send { dest_dir } => this.send(dest_dir.clone(), window, cx),
+            // Trang chọn đích không nhận dán tệp của máy (`computer_files` rỗng ngoài trang thư viện).
+            BrowserEvent::PasteFiles { .. } => {}
         });
         self.show(Page::Browse { browser, _sub: sub, _watch: watch });
         cx.notify();

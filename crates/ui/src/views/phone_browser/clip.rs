@@ -4,17 +4,22 @@
 //! vào thư mục đích; đủ trả lời thì đọc lại thư mục đích (và thư mục nguồn khi dời). Trùng tên ở đích: điện thoại tự đặt
 //! `tên (2)`. Dán xám khi bảng nháp trống / của máy khác, điện thoại chưa khai `copy`, đang offline hoặc đang dán.
 //! Điện thoại khai `fetch` (W-10) ⇒ Cắt / Sao chép còn chuẩn bị để dán ở trình quản lý tệp của máy ([`super::export`]).
+//!
+//! **Một clipboard như Explorer**: Cắt / Sao chép trong Ferry ghi đè clipboard của hệ thống (đường trên điện thoại, dạng
+//! chữ) nên tệp người dùng sao chép ở Finder / Explorer / Files **sau đó** mới là thứ được Dán. Ở trang thư viện, clipboard
+//! hệ thống có tệp của máy (không phải tệp tạm của W-10) ⇒ Dán = gửi các tệp đó vào thư mục đích ([`BrowserEvent::PasteFiles`]).
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use ferry_core::browse::Location;
 use ferry_core::ipc::{CommandError, LibraryOp, Outcome};
 use materiant::gpui_kit::base::Disableable;
-use materiant::gpui_kit::{App, Context, WeakEntity};
+use materiant::gpui_kit::{App, ClipboardEntry, ClipboardItem, Context, WeakEntity};
 use materiant::menu::{Menu, MenuItem};
 
-use super::PhoneBrowser;
 use super::edit::{Target, error_key, inside};
+use super::{BrowserEvent, PhoneBrowser};
 use crate::model::{ClipEntry, StorageClip};
 
 /// Một lượt dán nhiều mục.
@@ -46,7 +51,27 @@ impl PhoneBrowser {
     }
 
     pub(crate) fn can_paste(&self, cx: &App) -> bool {
-        self.copy_known(cx) && !self.offline && self.pasting.is_none() && self.clip(cx).is_some()
+        if self.offline || self.pasting.is_some() {
+            return false;
+        }
+        !self.computer_files(cx).is_empty() || (self.copy_known(cx) && self.clip(cx).is_some())
+    }
+
+    /// Tệp / thư mục của máy đang nằm trong clipboard hệ thống (sao chép ở Finder / Explorer / Files) — chỉ ở trang thư
+    /// viện (trang chọn đích đã có nút gửi riêng). Bỏ tệp tạm của W-10: đó là bản sao của chính bảng nháp điện thoại.
+    pub(crate) fn computer_files(&self, cx: &App) -> Vec<PathBuf> {
+        if !self.is_library() {
+            return Vec::new();
+        }
+        let Some(item) = cx.read_from_clipboard() else { return Vec::new() };
+        let own = ferry_core::paths::data_dir().ok().map(|d| d.join(ferry_core::export::DIR_NAME));
+        let mut paths = Vec::new();
+        for entry in item.entries() {
+            if let ClipboardEntry::ExternalPaths(p) = entry {
+                paths.extend(p.paths().iter().filter(|p| !own.as_ref().is_some_and(|o| p.starts_with(o))).cloned());
+            }
+        }
+        paths
     }
 
     /// "Cắt" + "Sao chép" cho các mục `targets`. Thư mục ảo (chỉ có phía PC) không chép được.
@@ -85,14 +110,23 @@ impl PhoneBrowser {
 
     pub(crate) fn set_clip(&mut self, targets: Vec<Target>, cut: bool, cx: &mut Context<Self>) {
         self.start_export(&targets, cut, cx);
-        let entries = targets.into_iter().map(|t| ClipEntry { path: t.path, folder: t.folder }).collect();
+        let entries: Vec<ClipEntry> =
+            targets.into_iter().map(|t| ClipEntry { path: t.path, folder: t.folder }).collect();
+        let text = targets_text(&entries);
         let clip = StorageClip { device: self.device.clone(), entries, cut };
         self.model.update(cx, |m, _| m.clip = Some(clip));
+        // Một clipboard: tệp sao chép ở trình quản lý tệp trước đó thôi được Dán (W-10 sẽ thay bằng tệp tạm khi tải xong).
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
         cx.notify();
     }
 
     pub(crate) fn paste_into(&mut self, dest: String, cx: &mut Context<Self>) {
         if !self.can_paste(cx) {
+            return;
+        }
+        let files = self.computer_files(cx);
+        if !files.is_empty() {
+            cx.emit(BrowserEvent::PasteFiles { paths: files, dest_dir: dest });
             return;
         }
         let Some(clip) = self.clip(cx).cloned() else { return };
@@ -203,4 +237,9 @@ impl Target {
         let name = e.path.rsplit('/').next().unwrap_or(&e.path).to_owned();
         Target { path: e.path.clone(), name, folder: e.folder, is_virtual: false }
     }
+}
+
+/// Chữ đặt lên clipboard hệ thống khi Cắt / Sao chép trong Ferry: đường trên điện thoại, mỗi dòng một mục.
+fn targets_text(entries: &[ClipEntry]) -> String {
+    entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>().join("\n")
 }

@@ -76,6 +76,11 @@ pub enum BrowserEvent {
         dest_dir: String,
     },
     Cancel,
+    /// Dán tệp / thư mục của máy (clipboard hệ thống) vào `dest_dir` trên điện thoại — trang thư viện gửi như thả vào.
+    PasteFiles {
+        paths: Vec<std::path::PathBuf>,
+        dest_dir: String,
+    },
 }
 
 pub struct PhoneBrowser {
