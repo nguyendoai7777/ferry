@@ -326,11 +326,6 @@ mode_dark = "Dark"
 mode_system = "System"
 theme_preset = "Color theme"
 
-[settings.files]
-download_dir = "Download folder"
-choose = "Choose"
-reset = "Default"
-
 [settings.system]
 autostart = "Start with the system"
 autostart_error = "Couldn't turn it on: {error}. Check the system permissions, then try again."
@@ -341,8 +336,4 @@ language_en = "English"
 
 [settings.error]
 no_daemon = "Ferry isn't running — open Ferry, then try again"
-unknown_device = "This phone isn't in the list — close this window and open it again"
-offline = "The phone isn't connected — turn on WiFi Sync on the phone, then try again"
-invalid_path = "This folder can't be used — choose another folder"
-not_writable = "Can't write to this folder — choose another folder or allow writing to it"
 internal = "Ferry hit an error while saving — try again, and restart Ferry if it keeps failing"

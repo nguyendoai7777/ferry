@@ -1,8 +1,8 @@
 //! Trang Cài đặt (gd1_12, PROTOCOL 4.5). Nằm trong cửa sổ chính, mở bằng mục Cài đặt ở đáy cột trái (hoặc menu khay
 //! "Cài đặt…"). Bố cục theo Cài đặt của macOS / iOS (12/11/2026): các card `CardGroup::standalone` không tiêu đề, mỗi mục
-//! một dòng có đường kẻ chia — Ngôn ngữ; Giao diện (nền + bảng màu, như Groovex); Tệp + hệ thống. Không có giới
-//! hạn tốc độ, địa chỉ tay, thư mục theo dõi (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn Thêm điện
-//! thoại).
+//! một dòng có đường kẻ chia — Ngôn ngữ + khởi động cùng hệ thống; Giao diện (nền + bảng màu, như Groovex). Không
+//! có giới hạn tốc độ, địa chỉ tay, thư mục theo dõi, thư mục tải về (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn
+//! Thêm điện thoại).
 //!
 //! Chỉ vẽ `SettingsView` nhận từ daemon và gửi lệnh qua [`SettingsClient`] (kết nối riêng, **chặn** ⇒ luôn chạy trong
 //! `background_spawn`). Mỗi mục có cờ `busy` riêng: lệnh đang chạy thì khoá điều khiển của mục đó, không gửi chồng; lỗi
@@ -11,15 +11,14 @@
 
 use ferry_core::config::ThemeChoice;
 use ferry_core::i18n::{I18n, Language, LanguagePref};
-use ferry_core::ipc::{CommandError, SettingsOp, SettingsView};
+use ferry_core::ipc::{SettingsOp, SettingsView};
+use materiant::button::Button;
 use materiant::button::segmented::SegmentedButtons;
-use materiant::button::{Button, Size};
 use materiant::card::CardGroup;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, App, AppContext, ClickEvent, Context, EventEmitter, IntoElement, PathPromptOptions, Render, SharedString,
-    Window, div, px,
+    self, App, AppContext, ClickEvent, Context, EventEmitter, IntoElement, Render, SharedString, Window, div, px,
 };
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
@@ -37,12 +36,11 @@ use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
 enum Section {
     Language,
     Appearance,
-    Files,
     System,
 }
 
 impl Section {
-    const COUNT: usize = 4;
+    const COUNT: usize = 3;
 
     fn ix(self) -> usize {
         self as usize
@@ -55,21 +53,12 @@ enum Load {
     Ready,
 }
 
-/// Khoá i18n cho một lỗi, theo mục gây ra — không bao giờ nói mã lỗi.
-fn error_key(section: Section, error: &CallError) -> &'static str {
-    let command = match error {
-        CallError::NoDaemon => return "settings.error.no_daemon",
-        CallError::Failed(c) => c,
-    };
-    match command {
-        CommandError::UnknownDevice | CommandError::NotPaired => "settings.error.unknown_device",
-        CommandError::Offline => "settings.error.offline",
-        CommandError::NotWritable => "settings.error.not_writable",
-        CommandError::InvalidInput => match section {
-            Section::Files => "settings.error.invalid_path",
-            Section::Language | Section::System | Section::Appearance => "settings.error.internal",
-        },
-        _ => "settings.error.internal",
+/// Khoá i18n cho một lỗi — không bao giờ nói mã lỗi. Lệnh của trang (ngôn ngữ, giao diện, khởi động) chỉ hỏng khi
+/// daemon không chạy hoặc lỗi nội bộ.
+fn error_key(error: &CallError) -> &'static str {
+    match error {
+        CallError::NoDaemon => "settings.error.no_daemon",
+        CallError::Failed(_) => "settings.error.internal",
     }
 }
 
@@ -217,7 +206,7 @@ impl SettingsPage {
             Ok(view) => self.apply_view(view, cx),
             Err(err) => {
                 log::info!("settings: {section:?} failed: {err:?}");
-                self.errors[section.ix()] = Some(self.t(error_key(section, &err)));
+                self.errors[section.ix()] = Some(self.t(error_key(&err)));
             }
         }
         if section == Section::Appearance {
@@ -264,26 +253,6 @@ impl SettingsPage {
         );
     }
 
-    // ----- tệp -----
-
-    fn pick_download_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy[Section::Files.ix()] {
-            return;
-        }
-        let picked =
-            cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: None });
-        cx.spawn_in(window, async move |this, cx| {
-            let path = picked.await.ok().and_then(Result::ok).flatten().and_then(|p| p.into_iter().next());
-            if let Some(path) = path {
-                this.update_in(cx, |page, window, cx| {
-                    page.run_op(Section::Files, SettingsOp::SetDownloadDir { path: Some(path) }, window, cx)
-                })
-                .ok();
-            }
-        })
-        .detach();
-    }
-
     // ----- vẽ -----
 
     fn error_line(&self, section: Section, cx: &App) -> Option<gpui_kit::Div> {
@@ -306,7 +275,7 @@ impl SettingsPage {
         div().flex_1().flex().items_center().justify_center().p_6().child(column)
     }
 
-    /// Ngôn ngữ — đầu trang, card riêng một dòng.
+    /// Ngôn ngữ + khởi động cùng hệ thống — đầu trang, một card hai dòng có đường kẻ chia.
     fn render_language(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
         let busy = self.busy[Section::Language.ix()];
         let select = Select::new("settings-language")
@@ -322,10 +291,13 @@ impl SettingsPage {
                 let language = language_from_index(*ix);
                 page.run_op(Section::Language, SettingsOp::SetLanguage { language }, window, cx);
             }));
-        CardGroup::new().standalone().child(
-            cell(setting_row(cx, self.t("settings.system.language"), None, select))
-                .children(self.error_line(Section::Language, cx)),
-        )
+        CardGroup::new()
+            .standalone()
+            .child(
+                cell(setting_row(cx, self.t("settings.system.language"), None, select))
+                    .children(self.error_line(Section::Language, cx)),
+            )
+            .child(self.render_autostart(data, cx))
     }
 
     /// Nền (Sáng / Tối / Theo hệ thống) + bảng màu (bốn preset của materiant), như Cài đặt → Chung của Groovex. Hai lựa
@@ -362,43 +334,6 @@ impl SettingsPage {
             .standalone()
             .child(cell(setting_row(cx, self.t("settings.appearance.mode"), None, mode)))
             .child(palette)
-    }
-
-    /// Tệp + khởi động cùng hệ thống — một card, mỗi mục một dòng có đường kẻ chia (kiểu Cài đặt iOS).
-    fn render_general(&self, data: &SettingsView, cx: &mut Context<Self>) -> CardGroup {
-        CardGroup::new().standalone().child(self.render_download(data, cx)).child(self.render_autostart(data, cx))
-    }
-
-    fn render_download(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
-        let busy = self.busy[Section::Files.ix()];
-        cell(setting_row(
-            cx,
-            self.t("settings.files.download_dir"),
-            Some(data.download_dir.display().to_string().into()),
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Button::new("settings-download-choose", self.t("settings.files.choose"))
-                        .outlined()
-                        .size(Size::Sm)
-                        .disabled(busy)
-                        .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                            page.pick_download_dir(window, cx);
-                        })),
-                )
-                .child(
-                    Button::new("settings-download-reset", self.t("settings.files.reset"))
-                        .text()
-                        .size(Size::Sm)
-                        .disabled(busy || !data.download_dir_custom)
-                        .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                            page.run_op(Section::Files, SettingsOp::SetDownloadDir { path: None }, window, cx);
-                        })),
-                ),
-        ))
-        .children(self.error_line(Section::Files, cx))
     }
 
     fn render_autostart(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
@@ -470,8 +405,7 @@ impl Render for SettingsPage {
                     .gap_4()
                     .py_4()
                     .child(self.render_language(&data, cx))
-                    .child(self.render_appearance(&data, cx))
-                    .child(self.render_general(&data, cx));
+                    .child(self.render_appearance(&data, cx));
                 ScrollArea::new("settings-scroll")
                     .vertical()
                     .flex_1()
@@ -490,16 +424,12 @@ impl Render for SettingsPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferry_core::ipc::CommandError;
 
     #[test]
-    fn errors_become_actionable_keys_per_section() {
-        use CommandError::*;
-        let failed = |c| CallError::Failed(c);
-        assert_eq!(error_key(Section::Files, &failed(InvalidInput)), "settings.error.invalid_path");
-        assert_eq!(error_key(Section::System, &failed(InvalidInput)), "settings.error.internal");
-        assert_eq!(error_key(Section::Files, &failed(NotWritable)), "settings.error.not_writable");
-        assert_eq!(error_key(Section::System, &failed(Internal)), "settings.error.internal");
-        assert_eq!(error_key(Section::System, &CallError::NoDaemon), "settings.error.no_daemon");
+    fn errors_become_actionable_keys() {
+        assert_eq!(error_key(&CallError::Failed(CommandError::InvalidInput)), "settings.error.internal");
+        assert_eq!(error_key(&CallError::NoDaemon), "settings.error.no_daemon");
     }
 
     #[test]
@@ -520,7 +450,7 @@ mod tests {
                 keys.push(format!("settings.{rest}"));
             }
         }
-        assert!(keys.len() > 20, "scan found only {} keys", keys.len());
+        assert!(keys.len() > 10, "scan found only {} keys", keys.len());
         for lang in [Language::Vi, Language::En] {
             let i18n = I18n::new(lang);
             for key in &keys {
@@ -530,11 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn appearance_errors_and_choices_have_keys() {
-        assert_eq!(
-            error_key(Section::Appearance, &CallError::Failed(CommandError::InvalidInput)),
-            "settings.error.internal"
-        );
+    fn appearance_choices_have_keys() {
         let keys: Vec<_> = ThemeChoice::ALL.iter().map(|c| theme_choice_key(*c)).collect();
         assert_eq!(keys.len(), 3);
     }

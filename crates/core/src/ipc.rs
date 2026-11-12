@@ -178,9 +178,6 @@ pub enum SettingsOp {
     Get,
     /// Đổi ngôn ngữ: khay, thông báo đổi ngay; cửa sổ khác đổi khi mở lại.
     SetLanguage { language: LanguagePref },
-    /// Thư mục "Tải về máy". `None` ⇒ mặc định của OS. Không tạo / ghi được ⇒ `NotWritable`; đường dẫn tương đối ⇒
-    /// `InvalidInput`.
-    SetDownloadDir { path: Option<PathBuf> },
     /// Khởi động cùng hệ thống. OS từ chối ⇒ vẫn `Settings`, lỗi nằm ở [`SettingsView::autostart_error`].
     SetAutostart { enabled: bool },
     /// Tên hiển thị trên PC; chuỗi trắng ⇒ về tên điện thoại báo. Không có trong sổ đã ghép ⇒ `UnknownDevice`.
@@ -196,10 +193,6 @@ pub enum SettingsOp {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
     pub language: LanguagePref,
-    /// Thư mục tải về đang dùng (đã giải mặc định).
-    pub download_dir: PathBuf,
-    /// `false` ⇒ đang là mặc định của OS (nút "Về mặc định" tắt).
-    pub download_dir_custom: bool,
     pub autostart: bool,
     /// Lần áp vào OS gần nhất hỏng (chữ của OS, đã log) — hiện dưới công tắc kèm cách gỡ.
     pub autostart_error: Option<String>,
@@ -1032,8 +1025,6 @@ mod tests {
         }
         let view = SettingsView {
             language: LanguagePref::Vi,
-            download_dir: "/d".into(),
-            download_dir_custom: true,
             autostart: true,
             autostart_error: None,
             devices: vec![DeviceSetting {
@@ -1049,8 +1040,8 @@ mod tests {
             (
                 DaemonToUi::Reply { req: 7, outcome: Outcome::Settings(view) },
                 concat!(
-                    r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","downloadDir":"/d","#,
-                    r#""downloadDirCustom":true,"autostart":true,"autostartError":null,"#,
+                    r#"{"type":"reply","req":7,"outcome":{"kind":"settings","language":"vi","#,
+                    r#""autostart":true,"autostartError":null,"#,
                     r#""devices":[{"id":"3f9a","name":"Pixel","alias":"Mẹ","state":"online"}],"#,
                     r#""theme":"dark","themePreset":"deeppink"}}"#
                 ),

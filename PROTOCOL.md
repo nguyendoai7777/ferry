@@ -85,9 +85,8 @@ pc-app/
    khai `edit` (§6.12, W-8).
 4. **Thêm điện thoại** (màn hướng dẫn): bước 1 "Trên điện thoại: mở app → [icon WiFi ở thanh điều hướng đáy] → Bật “Cho phép nhận”" (màn Đồng bộ WiFi). Bước 2 danh sách
    điện thoại dò thấy (chưa ghép; mDNS + quét LAN dự phòng §6.2). Bước 3 chọn một → ô PIN 6 số (đọc trên màn điện thoại) → xong.
-5. **Cài đặt**: thiết bị đã ghép (đổi tên hiển thị, quên), thư mục lưu file tải về, khởi động cùng
-   hệ thống, ngôn ngữ, giao diện. Không có giới hạn băng thông, không có địa chỉ tay, không có thư mục theo dõi
-   (bỏ 12/11/2026).
+5. **Cài đặt**: ngôn ngữ, khởi động cùng hệ thống, giao diện (thiết bị đã ghép ở màn Danh sách thiết bị). Không có giới
+   hạn băng thông, địa chỉ tay, thư mục theo dõi, thư mục tải về (bỏ 12/11/2026).
 
 6. **Trình duyệt điện thoại kiểu Explorer** (một component, dùng ở hộp chọn đích khi gửi và ở tab thư viện điện thoại):
    - Thanh trên: nút Lùi / Tiến / Lên, **thanh địa chỉ dạng breadcrumb** (`Pixel 8 › Chuyến đi › Ngày 1`, bấm từng đoạn

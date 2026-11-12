@@ -326,11 +326,6 @@ mode_dark = "Tối"
 mode_system = "Theo hệ thống"
 theme_preset = "Bảng màu"
 
-[settings.files]
-download_dir = "Thư mục tải về"
-choose = "Chọn"
-reset = "Mặc định"
-
 [settings.system]
 autostart = "Khởi động cùng hệ thống"
 autostart_error = "Không bật được: {error}. Kiểm tra quyền của hệ điều hành rồi thử lại."
@@ -341,8 +336,4 @@ language_en = "English"
 
 [settings.error]
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
-unknown_device = "Không thấy điện thoại này trong danh sách — đóng cửa sổ rồi mở lại"
-offline = "Điện thoại chưa kết nối — bật Đồng bộ WiFi trên điện thoại rồi thử lại"
-invalid_path = "Thư mục không dùng được — chọn một thư mục khác"
-not_writable = "Không ghi được vào thư mục này — chọn thư mục khác hoặc cấp quyền ghi"
 internal = "Ferry gặp lỗi khi lưu — thử lại, nếu vẫn lỗi hãy khởi động lại Ferry"

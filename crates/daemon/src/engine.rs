@@ -246,7 +246,6 @@ enum Internal {
 
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
 enum Settled {
-    DownloadDir(Option<PathBuf>, Result<(), CommandError>),
     /// Lỗi OS không chặn: cấu hình vẫn theo công tắc, lỗi hiện ở màn cài đặt (lần khởi động sau thử lại).
     Autostart(bool, Result<(), String>),
 }
@@ -835,16 +834,6 @@ impl Engine {
                     self.update_tray();
                 }
             }
-            SettingsOp::SetDownloadDir { path } => {
-                if path.as_ref().is_some_and(|p| !p.is_absolute()) {
-                    return Some(Err(CommandError::InvalidInput));
-                }
-                blocking(Box::new(move || {
-                    let check = path.as_deref().map_or(Ok(()), check_writable_dir);
-                    Settled::DownloadDir(path, check)
-                }));
-                return None;
-            }
             SettingsOp::SetAutostart { enabled } => {
                 let apply = self.autostart;
                 blocking(Box::new(move || Settled::Autostart(enabled, apply(enabled))));
@@ -876,10 +865,6 @@ impl Engine {
 
     fn on_settled(&mut self, change: Settled) -> Result<Outcome, CommandError> {
         match change {
-            Settled::DownloadDir(path, check) => {
-                check?;
-                self.config.download_dir = path;
-            }
             Settled::Autostart(enabled, result) => {
                 self.config.autostart = enabled;
                 self.autostart_error = result.err();
@@ -893,8 +878,6 @@ impl Engine {
         let c = &self.config;
         SettingsView {
             language: c.language,
-            download_dir: c.download_dir(),
-            download_dir_custom: c.download_dir.as_ref().is_some_and(|d| !d.as_os_str().is_empty()),
             autostart: c.autostart,
             autostart_error: self.autostart_error.clone(),
             devices: c
@@ -1781,17 +1764,6 @@ fn add_files(
     Ok(Outcome::Added { batch, files, skipped_non_video, unreadable })
 }
 
-/// Thư mục tải về: tạo nếu chưa có, rồi thử ghi một tệp tạm (quyền, ổ chỉ đọc, ổ mạng rớt).
-fn check_writable_dir(dir: &std::path::Path) -> Result<(), CommandError> {
-    let probe = dir.join(format!(".ferry-write-test-{}", std::process::id()));
-    std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&probe, b"")).map_err(|e| {
-        log::info!("engine: download dir {} is not writable: {e}", dir.display());
-        CommandError::NotWritable
-    })?;
-    let _ = std::fs::remove_file(&probe);
-    Ok(())
-}
-
 /// `GET /info` bằng client kèm token của máy Online ⇒ [`Internal::InfoRefreshed`]. Lỗi mạng bỏ qua: lệnh đang chạy cùng
 /// lúc (`list` / `dirs`) tự báo mất kết nối.
 fn spawn_info_refresh(tx: &mpsc::UnboundedSender<Internal>, device: &DeviceId, client: &Arc<PhoneClient>) {
@@ -2430,19 +2402,7 @@ mod tests {
         let e = &rig.engine;
         let first = view(ask(e, SettingsOp::Get).await);
         assert_eq!(first.devices.len(), 1);
-        // Bộ thử đặt sẵn `downloadDir` = `<tmp>/dl` (gd1_10).
-        assert!(first.download_dir_custom && !first.autostart);
-
-        let dl = tmp.path().join("tải về").join("mới");
-        let v = view(ask(e, SettingsOp::SetDownloadDir { path: Some(dl.clone()) }).await);
-        assert!(v.download_dir_custom && dl.is_dir(), "created on demand");
-        assert_eq!(v.download_dir, dl);
-        let rel = ask(e, SettingsOp::SetDownloadDir { path: Some("relative".into()) }).await;
-        assert_eq!(rel, Outcome::Failed { error: CommandError::InvalidInput });
-        let blocker = tmp.path().join("a-file");
-        std::fs::write(&blocker, b"x").unwrap();
-        let bad = ask(e, SettingsOp::SetDownloadDir { path: Some(blocker.join("sub")) }).await;
-        assert_eq!(bad, Outcome::Failed { error: CommandError::NotWritable });
+        assert!(!first.autostart);
 
         assert!(view(ask(e, SettingsOp::SetAutostart { enabled: true }).await).autostart);
 
@@ -2467,7 +2427,6 @@ mod tests {
 
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(tmp.path().join("config.json")).unwrap()).unwrap();
-        assert_eq!(json["downloadDir"], dl.to_string_lossy().as_ref());
         assert_eq!(json["autostart"], true);
         assert_eq!(json["devices"][0]["alias"], "Máy của mẹ");
         assert_eq!(json["language"], "vi");
