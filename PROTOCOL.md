@@ -356,6 +356,13 @@ Chỉ khi `info.features` có `browse` (W-7). Mục đích: PC dựng lại **c�
   thân `201` — tương đối so với gốc đó (vd `"Movies/VideoPlayer"`, `"Download/Phim"`). Tệp của thư viện nằm ngoài bộ
   nhớ dùng chung (bộ nhớ riêng của app, thẻ nhớ) ⇒ `dir = null`. Không có `X-File-Dir` ⇒ thư mục lưu mặc định của app
   (giữ như cũ, `dir` trong phản hồi cho PC biết nó ở đâu).
+- **iOS (W-12)**: không có bộ nhớ dùng chung ⇒ gốc của mọi `dir` = **thư mục `Documents` của chính app** (sandbox),
+  cùng route, cùng mã lỗi §6.11–§6.14, không cần quyền hệ thống. Công tắc "Cho máy tính duyệt bộ nhớ" vẫn có; bật ⇒
+  khai `browse` + `edit` + `copy` + `fetch` ngay (không có hộp xin quyền). App khai `UIFileSharingEnabled` +
+  `LSSupportsOpeningDocumentsInPlace` để cây này hiện trong app Tệp ("Trên iPhone" › tên app) — người dùng thấy cùng
+  một cây ở Tệp và ở Ferry. Vùng cấm thay `Android/` bằng thư mục hệ thống quản lý: `Inbox` (và mục bên trong) — chỉ
+  đọc, không tạo / đổi tên / xoá / dời vào; mục ẩn W-11 được phép như Android. Tệp nhận qua Ferry nằm thẳng trong cây
+  này (`X-File-Dir` tương đối so với `Documents`), không còn "thư viện riêng" tách khỏi cây.
 - **Tệp nhận qua Ferry vào thư viện**: mọi tệp nhận được (ở bất kỳ thư mục nào) có trong `list` với `dir` thật, để
   bước Checking (trùng `dir` + tên + cỡ) và "Tải về máy" vẫn chạy.
 - **Liệt kê** — `GET /api/v1/dirs?path=<URL-encoded>`, Bearer. `path` như `X-File-Dir` (`/` phân cách, thiếu / rỗng
@@ -475,4 +482,4 @@ Cắt) rồi dán vào trình quản lý tệp của máy (Files, Explorer, Find
 
 Đồng bộ thư mục hai chiều · kéo thả để dời / chép giữa thư mục trên điện thoại (dùng Cắt / Sao chép / Dán §6.13) · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
 (điện thoại phải tự bật Sync WiFi) · nhiều điện thoại gửi song song cùng lúc (cho phép chọn, nhưng hàng đợi mỗi máy chạy
-tuần tự) · iOS (chờ phía iOS cài giao thức này).
+tuần tự) · duyệt ngoài sandbox của app trên iOS (iOS không có bộ nhớ dùng chung — W-12).
