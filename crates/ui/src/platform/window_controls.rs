@@ -11,7 +11,10 @@
 //! `Miniaturizable` / `Resizable` ⇒ `miniaturize:` / `zoom:` bị AppKit bỏ qua (ba nút tự vẽ bấm không ăn). Ba nút tự vẽ vẫn
 //! ở góc phải như cửa sổ Cài đặt của fastcast (kiểu app Claude desktop: ô vuông bo góc, có khe, chừa mép phải cho góc bo).
 
-use materiant::gpui_kit::{Pixels, Point, TitlebarOptions, Window, point, px};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use materiant::gpui_kit::{App, Pixels, Point, TitlebarOptions, Window, point, px};
 
 /// macOS: hệ thống vẽ đèn giao thông ở góc trái trên; thanh trên + đầu cột trái chừa chỗ cho chúng.
 pub const NATIVE_CAPTION_BUTTONS: bool = cfg!(target_os = "macos");
@@ -61,11 +64,32 @@ pub fn hwnd(window: &Window) -> Option<windows_sys::Win32::Foundation::HWND> {
     sys::hwnd(window)
 }
 
-pub fn close(window: &mut Window) {
+/// Việc phải làm ngay trước khi cửa sổ đóng (gửi trạng thái cửa sổ cho daemon — `MainWindow::save_view`).
+pub type BeforeClose = Rc<dyn Fn(&mut Window, &mut App)>;
+
+thread_local! {
+    static BEFORE_CLOSE: RefCell<Option<BeforeClose>> = const { RefCell::new(None) };
+}
+
+/// Đặt [`BeforeClose`] cho mọi đường đóng: nút Đóng tự vẽ / menu (`close`) và đóng từ OS (`WM_CLOSE`, đèn giao thông,
+/// compositor — qua `on_window_should_close`).
+pub fn before_close(window: &mut Window, cx: &mut App, f: BeforeClose) {
+    BEFORE_CLOSE.with(|b| *b.borrow_mut() = Some(f.clone()));
+    window.on_window_should_close(cx, move |window, cx| {
+        f(window, cx);
+        true
+    });
+}
+
+pub fn close(window: &mut Window, cx: &mut App) {
     #[cfg(windows)]
     if let Some(hwnd) = sys::hwnd(window) {
+        // Đi qua `on_window_should_close` như nút tiêu đề thật ⇒ [`BeforeClose`] chạy ở đó.
         sys::close(hwnd);
         return;
+    }
+    if let Some(f) = BEFORE_CLOSE.with(|b| b.borrow().clone()) {
+        f(window, cx);
     }
     window.remove_window();
 }

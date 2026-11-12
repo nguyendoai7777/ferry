@@ -10,6 +10,7 @@ use ferry_core::ipc::{
     UiToDaemon,
 };
 use ferry_core::protocol::{LibraryItem, feature};
+use ferry_core::view::{CachedData, ClipPath, ClipState, ViewState, WindowState};
 use materiant::gpui_kit::{Context, EventEmitter};
 
 use crate::ui_state::UiState;
@@ -49,11 +50,31 @@ pub struct Model {
     pub storage: HashMap<DeviceId, FsCache>,
     pub state: UiState,
     pub clip: Option<StorageClip>,
+    /// Trạng thái cửa sổ lần trước (`DaemonToUi::Restore`), `MainWindow::restore` lấy đi một lần lúc mở.
+    pub restore: Option<ViewState>,
     sender: Option<Sender<UiToDaemon>>,
     next_req: u64,
 }
 
 impl EventEmitter<ModelEvent> for Model {}
+
+impl StorageClip {
+    pub fn to_state(&self) -> ClipState {
+        ClipState {
+            device: self.device.clone(),
+            entries: self.entries.iter().map(|e| ClipPath { path: e.path.clone(), folder: e.folder }).collect(),
+            cut: self.cut,
+        }
+    }
+
+    pub fn from_state(s: ClipState) -> StorageClip {
+        StorageClip {
+            device: s.device,
+            entries: s.entries.into_iter().map(|e| ClipEntry { path: e.path, folder: e.folder }).collect(),
+            cut: s.cut,
+        }
+    }
+}
 
 impl Model {
     pub fn new(sender: Option<Sender<UiToDaemon>>) -> Model {
@@ -65,6 +86,7 @@ impl Model {
             storage: HashMap::new(),
             state: UiState::load(),
             clip: None,
+            restore: None,
             sender,
             next_req: 1,
         }
@@ -108,6 +130,31 @@ impl Model {
     /// Lệnh cài đặt qua kết nối chính (màn Danh sách thiết bị: đọc bí danh, đổi tên).
     pub fn settings(&mut self, op: SettingsOp) -> Option<u64> {
         self.send(|req| UiToDaemon::Settings { req, op })
+    }
+
+    /// Gửi trạng thái cửa sổ cho daemon giữ hộ (không trả lời).
+    pub fn save_view(&self, view: ViewState) {
+        if let Some(sender) = &self.sender
+            && let Err(e) = sender.send(&UiToDaemon::SaveView { view: Box::new(view) })
+        {
+            log::warn!("ipc: save view failed: {e}");
+        }
+    }
+
+    /// Thư mục / danh sách daemon giữ hộ (`Restore`) ⇒ bản làm việc của phiên. Không đè thư mục đã đọc trong phiên này.
+    pub fn apply_cached(&mut self, cached: CachedData) {
+        let Some(device) = cached.device else { return };
+        if !cached.dirs.is_empty() {
+            let fs = self.storage.entry(device.clone()).or_default();
+            for l in cached.dirs {
+                if !fs.is_loaded(&l.path) {
+                    fs.insert(l);
+                }
+            }
+        }
+        if let Some(items) = cached.library {
+            self.libraries.entry(device).or_insert(items);
+        }
     }
 
     fn send(&mut self, make: impl FnOnce(u64) -> UiToDaemon) -> Option<u64> {
@@ -169,6 +216,14 @@ impl Model {
         self.state.last_dest.get(&self.dest_key(device)).cloned().unwrap_or_default()
     }
 
+    /// Khung cửa sổ lúc đóng ⇒ `ui-state.json` (qua được lần khởi động lại máy / daemon).
+    pub fn remember_window(&mut self, window: WindowState) {
+        if self.state.window != Some(window) {
+            self.state.window = Some(window);
+            self.state.save();
+        }
+    }
+
     pub fn remember_dest(&mut self, device: &DeviceId, dest: &str) {
         let key = self.dest_key(device);
         if self.state.last_dest.get(&key).map(String::as_str) != Some(dest) {
@@ -199,9 +254,20 @@ impl Model {
                 }
                 cx.emit(ModelEvent::Reply { req, outcome });
             }
+            DaemonToUi::Restore(r) => {
+                self.apply_cached(r.cached);
+                if let Some(v) = &r.view {
+                    if self.selected.is_none() {
+                        self.selected = v.selected.clone();
+                    }
+                    if self.clip.is_none() {
+                        self.clip = v.clip.clone().map(StorageClip::from_state);
+                    }
+                }
+                self.restore = r.view;
+            }
             // Focus xử lý ở `daemon_link` (cần cửa sổ); `Ok` / `Error` chỉ log ở đó.
-            // `OpenSettings` cũng ở `daemon_link` (mở cửa sổ cài đặt, gd1_12).
-            DaemonToUi::Focus | DaemonToUi::OpenSettings | DaemonToUi::Ok | DaemonToUi::Error { .. } => {}
+            DaemonToUi::Focus | DaemonToUi::Ok | DaemonToUi::Error { .. } => {}
         }
     }
 
@@ -254,6 +320,40 @@ mod tests {
             created: 0 as UnixMs,
             updated: 0 as UnixMs,
         }
+    }
+
+    /// Thư mục daemon giữ hộ vào bản làm việc của phiên, không đè bản đã đọc trong phiên; danh sách thư viện cũng vậy.
+    #[test]
+    fn cached_dirs_seed_storage_without_overwriting() {
+        use ferry_core::protocol::{DirListing, RemoteFile};
+        let file = |n: &str| RemoteFile { name: n.into(), size: 1, modified: 0, id: None };
+        let listing = |path: &str, f: &str| DirListing { path: path.into(), dirs: vec![], files: vec![file(f)] };
+        let p = DeviceId("p".into());
+        let mut m = Model::new(None);
+        m.storage.entry(p.clone()).or_default().insert(listing("DCIM", "fresh.mp4"));
+        m.apply_cached(CachedData {
+            device: Some(p.clone()),
+            dirs: vec![listing("DCIM", "old.mp4"), listing("Music", "a.mp3")],
+            library: Some(vec![]),
+        });
+        let fs = &m.storage[&p];
+        assert!(fs.is_loaded("Music"));
+        let names: Vec<String> = fs.items().into_iter().map(|i| i.name).collect();
+        assert!(names.contains(&"fresh.mp4".to_owned()) && !names.contains(&"old.mp4".to_owned()), "{names:?}");
+        assert_eq!(m.libraries.get(&p), Some(&vec![]));
+        // Không có máy ⇒ bỏ qua.
+        m.apply_cached(CachedData { device: None, dirs: vec![listing("X", "x")], library: None });
+        assert!(!m.storage[&p].is_loaded("X"));
+    }
+
+    #[test]
+    fn clip_state_round_trips() {
+        let clip = StorageClip {
+            device: DeviceId("p".into()),
+            entries: vec![ClipEntry { path: "DCIM/a.mp4".into(), folder: false }],
+            cut: true,
+        };
+        assert_eq!(StorageClip::from_state(clip.to_state()), clip);
     }
 
     #[test]

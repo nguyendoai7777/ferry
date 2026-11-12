@@ -9,28 +9,20 @@
 
 use ferry_core::i18n::I18n;
 
-use crate::tray_state::{PauseItem, TrayMode};
+use crate::tray_state::TrayMode;
 
 pub const OPEN_ID: &str = "open";
-pub const SETTINGS_ID: &str = "settings";
-pub const PAUSE_ID: &str = "pause";
 pub const QUIT_ID: &str = "quit";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MenuAction {
     OpenWindow,
-    /// "Cài đặt…" (gd1_12).
-    OpenSettings,
-    /// "Tạm dừng tất cả" / "Tiếp tục tất cả" — engine chọn theo trạng thái lúc bấm.
-    TogglePause,
     Quit,
 }
 
 pub fn menu_action(id: &str) -> Option<MenuAction> {
     match id {
         OPEN_ID => Some(MenuAction::OpenWindow),
-        SETTINGS_ID => Some(MenuAction::OpenSettings),
-        PAUSE_ID => Some(MenuAction::TogglePause),
         QUIT_ID => Some(MenuAction::Quit),
         _ => None,
     }
@@ -43,27 +35,14 @@ pub enum MenuEntry {
     Separator,
 }
 
-/// Menu khay: Mở cửa sổ · Cài đặt… · Tạm dừng / Tiếp tục tất cả · Thoát.
+/// Menu khay: Mở · Thoát (12/11/2026: bỏ "Cài đặt…" và "Tạm dừng / Tiếp tục tất cả" — cả hai có trong cửa sổ).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn menu_entries(i18n: &I18n, pause: PauseItem) -> Vec<MenuEntry> {
+pub fn menu_entries(i18n: &I18n) -> Vec<MenuEntry> {
     vec![
-        MenuEntry::Item { id: OPEN_ID, label: i18n.t("tray.open_window").to_owned(), enabled: true },
-        MenuEntry::Item { id: SETTINGS_ID, label: i18n.t("tray.settings").to_owned(), enabled: true },
-        MenuEntry::Item {
-            id: PAUSE_ID,
-            label: pause_label(i18n, pause).to_owned(),
-            enabled: pause != PauseItem::Disabled,
-        },
+        MenuEntry::Item { id: OPEN_ID, label: i18n.t("tray.open").to_owned(), enabled: true },
         MenuEntry::Separator,
         MenuEntry::Item { id: QUIT_ID, label: i18n.t("tray.quit").to_owned(), enabled: true },
     ]
-}
-
-pub fn pause_label(i18n: &I18n, pause: PauseItem) -> &str {
-    match pause {
-        PauseItem::Resume => i18n.t("tray.resume_all"),
-        PauseItem::Pause | PauseItem::Disabled => i18n.t("tray.pause_all"),
-    }
 }
 
 /// Icon chỉ đổi theo bậc này (đang gửi: theo phần tư) — khỏi đẩy ảnh mới cho OS mỗi % tiến độ.
@@ -196,13 +175,11 @@ mod native {
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
     use super::*;
-    use crate::tray_state::{PauseItem, TrayMode, TrayStatus};
+    use crate::tray_state::{TrayMode, TrayStatus};
 
     pub struct Tray {
         icon: TrayIcon,
         open: MenuItem,
-        settings: MenuItem,
-        pause: MenuItem,
         quit: MenuItem,
         key: u8,
         status: Option<TrayStatus>,
@@ -224,12 +201,9 @@ mod native {
     impl Tray {
         pub fn new(i18n: &I18n) -> Result<Tray, String> {
             let menu = Menu::new();
-            let open = MenuItem::with_id(OPEN_ID, i18n.t("tray.open_window"), true, None);
-            let settings = MenuItem::with_id(SETTINGS_ID, i18n.t("tray.settings"), true, None);
-            let pause = MenuItem::with_id(PAUSE_ID, i18n.t("tray.pause_all"), false, None);
+            let open = MenuItem::with_id(OPEN_ID, i18n.t("tray.open"), true, None);
             let quit = MenuItem::with_id(QUIT_ID, i18n.t("tray.quit"), true, None);
-            menu.append_items(&[&open, &settings, &pause, &PredefinedMenuItem::separator(), &quit])
-                .map_err(|e| format!("menu: {e}"))?;
+            menu.append_items(&[&open, &PredefinedMenuItem::separator(), &quit]).map_err(|e| format!("menu: {e}"))?;
             let builder = TrayIconBuilder::new();
             #[cfg(target_os = "macos")]
             let builder = builder.with_icon_templated(icon(TrayMode::Idle)).with_menu_on_left_click(true);
@@ -241,7 +215,7 @@ mod native {
                 .with_menu(Box::new(menu))
                 .build()
                 .map_err(|e| e.to_string())?;
-            Ok(Tray { icon, open, settings, pause, quit, key: 0, status: None })
+            Ok(Tray { icon, open, quit, key: 0, status: None })
         }
 
         pub fn apply(&mut self, status: &TrayStatus, i18n: &I18n) {
@@ -263,12 +237,9 @@ mod native {
                 log::warn!("tray: set tooltip: {e}");
             }
             if self.status.as_ref().is_none_or(|s| s.language != status.language) {
-                self.open.set_text(i18n.t("tray.open_window"));
-                self.settings.set_text(i18n.t("tray.settings"));
+                self.open.set_text(i18n.t("tray.open"));
                 self.quit.set_text(i18n.t("tray.quit"));
             }
-            self.pause.set_text(pause_label(i18n, status.pause));
-            self.pause.set_enabled(status.pause != PauseItem::Disabled);
             self.status = Some(status.clone());
         }
     }
@@ -282,38 +253,28 @@ mod tests {
     #[test]
     fn menu_ids_round_trip() {
         assert_eq!(menu_action(OPEN_ID), Some(MenuAction::OpenWindow));
-        assert_eq!(menu_action(SETTINGS_ID), Some(MenuAction::OpenSettings));
-        assert_eq!(menu_action(PAUSE_ID), Some(MenuAction::TogglePause));
         assert_eq!(menu_action(QUIT_ID), Some(MenuAction::Quit));
-        assert_eq!(menu_action("other"), None);
+        assert_eq!(menu_action("settings"), None);
+        assert_eq!(menu_action("pause"), None);
     }
 
-    /// gd1_12: đổi ngôn ngữ trong cài đặt ⇒ menu dựng lại đúng chữ.
+    /// Menu chỉ còn Mở · Thoát, đổi ngôn ngữ trong cài đặt (gd1_12) ⇒ dựng lại đúng chữ.
     #[test]
-    fn menu_follows_the_language() {
-        let first = |lang| match &menu_entries(&I18n::new(lang), PauseItem::Disabled)[1] {
-            MenuEntry::Item { id, label, .. } => (*id, label.clone()),
-            MenuEntry::Separator => unreachable!(),
+    fn menu_is_open_and_quit_in_the_language() {
+        let labels = |lang| {
+            menu_entries(&I18n::new(lang))
+                .into_iter()
+                .map(|e| match e {
+                    MenuEntry::Item { id, label, enabled } => {
+                        assert!(enabled && menu_action(id).is_some(), "{id}");
+                        label
+                    }
+                    MenuEntry::Separator => "-".to_owned(),
+                })
+                .collect::<Vec<_>>()
         };
-        assert_eq!(first(Language::En), (SETTINGS_ID, "Settings…".to_owned()));
-        assert_eq!(first(Language::Vi), (SETTINGS_ID, "Cài đặt…".to_owned()));
-    }
-
-    #[test]
-    fn menu_follows_the_pause_state() {
-        let i18n = I18n::new(Language::En);
-        let label = |p| match &menu_entries(&i18n, p)[2] {
-            MenuEntry::Item { label, enabled, .. } => (label.clone(), *enabled),
-            MenuEntry::Separator => unreachable!(),
-        };
-        assert_eq!(label(PauseItem::Pause), ("Pause all".to_owned(), true));
-        assert_eq!(label(PauseItem::Resume), ("Resume all".to_owned(), true));
-        assert_eq!(label(PauseItem::Disabled), ("Pause all".to_owned(), false));
-        for e in menu_entries(&i18n, PauseItem::Pause) {
-            if let MenuEntry::Item { id, .. } = e {
-                assert!(menu_action(id).is_some(), "{id}");
-            }
-        }
+        assert_eq!(labels(Language::En), ["Open", "-", "Quit"]);
+        assert_eq!(labels(Language::Vi), ["Mở", "-", "Thoát"]);
     }
 
     #[test]

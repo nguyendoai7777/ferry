@@ -17,7 +17,7 @@ use zbus::zvariant::{OwnedObjectPath, Structure, Value};
 use super::Waker;
 use crate::daemon::Event;
 use crate::tray::{self, LINUX, MenuEntry};
-use crate::tray_state::{PauseItem, TrayMode, TrayStatus};
+use crate::tray_state::{TrayMode, TrayStatus};
 
 const ITEM_PATH: &str = "/StatusNotifierItem";
 const MENU_PATH: &str = "/MenuBar";
@@ -63,7 +63,7 @@ impl Tray {
             title: i18n.t("app.name").to_owned(),
             tooltip: i18n.t("app.name").to_owned(),
             mode: TrayMode::Idle,
-            menu: tray::menu_entries(i18n, PauseItem::Disabled),
+            menu: tray::menu_entries(i18n),
             revision: 1,
         }));
         let (tx, rx) = unbounded_channel();
@@ -86,7 +86,7 @@ impl Tray {
                 c.tooltip.clone_from(&status.tooltip);
                 r.tooltip = true;
             }
-            let menu = tray::menu_entries(i18n, status.pause);
+            let menu = tray::menu_entries(i18n);
             if menu != c.menu {
                 c.menu = menu;
                 c.revision += 1;
@@ -407,15 +407,12 @@ mod tests {
     use ferry_core::i18n::Language;
     use zbus::zvariant::Type;
 
-    fn content(pause: PauseItem) -> Content {
+    /// Menu thật (Mở · Thoát) + một mục tắt đặt thêm để thử cờ `enabled` của dbusmenu.
+    fn content() -> Content {
         let i18n = I18n::new(Language::En);
-        Content {
-            title: "Ferry".into(),
-            tooltip: String::new(),
-            mode: TrayMode::Idle,
-            menu: tray::menu_entries(&i18n, pause),
-            revision: 1,
-        }
+        let mut menu = tray::menu_entries(&i18n);
+        menu.push(MenuEntry::Item { id: "off", label: "Off".into(), enabled: false });
+        Content { title: "Ferry".into(), tooltip: String::new(), mode: TrayMode::Idle, menu, revision: 1 }
     }
 
     #[test]
@@ -425,31 +422,30 @@ mod tests {
 
     #[test]
     fn only_a_click_on_an_enabled_item_counts() {
-        let menu = content(PauseItem::Disabled).menu;
+        let menu = content().menu;
         let pos = |want: &str| {
             menu.iter().position(|e| matches!(e, MenuEntry::Item { id, .. } if *id == want)).unwrap() as i32 + 1
         };
         let sep = menu.iter().position(|e| matches!(e, MenuEntry::Separator)).unwrap() as i32 + 1;
         assert_eq!(clicked_id(&menu, pos("quit"), "clicked"), Some("quit"));
         assert_eq!(clicked_id(&menu, pos("quit"), "hovered"), None);
-        assert_eq!(clicked_id(&menu, pos("pause"), "clicked"), None, "disabled");
+        assert_eq!(clicked_id(&menu, pos("open"), "clicked"), Some("open"));
+        assert_eq!(clicked_id(&menu, pos("off"), "clicked"), None, "disabled");
         assert_eq!(clicked_id(&menu, sep, "clicked"), None);
         assert_eq!(clicked_id(&menu, 0, "clicked"), None);
         assert_eq!(clicked_id(&menu, -1, "clicked"), None);
         assert_eq!(clicked_id(&menu, 9999, "clicked"), None);
-        let menu = content(PauseItem::Pause).menu;
-        assert_eq!(clicked_id(&menu, pos("pause"), "clicked"), Some("pause"));
     }
 
     #[test]
     fn layout_has_the_dbusmenu_signature_and_disabled_flag() {
         assert_eq!(Node::SIGNATURE.to_string(), "(ia{sv}av)");
-        let c = content(PauseItem::Disabled);
+        let c = content();
         let root = layout(&c, 0);
         assert_eq!(root.2.len(), c.menu.len());
         assert_eq!(root.2[0].value_signature().to_string(), "(ia{sv}av)");
-        let pause = layout(&c, 3); // Mở · Cài đặt… · Tạm dừng
-        assert_eq!(pause.1.get("enabled"), Some(&Value::from(false)));
+        let off = layout(&c, 4); // Mở · — · Thoát · Off
+        assert_eq!(off.1.get("enabled"), Some(&Value::from(false)));
         assert!(!layout(&c, 1).1.contains_key("enabled"));
     }
 }

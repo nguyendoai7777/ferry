@@ -24,10 +24,10 @@ use ferry_core::i18n::I18n;
 use ferry_core::ipc::{
     Action, BatchView, CommandError, DOWNLOADS_IN_SNAPSHOT, DaemonToUi, DeviceSetting, DeviceView,
     FINISHED_IN_SNAPSHOT, ItemProgress, LibraryOp, MAX_PUSH_PER_SEC, Outcome, PhoneOp, ProgressDelta,
-    QUEUED_IN_SNAPSHOT, QueueOp, SCAN_MIN_INTERVAL_SECS, SettingsOp, SettingsView, Snapshot,
+    QUEUED_IN_SNAPSHOT, QueueOp, Restore, SCAN_MIN_INTERVAL_SECS, SettingsOp, SettingsView, Snapshot,
 };
 use ferry_core::pairing::{self, Identity, PairError, Tokens};
-use ferry_core::protocol::{Info, Secret, feature};
+use ferry_core::protocol::{DirListing, Info, LibraryItem, Secret, feature};
 use ferry_core::queue::state::PauseReason;
 use ferry_core::queue::store::{DownloadItem, NewDownload, UploadItem};
 use ferry_core::queue::{BatchId, DownloadState, ItemId, QueueStore, UploadState, now_ms, plan_batch};
@@ -36,6 +36,7 @@ use ferry_core::transfer::{
     Command, ItemAction, Link, LinkSender, RunnerConfig, RunnerHandle, SharedStore, TransferEvent, UploadRunner,
     link_channel,
 };
+use ferry_core::view::{CachedData, DirCache, ViewState};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -99,8 +100,8 @@ pub enum Input {
     Unsubscribe {
         conn: u64,
     },
-    /// Menu khay "Tạm dừng tất cả" / "Tiếp tục tất cả" (theo trạng thái hiện tại).
-    TogglePauseAll,
+    /// `UiToDaemon::SaveView`: giữ trong RAM, trả lại cho UI nối sau (`DaemonToUi::Restore`).
+    SaveView(Box<ViewState>),
     /// Dừng runner rồi báo `done`.
     Shutdown {
         done: std::sync::mpsc::Sender<()>,
@@ -230,6 +231,17 @@ enum Internal {
     },
     /// Cắt / Sao chép sang máy tính (W-10, `engine/export.rs`).
     Export(export::ExportMsg),
+    /// `GET /dirs` xong (`LibraryOp::Dirs`) ⇒ bộ đệm; `None` = thư mục không còn (`404`).
+    Listed {
+        device: DeviceId,
+        path: String,
+        listing: Option<DirListing>,
+    },
+    /// `GET /list` xong ⇒ bộ đệm.
+    LibraryRead {
+        device: DeviceId,
+        items: Vec<LibraryItem>,
+    },
 }
 
 /// Thay đổi cài đặt đã soát xong ngoài vòng chính.
@@ -301,6 +313,10 @@ struct Engine {
     export_seq: u64,
     export_base: PathBuf,
     clipboard: crate::clipboard::Clipboard,
+    /// Khôi phục cửa sổ (`ferry_core::view`): trạng thái UI gửi lần cuối + thư mục / thư viện đã đọc từ điện thoại. Chỉ
+    /// trong RAM; daemon thoát thì mất.
+    view: Option<ViewState>,
+    dir_cache: DirCache,
 }
 
 struct Subscriber {
@@ -366,6 +382,8 @@ impl Engine {
             export_seq: 0,
             export_base: cfg.export_dir,
             clipboard: cfg.clipboard,
+            view: None,
+            dir_cache: DirCache::default(),
         };
         // Phiên Cắt / Sao chép của lần chạy trước: còn trong hạn thì giữ (Windows / macOS clipboard sống qua tiến trình).
         ferry_core::export::clean_stale(&engine.export_base, ferry_core::export::KEEP_FOR);
@@ -438,6 +456,12 @@ impl Engine {
         match input {
             Input::Request { outbox, req, op } => self.on_request(outbox, req, op),
             Input::Subscribe { conn, outbox } => {
+                // Trạng thái cửa sổ trước `Snapshot` đầu: UI dựng đúng trang ngay khung đầu (`ferry_core::view`).
+                let cached = match self.view.as_ref().and_then(|v| v.browser.as_ref()) {
+                    Some(b) => self.dir_cache.restore(b),
+                    None => CachedData::default(),
+                };
+                outbox.push(DaemonToUi::Restore(Box::new(Restore { view: self.view.clone(), cached })));
                 let snapshot = self.snapshot();
                 let resync = !outbox.push(DaemonToUi::Snapshot(snapshot));
                 self.subscribers.insert(conn, Subscriber { outbox, resync });
@@ -445,11 +469,10 @@ impl Engine {
             Input::Unsubscribe { conn } => {
                 self.subscribers.remove(&conn);
             }
-            Input::TogglePauseAll => {
-                let action = if self.summary.can_pause_all() { Action::Pause } else { Action::Resume };
-                if let Err(e) = self.all(action) {
-                    log::debug!("engine: pause all: {e:?}");
-                }
+            Input::SaveView(mut view) => {
+                view.clamp();
+                let view = *view;
+                self.view = Some(view);
             }
             Input::Shutdown { .. } => unreachable!("handled in run"),
         }
@@ -538,6 +561,7 @@ impl Engine {
                 // sống lại ở lần chạy sau (gặp 11/11/2026). Bỏ khỏi sổ rồi để `save_config` tính và ghi.
                 let ev = self.devices.forget(&device);
                 self.on_device_events(ev);
+                self.forget_view(&device);
                 self.save_config();
                 self.told_repair.remove(&device);
                 self.told_no_space.remove(&device);
@@ -620,7 +644,11 @@ impl Engine {
                 self.refresh_info(&device, &client);
                 let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
-                    let r = client.list().await.map(|items| Outcome::Library { items });
+                    let r = client.list().await;
+                    if let Ok(items) = &r {
+                        let _ = tx.send(Internal::LibraryRead { device: device.clone(), items: items.clone() });
+                    }
+                    let r = r.map(|items| Outcome::Library { items });
                     let r = r.map_err(|e| read_error(&tx, &device, &client, "list", e));
                     reply_to(&outbox, req, r);
                 });
@@ -634,7 +662,18 @@ impl Engine {
                 self.refresh_info(&device, &client);
                 let (outbox, tx) = (outbox.clone(), self.internal_tx.clone());
                 tokio::spawn(async move {
-                    let r = client.dirs(&path).await.map(|listing| Outcome::Dirs { listing });
+                    let r = client.dirs(&path).await;
+                    match &r {
+                        Ok(l) => {
+                            let _ =
+                                tx.send(Internal::Listed { device: device.clone(), path, listing: Some(l.clone()) });
+                        }
+                        Err(ClientError::NotFound) => {
+                            let _ = tx.send(Internal::Listed { device: device.clone(), path, listing: None });
+                        }
+                        Err(_) => {}
+                    }
+                    let r = r.map(|listing| Outcome::Dirs { listing });
                     let r = r.map_err(|e| match e {
                         ClientError::NotFound | ClientError::BadRequest => CommandError::InvalidInput,
                         // Công tắc tắt / mất quyền (§6.11): đọc lại `info` ngay để UI về chế độ dựng từ `list`.
@@ -648,6 +687,12 @@ impl Engine {
                 });
                 None
             }
+            LibraryOp::Cached { device, path } => Some(
+                self.dir_cache
+                    .dir(&device, &path)
+                    .map(|listing| Outcome::Dirs { listing })
+                    .ok_or(CommandError::Missing),
+            ),
             LibraryOp::MakeDir { device, path } => {
                 self.edit_op(outbox, req, &device, feature::EDIT, move |c| async move {
                     c.make_dir(&path).await.map(|path| Outcome::Edited { path })
@@ -1243,6 +1288,21 @@ impl Engine {
                 reply_to(&outbox, req, Ok(Outcome::Done));
             }
             Internal::Export(msg) => self.on_export(msg),
+            Internal::Listed { device, path, listing } => {
+                // Máy vừa bị Quên trong lúc đọc ⇒ không nhận lại.
+                if self.devices.get(&device).is_none() {
+                    return;
+                }
+                match listing {
+                    Some(l) => self.dir_cache.put_dir(&device, l),
+                    None => self.dir_cache.remove_dir(&device, &path),
+                }
+            }
+            Internal::LibraryRead { device, items } => {
+                if self.devices.get(&device).is_some() {
+                    self.dir_cache.put_library(&device, items);
+                }
+            }
         }
     }
 
@@ -1499,6 +1559,7 @@ impl Engine {
         // Bản ghi config của `old` do `save_config` (người gọi) bỏ và ghi tệp — xem `PhoneOp::Forget`.
         let ev = self.devices.forget(old);
         self.on_device_events(ev);
+        self.forget_view(old);
         if let Some(alias) = alias {
             self.devices.set_alias(new, Some(alias));
         }
@@ -1521,6 +1582,14 @@ impl Engine {
             }
             let _ = tx.send(Internal::Moved { device: new });
         });
+    }
+
+    /// Máy bị Quên / thay mã ⇒ bỏ dữ liệu của nó ở bộ đệm thư mục và trạng thái cửa sổ đang giữ.
+    fn forget_view(&mut self, device: &DeviceId) {
+        self.dir_cache.forget_device(device);
+        if let Some(v) = &mut self.view {
+            v.forget_device(device);
+        }
     }
 
     fn save_config(&mut self) {
@@ -1968,9 +2037,11 @@ mod tests {
         let (outbox, rx) = Outbox::new();
         let t0 = Instant::now();
         rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
-        let (rx, first) = collect(rx, |_| true).await;
-        assert!(matches!(first[0].1, DaemonToUi::Snapshot(_)), "first message is a full snapshot");
-        assert!(first[0].0 - t0 < Duration::from_millis(500), "snapshot arrives right away");
+        let (rx, first) = collect(rx, |m| matches!(m, DaemonToUi::Snapshot(_))).await;
+        // Trạng thái cửa sổ (chưa có) rồi ảnh chụp đầy đủ.
+        assert!(matches!(&first[0].1, DaemonToUi::Restore(r) if r.view.is_none()), "restore comes first");
+        assert!(matches!(first[1].1, DaemonToUi::Snapshot(_)), "then a full snapshot");
+        assert!(first[1].0 - t0 < Duration::from_millis(500), "snapshot arrives right away");
         let (rx, _) = collect(rx, is_online).await;
 
         add_files(&rig.engine, &outbox, write_videos(tmp.path(), 1, 2 * 1024 * 1024));
@@ -2095,6 +2166,87 @@ mod tests {
         let op = LibraryOp::Dirs { device: device(), path: String::new() };
         rig.engine.send(Input::Request { outbox: outbox.clone(), req: 4, op: Op::Library(op) });
         let (_rx, _) = collect(rx, move |m| has_browse(m, false)).await;
+        rig.engine.shutdown();
+    }
+
+    /// Khôi phục cửa sổ: `SaveView` của cửa sổ trước + thư mục đã đọc quay lại trong `Restore` của lần nối sau (trước
+    /// `Snapshot`); `Cached` đọc bộ đệm không gọi mạng; Quên máy ⇒ trang thư viện của nó lùi về Danh sách thiết bị, bộ đệm
+    /// của nó mất.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn saved_view_and_cached_dirs_come_back_on_reconnect() {
+        use ferry_core::view::{BrowserState, PageState};
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        phone.add_file("a.mp4", Some("Download"), vec![1; 4]);
+        phone.set_features(&["dirs", "browse"]);
+        let rig = start(tmp.path(), &phone, None).await;
+        let dev = device();
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, _) = collect(rx, is_online).await;
+
+        let reply = |req: u64| move |m: &DaemonToUi| matches!(m, DaemonToUi::Reply { req: r, .. } if *r == req);
+        let cached = |req| Input::Request {
+            outbox: outbox.clone(),
+            req,
+            op: Op::Library(LibraryOp::Cached { device: device(), path: "Download".into() }),
+        };
+        rig.engine.send(cached(1));
+        let (rx, got) = collect(rx, reply(1)).await;
+        assert!(matches!(
+            &got.last().unwrap().1,
+            DaemonToUi::Reply { outcome: Outcome::Failed { error: CommandError::Missing }, .. }
+        ));
+        let op = LibraryOp::Dirs { device: dev.clone(), path: "Download".into() };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 2, op: Op::Library(op) });
+        let (rx, got) = collect(rx, reply(2)).await;
+        let DaemonToUi::Reply { outcome: Outcome::Dirs { listing }, .. } = got.last().unwrap().1.clone() else {
+            panic!("dirs failed: {got:?}")
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        rig.engine.send(cached(3));
+        let (rx, got) = collect(rx, reply(3)).await;
+        assert_eq!(
+            got.last().unwrap().1,
+            DaemonToUi::Reply { req: 3, outcome: Outcome::Dirs { listing: listing.clone() } }
+        );
+
+        let view = ViewState {
+            page: PageState::Library { device: dev.clone() },
+            history: vec![PageState::Main, PageState::Devices],
+            browser: Some(BrowserState {
+                device: dev.clone(),
+                at: Some("Download".into()),
+                selected: vec!["a.mp4".into()],
+                table_top: 3,
+                ..BrowserState::default()
+            }),
+            ..ViewState::default()
+        };
+        rig.engine.send(Input::SaveView(Box::new(view.clone())));
+        rig.engine.send(Input::Unsubscribe { conn: 1 });
+        drop(rx);
+
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 2, outbox: outbox.clone() });
+        let (rx, got) = collect(rx, |m| matches!(m, DaemonToUi::Snapshot(_))).await;
+        let DaemonToUi::Restore(r) = &got[0].1 else { panic!("first is not restore: {got:?}") };
+        assert_eq!(r.view.as_ref(), Some(&view));
+        assert_eq!(r.cached.device.as_ref(), Some(&dev));
+        assert!(r.cached.dirs.contains(&listing), "{:?}", r.cached.dirs);
+
+        let op = PhoneOp::Forget { device: dev.clone() };
+        rig.engine.send(Input::Request { outbox: outbox.clone(), req: 4, op: Op::Phone(op) });
+        let (_rx, _) = collect(rx, reply(4)).await;
+        rig.engine.send(Input::Unsubscribe { conn: 2 });
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 3, outbox: outbox.clone() });
+        let (_rx, got) = collect(rx, |m| matches!(m, DaemonToUi::Snapshot(_))).await;
+        let DaemonToUi::Restore(r) = &got[0].1 else { panic!("first is not restore: {got:?}") };
+        let v = r.view.as_ref().unwrap();
+        assert_eq!(v.page, PageState::Devices);
+        assert_eq!(v.history, [PageState::Main]);
+        assert!(v.browser.is_none() && r.cached.dirs.is_empty());
         rig.engine.shutdown();
     }
 

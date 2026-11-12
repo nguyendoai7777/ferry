@@ -17,12 +17,10 @@ pub struct UiProcess {
     running: Option<u32>,
     /// Kết nối IPC của UI đang mở: `(id kết nối, đầu ghi)`.
     conn: Option<(u64, Outbox)>,
-    /// "Cài đặt…" bấm lúc UI đang bật dở ⇒ gửi `OpenSettings` khi nó nối.
-    settings_pending: bool,
 }
 
 impl UiProcess {
-    /// "Mở cửa sổ": UI đang nối ⇒ bảo nó lên trước; đang bật dở ⇒ chờ; chưa có ⇒ bật.
+    /// "Mở" (khay): UI đang nối ⇒ bảo nó lên trước; đang bật dở ⇒ chờ; chưa có ⇒ bật.
     pub fn open(&mut self, waker: &Waker) {
         if let Some((id, outbox)) = &self.conn {
             if outbox.push(DaemonToUi::Focus) {
@@ -35,28 +33,11 @@ impl UiProcess {
             log::info!("ui: pid {pid} is still starting");
             return;
         }
-        self.start(waker, false);
+        self.start(waker);
     }
 
-    /// Menu khay "Cài đặt…" (gd1_12): UI đang nối ⇒ bảo nó mở cửa sổ cài đặt; chưa có ⇒ bật `ferry-ui --settings`.
-    pub fn open_settings(&mut self, waker: &Waker) {
-        if let Some((id, outbox)) = &self.conn {
-            if outbox.push(DaemonToUi::OpenSettings) {
-                return;
-            }
-            log::warn!("ui: #{id} open settings failed: connection closed");
-            self.conn = None;
-        }
-        if let Some(pid) = self.running {
-            log::info!("ui: pid {pid} is still starting, settings open once it connects");
-            self.settings_pending = true;
-            return;
-        }
-        self.start(waker, true);
-    }
-
-    fn start(&mut self, waker: &Waker, settings: bool) {
-        match spawn(waker.clone(), settings) {
+    fn start(&mut self, waker: &Waker) {
+        match spawn(waker.clone()) {
             Ok(pid) => {
                 log::info!("ui: started pid {pid}");
                 self.running = Some(pid);
@@ -66,9 +47,6 @@ impl UiProcess {
     }
 
     pub fn connected(&mut self, id: u64, outbox: Outbox) {
-        if std::mem::take(&mut self.settings_pending) {
-            outbox.push(DaemonToUi::OpenSettings);
-        }
         self.conn = Some((id, outbox));
     }
 
@@ -81,7 +59,6 @@ impl UiProcess {
     pub fn exited(&mut self, pid: u32) {
         if self.running == Some(pid) {
             self.running = None;
-            self.settings_pending = false;
         }
     }
 }
@@ -91,16 +68,9 @@ fn ui_exe() -> io::Result<PathBuf> {
     Ok(std::env::current_exe()?.with_file_name(format!("ferry-ui{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// Đối số dòng lệnh của `ferry-ui`: mở thẳng cửa sổ cài đặt thay vì cửa sổ chính.
-pub const SETTINGS_ARG: &str = "--settings";
-
-/// Bật `ferry-ui` (`settings` ⇒ kèm [`SETTINGS_ARG`]); một luồng chờ nó thoát (gặt tiến trình, không để zombie) rồi báo [`Event::UiExited`].
-fn spawn(waker: Waker, settings: bool) -> io::Result<u32> {
-    let mut command = Command::new(ui_exe()?);
-    if settings {
-        command.arg(SETTINGS_ARG);
-    }
-    let mut child = command.spawn()?;
+/// Bật `ferry-ui`; một luồng chờ nó thoát (gặt tiến trình, không để zombie) rồi báo [`Event::UiExited`].
+fn spawn(waker: Waker) -> io::Result<u32> {
+    let mut child = Command::new(ui_exe()?).spawn()?;
     let pid = child.id();
     std::thread::Builder::new().name("ui-wait".into()).spawn(move || {
         match child.wait() {

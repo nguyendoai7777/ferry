@@ -3,6 +3,10 @@
 //!
 //! Một cửa sổ, vỏ như Groovex (không viền / thanh tiêu đề OS, cột trái điều hướng, thanh trên với ba nút cửa sổ): trang Gửi,
 //! Thư viện điện thoại, Cài đặt (`views::main_window`).
+//!
+//! Mở lại như lúc đóng (12/11/2026): `daemon_link::connect` chờ `Restore` + `Snapshot` đầu, `Model` áp chúng, cửa sổ mở
+//! đúng khung lần trước (daemon giữ, hoặc `ui-state.json` khi daemon mới chạy) và `MainWindow::restore` dựng trang trước
+//! khung đầu.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -20,9 +24,10 @@ mod views;
 use std::rc::Rc;
 
 use ferry_core::i18n::I18n;
+use ferry_core::view::WindowState;
 use ferry_core::{VERSION, config, logging, paths};
 use materiant::gpui_kit::{
-    self, ActivationPolicy, App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, px, size,
+    self, ActivationPolicy, App, AppContext, Bounds, WindowBounds, WindowDecorations, WindowOptions, point, px, size,
 };
 use model::Model;
 use platform::window_controls;
@@ -47,10 +52,10 @@ fn main() {
         .unwrap_or_default();
     let i18n = Rc::new(I18n::new(config.language.resolve()));
     let (theme, theme_preset) = (config.theme, config.theme_preset().to_owned());
-    // `ferry-ui --settings`: daemon bật từ menu khay "Cài đặt…" (gd1_12) ⇒ mở cửa sổ chính ở trang Cài đặt.
+    // `ferry-ui --settings`: mục "Cài đặt" của `ferry.desktop` (chuột phải icon dock, Linux) ⇒ mở thẳng trang Cài đặt.
     let open_settings = std::env::args().skip(1).any(|a| a == "--settings");
-    let link = daemon_link::connect();
-    let sender = link.as_ref().map(daemon_link::sender);
+    let mut link = daemon_link::connect();
+    let sender = link.as_ref().map(daemon_link::Link::sender);
 
     gpui_kit::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         materiant::init(cx);
@@ -68,9 +73,14 @@ fn main() {
         }
 
         let model = cx.new(|_| Model::new(sender));
-        let bounds = Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx);
+        // `Restore` + `Snapshot` đầu (đã nhận trước khi mở) ⇒ khung đầu vẽ đúng trang, thư mục, hàng đợi.
+        for msg in link.as_mut().map(|l| std::mem::take(&mut l.initial)).unwrap_or_default() {
+            model.update(cx, |m, cx| m.handle(msg, cx));
+        }
+        let restore = model.update(cx, |m, _| m.restore.take());
+        let saved_window = restore.as_ref().and_then(|v| v.window).or(model.read(cx).state.window);
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(initial_bounds(saved_window, cx)),
             // Như Groovex: không thanh tiêu đề OS, thanh trên + ba nút cửa sổ tự vẽ (`views::app_bar`). macOS: thanh tiêu
             // đề trong suốt của hệ thống, chỉ còn đèn giao thông giữa thanh trên (`window_controls::titlebar`). Tên cửa sổ
             // (taskbar, Alt+Tab) đặt bằng `set_window_title` ở lần vẽ đầu.
@@ -95,10 +105,32 @@ fn main() {
         let _ = handle.update(cx, |_, window, cx| {
             // Windows: kéo cửa sổ không vẽ lại cả cây mỗi nhịp (`platform::move_loop`); nền khác không làm gì.
             platform::move_loop::install(window);
+            if let Some(view) = restore {
+                main.update(cx, |main, cx| main.restore(view, window, cx));
+            }
             if open_settings {
                 main.update(cx, |main, cx| main.open_settings(window, cx));
             }
+            // Mọi đường đóng cửa sổ: gửi trạng thái cho daemon + ghi khung cửa sổ trước khi tiến trình thoát.
+            let weak = main.downgrade();
+            window_controls::before_close(
+                window,
+                cx,
+                Rc::new(move |window, cx| {
+                    let _ = weak.update(cx, |main, cx| main.save_view(window, true, cx));
+                }),
+            );
         });
+        // Thoát cả app khi cửa sổ còn mở (macOS Cmd+Q).
+        let weak = main.downgrade();
+        cx.on_app_quit(move |cx| {
+            let weak = weak.clone();
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = weak.update(cx, |main, cx| main.save_view(window, true, cx));
+            });
+            async {}
+        })
+        .detach();
         if cfg!(target_os = "macos") {
             app_menu::register(handle, &main, cx);
         }
@@ -111,8 +143,25 @@ fn main() {
         .detach();
         cx.activate(true);
         if let Some(link) = link {
-            daemon_link::listen(link, model, handle, main.downgrade(), cx);
+            daemon_link::listen(link, model, handle, cx);
         }
     });
     log::info!("ferry-ui stopped");
+}
+
+/// Khung mở đầu: khung lần trước (kẹp cỡ tối thiểu; nằm ngoài mọi màn — đã rút màn phụ — thì giữ cỡ, đặt giữa màn chính),
+/// hoặc cỡ mặc định giữa màn.
+fn initial_bounds(saved: Option<WindowState>, cx: &App) -> WindowBounds {
+    let Some(w) = saved.filter(WindowState::is_sane) else {
+        return WindowBounds::Windowed(Bounds::centered(None, size(px(WINDOW_SIZE.0), px(WINDOW_SIZE.1)), cx));
+    };
+    let sz = size(px(w.width.max(WINDOW_MIN_SIZE.0)), px(w.height.max(WINDOW_MIN_SIZE.1)));
+    let b = Bounds::new(point(px(w.x), px(w.y)), sz);
+    // Thấy được ít nhất một góc đủ lớn để kéo về.
+    let visible = cx.displays().iter().any(|d| {
+        let i = d.bounds().intersect(&b);
+        f32::from(i.size.width) >= 120. && f32::from(i.size.height) >= 80.
+    });
+    let b = if visible { b } else { Bounds::centered(None, sz, cx) };
+    if w.maximized { WindowBounds::Maximized(b) } else { WindowBounds::Windowed(b) }
 }

@@ -8,6 +8,7 @@ use std::rc::Rc;
 use ferry_core::device::DeviceId;
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{CommandError, Outcome, QueueOp};
+use ferry_core::view::BrowserState;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
     AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement, KeyDownEvent,
@@ -15,7 +16,7 @@ use materiant::gpui_kit::{
 };
 use materiant::toast::{Toast, ToastKind, ToastSpec};
 
-use super::phone_browser::{BrowserMode, PhoneBrowser};
+use super::phone_browser::{BrowserMode, BrowserStart, PhoneBrowser};
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
 
@@ -41,18 +42,24 @@ impl PhoneLibrary {
         model: Entity<Model>,
         i18n: Rc<I18n>,
         device: DeviceId,
+        restore: Option<BrowserState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let start = restore.map_or(BrowserStart::Dir(String::new()), BrowserStart::Restore);
         let browser = {
             let (m, i, d) = (model.clone(), i18n.clone(), device.clone());
-            cx.new(|cx| PhoneBrowser::new(m, i, d, BrowserMode::Library, String::new(), window, cx))
+            cx.new(|cx| PhoneBrowser::new(m, i, d, BrowserMode::Library, start, window, cx))
         };
-        let subs = vec![
-            cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx)),
-        ];
+        let subs =
+            vec![cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx))];
         let focus = cx.focus_handle();
         PhoneLibrary { model, i18n, device, browser, sending: None, focus, _subs: subs }
+    }
+
+    /// Trình duyệt bên trong (đọc `state()` khi lưu trạng thái cửa sổ).
+    pub fn browser(&self) -> &Entity<PhoneBrowser> {
+        &self.browser
     }
 
     fn toast(&self, window: &mut Window, cx: &mut Context<Self>, kind: ToastKind, text: String) {

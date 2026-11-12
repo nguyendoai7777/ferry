@@ -18,8 +18,8 @@ fn linux_desktop_entry_matches_window_app_id_and_binaries() {
     for line in ["StartupWMClass=ferry\n", "Exec=ferry\n", "Icon=ferry\n", "Exec=ferry-ui --settings\n"] {
         assert!(entry.contains(line), "ferry.desktop thiếu {line:?}");
     }
-    // Cờ của ferry-ui phải còn (`ui_process::SETTINGS_ARG`).
-    assert!(read("crates/daemon/src/ui_process.rs").contains(r#""--settings""#));
+    // Mục "Cài đặt" của ferry.desktop (chuột phải icon dock) là người gọi duy nhất của cờ này ⇒ ferry-ui phải còn nhận nó.
+    assert!(ui_main.contains(r#"a == "--settings""#));
     let deb = read("packaging/linux/build-deb.sh");
     assert!(deb.contains("bins=(ferry ferry-ui)"));
     assert!(deb.contains("usr/share/applications/ferry.desktop"));

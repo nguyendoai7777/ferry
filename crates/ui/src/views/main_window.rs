@@ -4,20 +4,27 @@
 //! thoại" (4.4) là trang con của trang Gửi / Danh sách thiết bị. Danh sách thiết bị và Cài đặt (4.5) là mục của cột trái;
 //! thư viện của một điện thoại (4.3) là trang con của Danh sách thiết bị ("Duyệt tệp"). Giữ trạng thái người dùng
 //! chọn (khay, lô đang mở); trạng thái daemon nằm ở [`Model`].
+//!
+//! Mở lại như cũ (12/11/2026, `ferry_core::view`): [`MainWindow::restore`] dựng trang, lịch sử Lùi, khay, trình duyệt từ
+//! `ViewState` daemon giữ; mỗi lần vẽ / cuộn / dời cửa sổ hẹn một lần gửi lại sau [`SAVE_DELAY`] (chỉ gửi khi khác bản
+//! trước), và gửi ngay trước khi cửa sổ đóng (`window_controls::before_close`). Không giữ hộp thoại.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use ferry_core::device::DeviceId;
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{Action, CommandError, Outcome, PhoneOp, QueueOp};
 use ferry_core::queue::BatchId;
+use ferry_core::view::{BrowserState, PageState, TRAY_MAX, ViewState, WindowState};
 use materiant::button::{Button, Size};
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    AnyElement, AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement,
-    KeyDownEvent, PathPromptOptions, Render, SharedString, Subscription, WeakEntity, Window, div, px,
+    AnyElement, App, AppContext, ClipboardEntry, Context, Entity, ExternalPaths, FocusHandle, Focusable, IntoElement,
+    KeyDownEvent, PathPromptOptions, Render, SharedString, Subscription, Task, WeakEntity, Window, WindowBounds, div,
+    px,
 };
 use materiant::theme::ActiveTheme;
 use materiant::toast::{Toast, ToastKind, ToastSpec, ToastViewport};
@@ -28,7 +35,7 @@ use super::app_bar::{self, AppBar, CaptionLabels};
 use super::device_header::device_header;
 use super::devices::{DevicesEvent, DevicesPage};
 use super::drop_zone::drop_zone;
-use super::phone_browser::{BrowserEvent, BrowserMode, PhoneBrowser};
+use super::phone_browser::{BrowserEvent, BrowserMode, BrowserStart, PhoneBrowser};
 use super::phone_library::PhoneLibrary;
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
 use super::send_tray::{self, TrayEntry, lacks_dirs, send_tray};
@@ -42,6 +49,7 @@ enum Page {
     Browse {
         browser: Entity<PhoneBrowser>,
         _sub: Subscription,
+        _watch: Subscription,
     },
     /// Danh sách thiết bị (mục cột trái).
     Devices {
@@ -49,7 +57,11 @@ enum Page {
         _sub: Subscription,
     },
     /// Thư viện của một điện thoại — trang con của Danh sách thiết bị.
-    Library { library: Entity<PhoneLibrary>, device: DeviceId },
+    Library {
+        library: Entity<PhoneLibrary>,
+        device: DeviceId,
+        _watch: Subscription,
+    },
     /// `origin`: trang mở luồng này (Gửi hoặc Danh sách thiết bị) — xong / quay lại thì về đó.
     AddPhone {
         view: Entity<AddPhoneView>,
@@ -73,7 +85,62 @@ enum Route {
 }
 
 /// Trần lịch sử Lùi.
-const HISTORY_MAX: usize = 50;
+const HISTORY_MAX: usize = ferry_core::view::HISTORY_MAX;
+/// Gộp các lần đổi (cuộn, dời cửa sổ…) thành một lần gửi `SaveView`.
+const SAVE_DELAY: Duration = Duration::from_millis(500);
+
+impl Route {
+    fn to_state(&self) -> PageState {
+        match self {
+            Route::Main => PageState::Main,
+            Route::Devices => PageState::Devices,
+            Route::Library(device) => PageState::Library { device: device.clone() },
+            Route::Settings => PageState::Settings,
+        }
+    }
+
+    fn from_state(p: &PageState) -> Option<Route> {
+        match p {
+            PageState::Main => Some(Route::Main),
+            PageState::Devices => Some(Route::Devices),
+            PageState::Library { device } => Some(Route::Library(device.clone())),
+            PageState::Settings => Some(Route::Settings),
+            PageState::Browse | PageState::AddPhone { .. } => None,
+        }
+    }
+}
+
+/// Trang mở lại + lịch sử Lùi: thư viện của máy không còn ghép ⇒ Danh sách thiết bị (và bỏ khỏi lịch sử); bước chọn
+/// nơi gửi chỉ mở lại khi `can_browse` (còn khay chờ, đúng máy đang chọn), không thì trang Gửi.
+fn plan_restore(view: &ViewState, paired: &HashSet<DeviceId>, can_browse: bool) -> (PageState, Vec<Route>) {
+    let usable = |p: &PageState| !matches!(p, PageState::Library { device } if !paired.contains(device));
+    let mut page = if usable(&view.page) { view.page.clone() } else { PageState::Devices };
+    if page == PageState::Browse && !can_browse {
+        page = PageState::Main;
+    }
+    let mut history: Vec<Route> = view.history.iter().filter(|p| usable(p)).filter_map(Route::from_state).collect();
+    history.dedup();
+    let current = Route::from_state(&page);
+    while current.is_some() && history.last() == current.as_ref() {
+        history.pop();
+    }
+    (page, history)
+}
+
+/// Khung cửa sổ hiện tại (phóng to ⇒ khung khi khôi phục). Wayland không cho biết / đặt vị trí: chỉ cỡ có nghĩa.
+pub fn window_state(window: &Window) -> WindowState {
+    let (b, maximized) = match window.window_bounds() {
+        WindowBounds::Windowed(b) => (b, false),
+        WindowBounds::Maximized(b) | WindowBounds::Fullscreen(b) => (b, true),
+    };
+    WindowState {
+        x: b.origin.x.into(),
+        y: b.origin.y.into(),
+        width: b.size.width.into(),
+        height: b.size.height.into(),
+        maximized,
+    }
+}
 
 impl Page {
     fn route(&self) -> Option<Route> {
@@ -83,6 +150,14 @@ impl Page {
             Page::Library { device, .. } => Some(Route::Library(device.clone())),
             Page::Settings { .. } => Some(Route::Settings),
             Page::Browse { .. } | Page::AddPhone { .. } => None,
+        }
+    }
+
+    fn to_state(&self) -> PageState {
+        match self {
+            Page::Browse { .. } => PageState::Browse,
+            Page::AddPhone { origin, .. } => PageState::AddPhone { from_devices: *origin == NavItem::Devices },
+            page => page.route().map_or(PageState::Main, |r| r.to_state()),
         }
     }
 
@@ -113,7 +188,12 @@ pub struct MainWindow {
     sending_dest: Option<(DeviceId, String)>,
     /// Tên cửa sổ đã đặt cho OS (taskbar, Alt+Tab) — không có thanh tiêu đề OS nên đặt bằng `set_window_title`.
     window_title: SharedString,
+    /// Bản `ViewState` gửi daemon lần cuối — chỉ gửi lại khi khác.
+    saved: Option<ViewState>,
+    /// Lần gửi đã hẹn (`SAVE_DELAY`); `Some` thì lần đổi kế không hẹn thêm.
+    save_task: Option<Task<()>>,
     _sub: Subscription,
+    _bounds: Subscription,
 }
 
 impl Focusable for MainWindow {
@@ -127,6 +207,7 @@ impl MainWindow {
         let sub = cx.subscribe_in(&model, window, |this, _, ev: &ModelEvent, window, cx| this.on_model(ev, window, cx));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let bounds = cx.observe_window_bounds(window, |this, window, cx| this.schedule_save(window, cx));
         MainWindow {
             model,
             i18n,
@@ -139,8 +220,89 @@ impl MainWindow {
             sending: None,
             sending_dest: None,
             window_title: SharedString::default(),
+            saved: None,
+            save_task: None,
             _sub: sub,
+            _bounds: bounds,
         }
+    }
+
+    /// Dựng lại cửa sổ như lần trước (`DaemonToUi::Restore`, gọi trước khung đầu). Máy đã Quên / không còn ghép ⇒ trang
+    /// Danh sách thiết bị thay cho thư viện của nó; nơi gửi chỉ mở lại khi còn khay chờ và đúng máy đang chọn.
+    pub fn restore(&mut self, view: ViewState, window: &mut Window, cx: &mut Context<Self>) {
+        let paired: HashSet<DeviceId> = self.model.read(cx).paired().into_iter().map(|d| d.id.clone()).collect();
+        send_tray::add_paths(&mut self.tray, &view.tray);
+        self.expanded = view.expanded.iter().cloned().collect();
+        let current = self.model.read(cx).current().map(|d| d.id.clone());
+        let can_browse =
+            !self.tray.is_empty() && view.browser.as_ref().is_some_and(|b| Some(&b.device) == current.as_ref());
+        let (page, history) = plan_restore(&view, &paired, can_browse);
+        let browser = view.browser.clone();
+        self.going_back = true;
+        match page {
+            PageState::Main => {}
+            PageState::Browse => self.open_browser_with(browser, window, cx),
+            PageState::Devices => self.open_devices(window, cx),
+            PageState::Library { device } => self.open_library(device, browser, window, cx),
+            PageState::Settings => self.open_settings(window, cx),
+            PageState::AddPhone { from_devices } => {
+                let origin = if from_devices { NavItem::Devices } else { NavItem::Send };
+                self.open_add_phone(None, origin, window, cx);
+            }
+        }
+        self.going_back = false;
+        self.history = history;
+        // Mốc so sánh là bản daemon đang giữ: trang đã lùi (máy bị Quên…) khác bản đó ⇒ lần lưu đầu gửi lại.
+        self.saved = Some(view);
+        cx.notify();
+    }
+
+    /// Trạng thái hiện tại để daemon giữ hộ.
+    fn view_state(&self, window: Option<WindowState>, cx: &App) -> ViewState {
+        let m = self.model.read(cx);
+        let browser = match &self.page {
+            Page::Browse { browser, .. } => Some(browser.read(cx).state()),
+            Page::Library { library, .. } => Some(library.read(cx).browser().read(cx).state()),
+            _ => None,
+        };
+        let mut expanded: Vec<BatchId> = self.expanded.iter().cloned().collect();
+        expanded.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        ViewState {
+            page: self.page.to_state(),
+            history: self.history.iter().map(Route::to_state).collect(),
+            selected: m.selected.clone(),
+            tray: self.tray.iter().take(TRAY_MAX).map(|e| e.path.clone()).collect(),
+            expanded,
+            browser,
+            clip: m.clip.as_ref().map(|c| c.to_state()),
+            window,
+        }
+    }
+
+    /// Gửi trạng thái cho daemon nếu khác lần trước. `closing`: cửa sổ sắp đóng ⇒ ghi cả khung cửa sổ vào `ui-state.json`.
+    pub fn save_view(&mut self, window: &Window, closing: bool, cx: &mut Context<Self>) {
+        self.save_task = None;
+        let ws = window_state(window);
+        let view = self.view_state(Some(ws), cx);
+        if self.saved.as_ref() != Some(&view) {
+            self.model.read(cx).save_view(view.clone());
+            self.saved = Some(view);
+        }
+        if closing {
+            self.model.update(cx, |m, _| m.remember_window(ws));
+        }
+    }
+
+    /// Hẹn một lần gửi sau `SAVE_DELAY` (đã hẹn thì thôi). Không đổi gì ⇒ không vẽ ⇒ không hẹn: rảnh không tốn CPU.
+    fn schedule_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.save_task.is_some() || !self.model.read(cx).connected() {
+            return;
+        }
+        let timer = cx.background_executor().timer(SAVE_DELAY);
+        self.save_task = Some(cx.spawn_in(window, async move |this, cx| {
+            timer.await;
+            let _ = this.update_in(cx, |this, window, cx| this.save_view(window, false, cx));
+        }));
     }
 
     /// Đổi trang: trang đang rời vào lịch sử (trừ luồng tạm, trừ lúc Lùi); về đúng trang ở đỉnh lịch sử (huỷ / xong luồng
@@ -169,7 +331,7 @@ impl MainWindow {
         match route {
             Route::Main => self.back_to_main(window, cx),
             Route::Devices => self.open_devices(window, cx),
-            Route::Library(device) => self.open_library(device, window, cx),
+            Route::Library(device) => self.open_library(device, None, window, cx),
             Route::Settings => self.open_settings(window, cx),
         }
         self.going_back = false;
@@ -288,7 +450,7 @@ impl MainWindow {
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &DevicesEvent, window, cx| match ev {
             DevicesEvent::AddPhone => this.open_add_phone(None, NavItem::Devices, window, cx),
             DevicesEvent::Repair(id) => this.open_add_phone(Some(id.clone()), NavItem::Devices, window, cx),
-            DevicesEvent::Browse(id) => this.open_library(id.clone(), window, cx),
+            DevicesEvent::Browse(id) => this.open_library(id.clone(), None, window, cx),
         });
         self.show(Page::Devices { view, _sub: sub });
         cx.notify();
@@ -296,11 +458,20 @@ impl MainWindow {
 
     /// Thư viện của một điện thoại (PROTOCOL 4.3), mở từ Danh sách thiết bị. Chọn luôn máy đó: bộ nhớ đệm danh sách và
     /// trang Gửi theo máy đang chọn.
-    fn open_library(&mut self, device: DeviceId, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_library(
+        &mut self,
+        device: DeviceId,
+        restore: Option<BrowserState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.model.update(cx, |m, cx| m.select(device.clone(), cx));
         let (model, i18n) = (self.model.clone(), self.i18n.clone());
-        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device.clone(), window, cx));
-        self.show(Page::Library { library, device });
+        let library = cx.new(|cx| PhoneLibrary::new(model, i18n, device.clone(), restore, window, cx));
+        // Cuộn / chọn / đổi thư mục trong trình duyệt chỉ vẽ lại nó ⇒ nghe nó để hẹn lưu.
+        let browser = library.read(cx).browser().clone();
+        let watch = cx.observe_in(&browser, window, |this, _, window, cx| this.schedule_save(window, cx));
+        self.show(Page::Library { library, device, _watch: watch });
         cx.notify();
     }
 
@@ -373,10 +544,19 @@ impl MainWindow {
     }
 
     fn open_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_browser_with(None, window, cx);
+    }
+
+    /// `restore`: trình duyệt lần trước (mở lại cửa sổ đang ở bước chọn nơi gửi).
+    fn open_browser_with(&mut self, restore: Option<BrowserState>, window: &mut Window, cx: &mut Context<Self>) {
         let (device, start) = {
             let m = self.model.read(cx);
             let Some(d) = m.current() else { return };
-            (d.id.clone(), m.last_dest(&d.id))
+            let start = match restore {
+                Some(b) if b.device == d.id => BrowserStart::Restore(b),
+                _ => BrowserStart::Dir(m.last_dest(&d.id)),
+            };
+            (d.id.clone(), start)
         };
         if self.tray.is_empty() {
             return;
@@ -392,6 +572,7 @@ impl MainWindow {
         };
         let (model, i18n) = (self.model.clone(), self.i18n.clone());
         let browser = cx.new(|cx| PhoneBrowser::new(model, i18n, device, mode, start, window, cx));
+        let watch = cx.observe_in(&browser, window, |this, _, window, cx| this.schedule_save(window, cx));
         let sub = cx.subscribe_in(&browser, window, |this, _, ev: &BrowserEvent, window, cx| match ev {
             BrowserEvent::Cancel => {
                 this.show(Page::Main);
@@ -400,7 +581,7 @@ impl MainWindow {
             }
             BrowserEvent::Send { dest_dir } => this.send(dest_dir.clone(), window, cx),
         });
-        self.show(Page::Browse { browser, _sub: sub });
+        self.show(Page::Browse { browser, _sub: sub, _watch: watch });
         cx.notify();
     }
 
@@ -683,6 +864,7 @@ impl MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.schedule_save(window, cx);
         let title = self.t("app.name");
         if title != self.window_title {
             window.set_window_title(&title);
@@ -712,16 +894,13 @@ impl Render for MainWindow {
             close: self.t("app_bar.close"),
         };
         // Thanh trên: khung bọc là vùng kéo (nhấp đúp phóng to), ba nút `occlude` chặn kéo.
-        let bar = div()
-            .w_full()
-            .h(px(app_bar::HEIGHT))
-            .flex_none()
-            .drag_region()
-            .child(AppBar::new(window.is_maximized(), labels).back(
+        let bar = div().w_full().h(px(app_bar::HEIGHT)).flex_none().drag_region().child(
+            AppBar::new(window.is_maximized(), labels).back(
                 !self.history.is_empty(),
                 self.t("app_bar.back"),
                 cx.listener(|this, _, window, cx| this.go_back(window, cx)),
-            ));
+            ),
+        );
         div()
             .id("main-window")
             .relative()
@@ -754,5 +933,52 @@ impl Render for MainWindow {
             )
             // Linux: viền tự vẽ không tự đổi cỡ được — dải kéo mép, trên cùng mọi lớp.
             .children(crate::platform::resize_edges::overlay(window))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dev(s: &str) -> DeviceId {
+        DeviceId(s.into())
+    }
+
+    #[test]
+    fn restore_keeps_pages_of_paired_phones() {
+        let paired = HashSet::from([dev("p")]);
+        let view = ViewState {
+            page: PageState::Library { device: dev("p") },
+            history: vec![PageState::Main, PageState::Settings, PageState::Devices],
+            ..ViewState::default()
+        };
+        let (page, history) = plan_restore(&view, &paired, false);
+        assert_eq!(page, PageState::Library { device: dev("p") });
+        assert_eq!(history, [Route::Main, Route::Settings, Route::Devices]);
+        for r in &history {
+            assert_eq!(Route::from_state(&r.to_state()).as_ref(), Some(r));
+        }
+    }
+
+    #[test]
+    fn forgotten_phone_falls_back_to_the_devices_page() {
+        let view = ViewState {
+            page: PageState::Library { device: dev("gone") },
+            history: vec![PageState::Main, PageState::Library { device: dev("gone") }, PageState::Devices],
+            ..ViewState::default()
+        };
+        let (page, history) = plan_restore(&view, &HashSet::new(), false);
+        assert_eq!(page, PageState::Devices);
+        // Lùi không về chính trang đang đứng, không về thư viện đã mất.
+        assert_eq!(history, [Route::Main]);
+    }
+
+    #[test]
+    fn choosing_a_destination_reopens_only_with_a_tray() {
+        let view = ViewState { page: PageState::Browse, history: vec![PageState::Main], ..ViewState::default() };
+        assert_eq!(plan_restore(&view, &HashSet::new(), true).0, PageState::Browse);
+        let (page, history) = plan_restore(&view, &HashSet::new(), false);
+        assert_eq!(page, PageState::Main);
+        assert!(history.is_empty());
     }
 }

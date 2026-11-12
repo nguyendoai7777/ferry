@@ -31,7 +31,8 @@ chỉ mở vài lần.
   ⇒ đèn giao thông native giữa hàng 36 px đầu cột trái (hàng đó không ghi tên app — thanh menu đã có), ba nút tự vẽ vẫn ở
   góc phải kiểu cửa sổ Cài đặt của fastcast (ô 28 px bo 7, khe 4, chừa 8 px mép phải cho góc bo, Đóng rê xám); thanh menu
   của app ở `app_menu.rs` (chữ `[menu]` của i18n, dựng lại khi đổi ngôn ngữ). Cài đặt là trang
-  trong cửa sổ chính (`MainWindow::open_settings`); khay "Cài đặt…" / `ferry-ui --settings` mở thẳng trang đó. Giao diện:
+  trong cửa sổ chính (`MainWindow::open_settings`); `ferry-ui --settings` (chỉ còn mục "Cài đặt" của
+  `ferry.desktop`, chuột phải icon dock Linux) mở thẳng trang đó. Menu khay chỉ **Mở · Thoát** (12/11/2026). Giao diện:
   `theme` (`light|dark|system`) + `themePreset` (4 bảng của `builtin_presets()`, không tự chỉnh) trong `config.json`,
   `appearance::apply` lúc khởi động và khi đổi.
 
@@ -89,6 +90,19 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   `select!`; việc chậm (ghép, `plan_batch`, dọn sau quên) chạy task con / `spawn_blocking` rồi trả `Internal` — đừng
   `await` mạng trong vòng chính. Đẩy ra UI chỉ qua `Outbox::push`; `Snapshot` có trần mục (`QUEUED_IN_SNAPSHOT`,
   `FINISHED_IN_SNAPSHOT`) để dòng JSON < `MAX_LINE` 1 MiB — thêm trường mảng thì giữ trần.
+- **Mở lại cửa sổ y như lúc đóng** (12/11/2026, `ferry_core::view`): `ferry-ui` vẫn thoát khi đóng (luật RAM); trạng thái
+  sống ở daemon, **chỉ trong RAM**. UI gửi `UiToDaemon::SaveView` (`ViewState`: trang + lịch sử, khay, lô mở, trình duyệt
+  `BrowserState`, bảng nháp, khung cửa sổ) gộp 0,5 s sau mỗi lần vẽ / trình duyệt đổi / dời cửa sổ, chỉ khi khác bản trước, và
+  ngay trước khi đóng (`window_controls::before_close` — mọi đường đóng phải qua nó, nút Đóng Linux / macOS gọi
+  `remove_window` không qua `on_window_should_close`). Daemon đẩy `DaemonToUi::Restore` ngay sau `Ok` của `Hello`, trước
+  `Snapshot` đầu; `daemon_link::connect` chờ tới 1,5 s cho `Snapshot` đầu rồi mới mở cửa sổ ⇒ khung đầu đã đúng trang,
+  không chớp màn rỗng. Thư mục đã đọc (`dirs` / `list`) daemon giữ ở `view::DirCache` (LRU, trần 4 MiB / 512 mục): `Restore`
+  chỉ mang thư mục khung đầu cần (trần `RESTORE_BUDGET` 640 KiB), thư mục khác UI hỏi `LibraryOp::Cached` (vẽ ngay) song song
+  `Dirs` (làm mới); `Model::storage` chỉ là bản làm việc của phiên. Quên / thay máy ⇒ `DirCache::forget_device` +
+  `ViewState::forget_device`; UI tự soát lại (`main_window::plan_restore`). Khung cửa sổ còn ghi `ui-state.json` lúc đóng
+  (qua được lần khởi động lại daemon); Wayland không cho biết / đặt vị trí, chỉ cỡ. Thêm trường vào `ViewState` ⇒ kẹp trần ở
+  `ViewState::clamp`. Kiểm thử đầu-cuối không đụng màn thật: daemon `--autostart` + `ferry-ui` trong
+  `fastcast/tools/headless-test.sh`, đọc `Restore` bằng client IPC vai `ui`.
 - **Clippy chéo macOS không chạy từ Linux**: `notify-rust` kéo `mac-notification-sys` biên dịch Objective-C. Soát macOS trên
   máy Mac; Windows chéo vẫn chạy được.
 - macOS: thử menu khay tự động bằng AppleScript không được (status item không lộ menu qua AX) ⇒ bấm bằng sự kiện chuột

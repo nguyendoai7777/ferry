@@ -167,10 +167,10 @@ fn caption(id: &'static str, caption: Caption, maximized: bool, label: SharedStr
         .hover(move |s| s.bg(paint.hover_bg))
         .active(move |s| s.bg(paint.active_bg))
         .ripple(RippleConfig::centered().color(paint.hover_icon))
-        .on_click(move |_, window, _| match caption {
+        .on_click(move |_, window, cx| match caption {
             Caption::Minimize => window_controls::minimize(window),
             Caption::Maximize => window_controls::toggle_maximize(window),
-            Caption::Close => window_controls::close(window),
+            Caption::Close => window_controls::close(window, cx),
         })
         .child(
             svg()

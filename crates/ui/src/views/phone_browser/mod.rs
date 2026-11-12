@@ -10,6 +10,9 @@
 //! - Điện thoại có `features: browse` (§6.11, W-7) ⇒ dựng từ `GET /dirs` thay vì `list`: mở thư mục nào đọc thư mục
 //!   đó (cùng các thư mục cha khi mở sẵn ở đích lần trước), nhớ các lần đã đọc ([`FsCache`], giữ ở `Model::storage`).
 //! - Menu chuột phải + thư mục mới / đổi tên / xoá (W-8, §6.12): [`edit`].
+//! - Mở lại cửa sổ (12/11/2026): nhận [`BrowserState`] (thư mục, Lùi / Tiến, nhánh cây, mục chọn, vị trí cuộn) và xuất lại
+//!   bằng [`PhoneBrowser::state`]. Thư mục chưa đọc trong phiên ⇒ hỏi bộ đệm của daemon (`LibraryOp::Cached`, vẽ ngay) song
+//!   song với `Dirs` (làm mới). Thư viện: thư mục đang mở không còn (`404`) ⇒ lùi về thư mục cha, không báo lỗi.
 
 mod breadcrumb;
 mod clip;
@@ -26,6 +29,7 @@ use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::i18n::I18n;
 use ferry_core::ipc::{CommandError, LibraryOp, Outcome};
 use ferry_core::protocol::LibraryItem;
+use ferry_core::view::{BrowserState, HISTORY_MAX, SELECTED_MAX, TREE_OPEN_MAX};
 use materiant::button::{Button, Size};
 use materiant::field::{FieldEvent, TextField};
 use materiant::gpui_kit::prelude::*;
@@ -33,12 +37,29 @@ use materiant::gpui_kit::{
     Context, Entity, EventEmitter, IntoElement, Render, SharedString, Subscription, Window, div, px,
 };
 use materiant::icon::IconName;
-use materiant::list::VirtualListHandle;
+use materiant::list::{Align, VirtualListHandle};
 use materiant::overlay::dialog::DialogHandle;
 use materiant::theme::ActiveTheme;
 
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
+
+/// Làm mới (`refresh`) đọc lại tối đa chừng này nhánh cây đang mở ngoài đường tới thư mục đang mở.
+const REVALIDATE_OPEN_MAX: usize = 16;
+
+fn location(dir: &Option<String>) -> Location {
+    match dir {
+        Some(p) => Location::Dir(p.clone()),
+        None => Location::Other,
+    }
+}
+
+/// Chỗ mở trình duyệt: một thư mục (đích lần trước / gốc), hoặc y như lần trước (mở lại cửa sổ).
+#[derive(Debug, Clone, PartialEq)]
+pub enum BrowserStart {
+    Dir(String),
+    Restore(BrowserState),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserMode {
@@ -69,6 +90,8 @@ pub struct PhoneBrowser {
     known: Vec<KnownDir>,
     /// `req` của các lần `Dirs` đang chờ → thư mục.
     pending: HashMap<u64, String>,
+    /// `req` của các lần `Cached` (bộ đệm daemon) đang chờ → thư mục.
+    cached_req: HashMap<u64, String>,
     pub(crate) loading: bool,
     failed: bool,
     pub(crate) offline: bool,
@@ -88,6 +111,8 @@ pub struct PhoneBrowser {
     pub(crate) anchor: Option<usize>,
     suppress_select: bool,
     pub(crate) list: VirtualListHandle,
+    /// Cuộn của cột cây (giữ khi mở lại cửa sổ).
+    pub(crate) tree_list: VirtualListHandle,
     tree_open: HashSet<String>,
     /// Dòng thiết bị (gốc cây) đang mở.
     root_open: bool,
@@ -114,10 +139,15 @@ impl PhoneBrowser {
         i18n: Rc<I18n>,
         device: DeviceId,
         mode: BrowserMode,
-        start_dir: String,
+        start: BrowserStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (start_dir, restore) = match start {
+            BrowserStart::Restore(b) if b.device == device => (String::new(), Some(b)),
+            BrowserStart::Restore(_) => (String::new(), None),
+            BrowserStart::Dir(d) => (d, None),
+        };
         let search_hint = i18n.t("browser.search").to_owned();
         let search = cx.new(|cx| {
             TextField::new("br-search", window, cx)
@@ -169,6 +199,7 @@ impl PhoneBrowser {
             storage,
             known: Vec::new(),
             pending: HashMap::new(),
+            cached_req: HashMap::new(),
             loading: false,
             failed: false,
             offline,
@@ -187,6 +218,7 @@ impl PhoneBrowser {
             anchor: None,
             suppress_select: false,
             list: VirtualListHandle::new(),
+            tree_list: VirtualListHandle::new(),
             tree_open,
             root_open: true,
             edit_dialog: DialogHandle::new(cx),
@@ -199,11 +231,94 @@ impl PhoneBrowser {
             notice: None,
             _subs: subs,
         };
+        if let Some(b) = &restore {
+            this.at = location(&b.at);
+            this.back = b.back.iter().map(location).collect();
+            this.forward = b.forward.iter().map(location).collect();
+            this.tree_open = b.tree_open.iter().cloned().collect();
+            if let Location::Dir(p) = &this.at {
+                this.tree_open.extend(browse::breadcrumb(p).into_iter().map(|(_, full)| full));
+            }
+            this.root_open = !b.root_closed;
+        }
         this.sync_storage();
         this.ensure_start_dir_visible();
         this.recompute(cx);
+        if let Some(b) = restore {
+            this.select_names(&b.selected);
+            this.list.scroll_to(b.table_top as usize, Align::Start);
+            this.tree_list.scroll_to(b.tree_top as usize, Align::Start);
+        }
         this.refresh(cx);
         this
+    }
+
+    /// Trạng thái để mở lại cửa sổ y như cũ (`ferry_core::view`).
+    pub fn state(&self) -> BrowserState {
+        let dir = |l: &Location| match l {
+            Location::Dir(p) => Some(p.clone()),
+            Location::Other => None,
+        };
+        let tail = |v: &[Location]| v[v.len().saturating_sub(HISTORY_MAX)..].iter().map(dir).collect();
+        let mut tree_open: Vec<String> = self.tree_open.iter().cloned().collect();
+        tree_open.sort();
+        tree_open.truncate(TREE_OPEN_MAX);
+        let top = |h: &VirtualListHandle| (h.scroll_top() / table::ROW_HEIGHT).round().max(0.) as u32;
+        BrowserState {
+            device: self.device.clone(),
+            at: dir(&self.at),
+            back: tail(&self.back),
+            forward: tail(&self.forward),
+            tree_open,
+            root_closed: !self.root_open,
+            selected: self
+                .selected
+                .iter()
+                .filter_map(|ix| self.entries.get(*ix))
+                .map(|e| e.name.clone())
+                .take(SELECTED_MAX)
+                .collect(),
+            table_top: top(&self.list),
+            tree_top: top(&self.tree_list),
+        }
+    }
+
+    /// Chọn lại các mục theo tên (sau khi dựng lại `entries`).
+    fn select_names(&mut self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+        let want: HashSet<&str> = names.iter().map(String::as_str).collect();
+        self.selected =
+            self.entries.iter().enumerate().filter(|(_, e)| want.contains(e.name.as_str())).map(|(i, _)| i).collect();
+        self.anchor = self.selected.first().copied();
+    }
+
+    /// Hỏi daemon bản đã đọc lần trước của `path` (không gọi điện thoại) — vẽ ngay trong lúc `Dirs` làm mới.
+    fn ask_cached(&mut self, path: &str, cx: &mut Context<Self>) {
+        if self.storage.as_ref().is_none_or(|fs| fs.is_loaded(path)) || self.cached_req.values().any(|p| p == path) {
+            return;
+        }
+        let op = LibraryOp::Cached { device: self.device.clone(), path: path.to_owned() };
+        if let Some(req) = self.model.update(cx, |m, _| m.library(op)) {
+            self.cached_req.insert(req, path.to_owned());
+        }
+    }
+
+    fn on_cached(&mut self, outcome: &Outcome, cx: &mut Context<Self>) {
+        let Outcome::Dirs { listing } = outcome else { return };
+        let Some(fs) = self.storage.as_mut() else { return };
+        // `Dirs` mới về trước thì giữ bản mới.
+        if fs.is_loaded(&listing.path) {
+            return;
+        }
+        fs.insert(listing.clone());
+        let (snapshot, device) = (fs.clone(), self.device.clone());
+        self.model.update(cx, |m, _| {
+            m.storage.insert(device, snapshot);
+        });
+        self.sync_storage();
+        self.recompute(cx);
     }
 
     /// Đang duyệt bộ nhớ trong thật (W-7).
@@ -239,6 +354,7 @@ impl PhoneBrowser {
     /// Thư mục đang mở chưa đọc lần nào ⇒ đọc.
     fn fetch_if_unloaded(&mut self, path: &str, cx: &mut Context<Self>) {
         if self.storage.as_ref().is_some_and(|fs| !fs.is_loaded(path)) {
+            self.ask_cached(path, cx);
             self.fetch_dir(path.to_owned(), cx);
         }
     }
@@ -252,7 +368,18 @@ impl PhoneBrowser {
             }
             // Thư mục không còn trên điện thoại: bỏ khỏi cây; đang đứng trong đó thì giữ làm thư mục ảo (vẫn gửi được,
             // điện thoại tạo lại khi commit).
-            Outcome::Failed { error: CommandError::InvalidInput } => fs.remove(&path),
+            Outcome::Failed { error: CommandError::InvalidInput } => {
+                fs.remove(&path);
+                // Thư viện: đang đứng trong thư mục đã mất (xoá trên điện thoại lúc cửa sổ đóng) ⇒ về thư mục cha gần nhất.
+                if self.mode == BrowserMode::Library
+                    && let Location::Dir(at) = &self.at
+                    && !path.is_empty()
+                    && (*at == path || at.starts_with(&format!("{path}/")))
+                {
+                    self.at = Location::Dir(browse::parent_dir(&path).to_owned());
+                    self.selected.clear();
+                }
+            }
             Outcome::Failed { error: CommandError::Offline } => self.offline = true,
             _ => self.failed = true,
         }
@@ -343,6 +470,10 @@ impl PhoneBrowser {
                 self.sync_export(cx);
                 cx.notify();
             }
+            ModelEvent::Reply { req, outcome } if self.cached_req.contains_key(req) => {
+                self.cached_req.remove(req);
+                self.on_cached(outcome, cx);
+            }
             ModelEvent::Reply { req, outcome } if self.pending.contains_key(req) => {
                 let path = self.pending.remove(req).unwrap_or_default();
                 self.loading = self.req.is_some() || !self.pending.is_empty();
@@ -369,19 +500,29 @@ impl PhoneBrowser {
     /// Đọc lại danh sách từ điện thoại (offline ⇒ giữ bản lần trước).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.notice = None;
+        if self.browses_storage() {
+            // Gốc + các thư mục cha của chỗ đang mở (cây hiện đủ đường tới đó) + chính nó, rồi các nhánh cây đang mở (nông
+            // trước, có trần). Chưa có trong phiên ⇒ hỏi bộ đệm daemon trước (cả khi offline).
+            let mut want = vec![String::new()];
+            if let Location::Dir(p) = &self.at {
+                want.extend(browse::breadcrumb(p).into_iter().map(|(_, full)| full));
+            }
+            let mut open: Vec<&String> = self.tree_open.iter().collect();
+            open.sort_by_key(|p| (p.matches('/').count(), p.as_str()));
+            want.extend(open.into_iter().take(REVALIDATE_OPEN_MAX).cloned());
+            for p in &want {
+                self.ask_cached(p, cx);
+            }
+            if !self.offline {
+                for p in want {
+                    self.fetch_dir(p, cx);
+                }
+                return;
+            }
+        }
         if self.offline {
             self.loading = false;
             cx.notify();
-            return;
-        }
-        if self.browses_storage() {
-            // Gốc + các thư mục cha của chỗ đang mở (cây hiện đủ đường tới đó) + chính nó.
-            self.fetch_dir(String::new(), cx);
-            if let Location::Dir(p) = self.at.clone() {
-                for (_, full) in browse::breadcrumb(&p) {
-                    self.fetch_dir(full, cx);
-                }
-            }
             return;
         }
         let device = self.device.clone();
@@ -399,9 +540,14 @@ impl PhoneBrowser {
             entries.retain(|e| e.kind != EntryKind::Folder);
         }
         browse::sort_entries(&mut entries, self.sort.0, self.sort.1);
+        // Giữ mục đang chọn theo tên qua lần dựng lại (làm mới nền, đổi cách xếp, lọc): đọc lại thư mục không làm mất chọn.
+        let key = |e: &Entry| (e.kind == EntryKind::Folder, e.name.clone());
+        let keep: HashSet<(bool, String)> =
+            self.selected.iter().filter_map(|ix| self.entries.get(*ix)).map(key).collect();
+        let anchor = self.anchor.and_then(|ix| self.entries.get(ix)).map(key);
+        self.selected = entries.iter().enumerate().filter(|(_, e)| keep.contains(&key(e))).map(|(i, _)| i).collect();
+        self.anchor = anchor.and_then(|a| entries.iter().position(|e| key(e) == a));
         self.entries = entries;
-        self.selected.clear();
-        self.anchor = None;
         cx.notify();
     }
 
@@ -440,6 +586,8 @@ impl PhoneBrowser {
         self.query.clear();
         self.clear_search = true;
         self.notice = None;
+        self.selected.clear();
+        self.anchor = None;
         if let Location::Dir(p) = self.at.clone() {
             self.fetch_if_unloaded(&p, cx);
         }

@@ -1,4 +1,4 @@
-//! Trạng thái khay (PROTOCOL 4.1, 5): rảnh / đang gửi kèm % / cần chú ý, chữ tooltip, mục "Tạm dừng tất cả". Hàm thuần
+//! Trạng thái khay (PROTOCOL 4.1, 5): rảnh / đang gửi kèm % / cần chú ý, chữ tooltip. Hàm thuần
 //! trên danh sách mục của store + trạng thái thiết bị — engine gọi sau mỗi ảnh chụp, gửi về luồng chính khi đổi.
 
 use std::collections::HashMap;
@@ -21,22 +21,10 @@ pub enum TrayMode {
     Attention,
 }
 
-/// Mục thứ hai của menu khay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseItem {
-    /// "Tạm dừng tất cả" — có mục đang chạy / chờ.
-    Pause,
-    /// "Tiếp tục tất cả" — chỉ còn mục tạm dừng.
-    Resume,
-    /// "Tạm dừng tất cả" mờ — hàng đợi trống.
-    Disabled,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrayStatus {
     pub mode: TrayMode,
     pub tooltip: String,
-    pub pause: PauseItem,
     /// Ngôn ngữ chữ của bản này: đổi trong cài đặt (gd1_12) ⇒ luồng chính dựng lại menu khay theo nó.
     pub language: Language,
 }
@@ -122,13 +110,6 @@ pub fn percent(running: &[(ItemId, u64, u64)], progress: &HashMap<ItemId, ItemPr
 }
 
 pub fn status(s: &Summary, progress: &HashMap<ItemId, ItemProgress>, i18n: &I18n) -> TrayStatus {
-    let pause = if s.can_pause_all() {
-        PauseItem::Pause
-    } else if s.can_resume_all() {
-        PauseItem::Resume
-    } else {
-        PauseItem::Disabled
-    };
     let count = |n: usize| n.to_string();
     let (mode, tooltip) = match &s.attention {
         Some(Attention::NeedsRepair { phone }) => {
@@ -152,7 +133,7 @@ pub fn status(s: &Summary, progress: &HashMap<ItemId, ItemProgress>, i18n: &I18n
         }
         None => (TrayMode::Idle, i18n.t("app.name").to_owned()),
     };
-    TrayStatus { mode, tooltip, pause, language: i18n.language() }
+    TrayStatus { mode, tooltip, language: i18n.language() }
 }
 
 /// Khoá i18n theo số: `<key>_one` khi `n == 1` (tiếng Anh "1 file"), không thì `<key>`. Hai catalog có đủ cả hai khoá.
@@ -219,11 +200,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_queue_is_idle_with_pause_disabled() {
+    fn empty_queue_is_idle() {
         let s = summarize(&[], devices(&[], &[]));
         let st = status(&s, &HashMap::new(), &en());
         assert_eq!(st.mode, TrayMode::Idle);
-        assert_eq!(st.pause, PauseItem::Disabled);
         assert_eq!(st.tooltip, "Ferry");
     }
 
@@ -242,7 +222,6 @@ mod tests {
         let st = status(&s, &progress, &en());
         assert_eq!(st.mode, TrayMode::Sending { percent: 45 });
         assert_eq!(st.tooltip, "Sending 2 files — 45%");
-        assert_eq!(st.pause, PauseItem::Pause);
     }
 
     #[test]
@@ -274,7 +253,7 @@ mod tests {
         let s = summarize(&items, devices(&["a"], &[]));
         assert!(!s.can_pause_all() && s.can_resume_all());
         let st = status(&s, &HashMap::new(), &en());
-        assert_eq!((st.mode, st.pause), (TrayMode::Idle, PauseItem::Resume));
+        assert_eq!(st.mode, TrayMode::Idle);
         assert_eq!(st.tooltip, "2 files paused");
     }
 

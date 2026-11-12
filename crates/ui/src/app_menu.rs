@@ -54,7 +54,7 @@ pub fn register(handle: AnyWindowHandle, main: &Entity<MainWindow>, cx: &mut App
         let _ = handle.update(cx, |_, window, _| window_controls::toggle_maximize(window));
     });
     cx.on_action(move |_: &CloseWindow, cx| {
-        let _ = handle.update(cx, |_, window, _| window_controls::close(window));
+        let _ = handle.update(cx, |_, window, cx| window_controls::close(window, cx));
     });
 }
 

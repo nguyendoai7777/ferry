@@ -144,6 +144,9 @@ fn serve(id: u64, mut conn: ServerConnection, waker: &Waker, engine: &EngineHand
             Ok(Some(UiToDaemon::Phone { req, op })) => engine.send(request(req, Op::Phone(op))),
             Ok(Some(UiToDaemon::Library { req, op })) => engine.send(request(req, Op::Library(op))),
             Ok(Some(UiToDaemon::Settings { req, op })) => engine.send(request(req, Op::Settings(op))),
+            // Chỉ cửa sổ (`Ui`) giữ trạng thái; lần chạy `ferry` thứ hai không có gì để giữ.
+            Ok(Some(UiToDaemon::SaveView { view })) if role == Role::Ui => engine.send(Input::SaveView(view)),
+            Ok(Some(UiToDaemon::SaveView { .. })) => {}
             Ok(Some(UiToDaemon::Hello { .. })) => {
                 outbox.push(DaemonToUi::Error { message: "already said hello".into() });
             }

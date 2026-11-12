@@ -4,7 +4,7 @@
 
 use ferry_core::i18n::I18n;
 
-use crate::engine::{EngineHandle, Input};
+use crate::engine::EngineHandle;
 use crate::ipc_server::Outbox;
 use crate::platform::Waker;
 use crate::tray::{self, MenuAction};
@@ -64,8 +64,6 @@ impl Daemon {
         match event {
             Event::Menu(id) => match tray::menu_action(&id) {
                 Some(MenuAction::OpenWindow) => self.ui.open(&self.waker),
-                Some(MenuAction::OpenSettings) => self.ui.open_settings(&self.waker),
-                Some(MenuAction::TogglePause) => self.engine.send(Input::TogglePauseAll),
                 Some(MenuAction::Quit) => return false,
                 None => log::debug!("tray: unknown menu id {id}"),
             },

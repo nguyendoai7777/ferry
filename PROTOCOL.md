@@ -65,8 +65,11 @@ pc-app/
 
 Ít, phẳng, mỗi màn một việc.
 
-1. **Khay hệ thống** (luôn có): biểu tượng có 3 trạng thái — rảnh / đang gửi (kèm %) / cần chú ý. Menu: mở cửa sổ,
-   tạm dừng tất cả, thoát.
+1. **Khay hệ thống** (luôn có): biểu tượng có 3 trạng thái — rảnh / đang gửi (kèm %) / cần chú ý. Menu: **Mở** ·
+   **Thoát** (12/11/2026: bỏ "Cài đặt…", "Tạm dừng / Tiếp tục tất cả" — cả hai có trong cửa sổ). Đóng cửa sổ rồi mở lại ⇒
+   y như lúc đóng: trang, lịch sử Lùi, khay chờ, thư mục đang mở của trình duyệt điện thoại (Lùi / Tiến, nhánh cây, mục
+   chọn, vị trí cuộn), cỡ / vị trí cửa sổ; không giữ hộp thoại. Máy đã Quên / thư mục đã mất ⇒ về trang / thư mục cha gần
+   nhất, không báo lỗi.
 2. **Cửa sổ chính** = một vùng thả lớn + hàng đợi bên dưới.
    - Đầu cửa sổ: thiết bị đang chọn (tên điện thoại, chấm xanh/xám online). Nhiều điện thoại thì là menu chọn.
    - Hai nút **"Chọn tệp…"** (hộp chọn tệp của hệ điều hành, chọn **nhiều** tệp) và **"Chọn thư mục…"** (hộp chọn thư

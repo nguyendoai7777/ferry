@@ -12,8 +12,8 @@ use materiant::menu::ContextMenuExt;
 use materiant::theme::{ActiveTheme, Neutral};
 
 use super::PhoneBrowser;
-use crate::views::quiet_button::{self, quiet_icon_button};
 use crate::assets;
+use crate::views::quiet_button::{self, quiet_icon_button};
 
 pub const ROW_HEIGHT: f32 = 28.;
 
@@ -154,6 +154,7 @@ pub fn tree_view(
                     this.go(r.loc.clone(), cx);
                 }
             }))
+            .track(&this.tree_list)
             .size_full(),
         )
         .into_any_element()

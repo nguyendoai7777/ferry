@@ -5,10 +5,7 @@
 name = "Ferry"
 
 [tray]
-open_window = "Open window"
-settings = "Settings…"
-pause_all = "Pause all"
-resume_all = "Resume all"
+open = "Open"
 quit = "Quit"
 sending = "Sending {count} files — {percent}%"
 sending_one = "Sending {count} file — {percent}%"

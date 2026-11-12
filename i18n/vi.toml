@@ -5,10 +5,7 @@
 name = "Ferry"
 
 [tray]
-open_window = "Mở cửa sổ"
-settings = "Cài đặt…"
-pause_all = "Tạm dừng tất cả"
-resume_all = "Tiếp tục tất cả"
+open = "Mở"
 quit = "Thoát"
 sending = "Đang gửi {count} tệp — {percent} %"
 sending_one = "Đang gửi {count} tệp — {percent} %"

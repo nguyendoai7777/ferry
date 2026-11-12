@@ -17,9 +17,11 @@
 //!   `Snapshot`, cộng `Progress` lên trên (`sent` mới hơn `offset` của mục).
 //! - `Cli` (lần chạy `ferry` thứ hai, cửa sổ cài đặt) không nhận đẩy — chỉ `Reply` cho lệnh của nó.
 //! - gd1_12 thêm: `Settings{req, op}` ([`SettingsOp`], mọi lệnh trả [`Outcome::Settings`] = cài đặt sau khi áp),
-//!   [`DaemonToUi::OpenSettings`] (menu khay "Cài đặt…"), [`CommandError::NotWritable`].
+//!   [`CommandError::NotWritable`]. (`OpenSettings` của menu khay "Cài đặt…" bỏ 12/11/2026 cùng mục menu.)
 //! - W-6 thêm: [`PhoneOp::AllowMdnsFirewall`] ⇒ [`Outcome::Firewall`], [`Snapshot::mdns_firewall`].
 //! - W-10 thêm: [`LibraryOp::Export`] / [`LibraryOp::CancelExport`], [`Snapshot::export`], [`CommandError::TooMany`].
+//! - Khôi phục cửa sổ (12/11/2026, `crate::view`): [`UiToDaemon::SaveView`] (không trả lời), [`DaemonToUi::Restore`]
+//!   ngay sau `Ok` của `Hello`, trước `Snapshot` đầu; [`LibraryOp::Cached`] đọc thư mục từ bộ đệm của daemon.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -39,6 +41,7 @@ use crate::i18n::LanguagePref;
 use crate::protocol::{DirListing, LibraryItem};
 use crate::queue::store::{BatchInfo, BatchProgress, DownloadItem, UploadItem};
 use crate::queue::{BatchId, ItemId};
+use crate::view::{CachedData, ViewState};
 
 /// Một dòng JSON tối đa — chặn client hỏng / độc gửi dòng vô tận làm daemon phình RAM. Tệp không đi qua IPC (chỉ đường
 /// dẫn), 1 MiB là dư.
@@ -64,6 +67,9 @@ pub enum UiToDaemon {
     Library { req: u64, op: LibraryOp },
     /// Cài đặt (gd1_12). Daemon là bên duy nhất ghi `config.json`; mọi lệnh trả [`Outcome::Settings`] (đã áp + đã lưu).
     Settings { req: u64, op: SettingsOp },
+    /// Trạng thái cửa sổ để mở lại y như cũ (`crate::view`): khi đổi (gộp) và lúc thoát. Không trả lời; daemon kẹp theo
+    /// trần rồi giữ trong RAM, kết nối `Ui` sau nhận lại trong [`DaemonToUi::Restore`].
+    SaveView { view: Box<ViewState> },
 }
 
 /// Thao tác người dùng trên mục / lô (nút ở hàng đợi). Ánh xạ sang `transfer::ItemAction` ở daemon.
@@ -135,6 +141,9 @@ pub enum LibraryOp {
     /// W-7: `GET /dirs?path=` của điện thoại Online có `features: browse` (§6.11). `path` rỗng = gốc bộ nhớ trong.
     /// Trả [`Outcome::Dirs`]; Offline ⇒ `Offline`; thư mục không còn (`404`) ⇒ `InvalidInput`.
     Dirs { device: DeviceId, path: String },
+    /// Bản `Dirs` daemon đọc lần trước (bộ đệm trong RAM, không gọi điện thoại) ⇒ [`Outcome::Dirs`], hoặc `Missing`
+    /// khi chưa có. UI vẽ ngay rồi vẫn `Dirs` để làm mới.
+    Cached { device: DeviceId, path: String },
     /// W-8 (§6.12, cần `features: edit`): tạo thư mục `path` (cả cha còn thiếu). Trả [`Outcome::Edited`] với đường
     /// điện thoại đã làm sạch. Lỗi: `Exists` (`409`), `Forbidden` (`403` — gốc, `Android/`, mục ẩn, tắt quyền),
     /// `InvalidInput` (`400`), `Offline`.
@@ -240,20 +249,30 @@ pub enum DaemonToUi {
     Error {
         message: String,
     },
-    /// Daemon → UI: đưa cửa sổ lên trước (người dùng chọn "Mở cửa sổ" khi UI đang chạy).
+    /// Daemon → UI: đưa cửa sổ lên trước (người dùng chọn "Mở" ở khay khi UI đang chạy).
     Focus,
     /// Ảnh chụp đầy đủ (gd1_07): ngay sau `Hello` của vai `Ui`, rồi mỗi khi thiết bị / mục / lô đổi — gộp tối đa
     /// [`MAX_PUSH_PER_SEC`] lần / s. UI thay toàn bộ trạng thái bằng bản này.
     Snapshot(Snapshot),
     /// Tiến độ giữa hai ảnh chụp (chỉ mục đang gửi), cùng nhịp gộp. UI áp lên bản đầy đủ gần nhất.
     Progress(ProgressDelta),
+    /// Trạng thái cửa sổ lần trước + dữ liệu điện thoại cho khung đầu: vai `Ui`, ngay sau `Ok` của `Hello`, trước
+    /// `Snapshot` đầu. `view: None` = chưa có (daemon mới chạy).
+    Restore(Box<Restore>),
     /// Trả lời đúng một lần cho lệnh có `req`.
     Reply {
         req: u64,
         outcome: Outcome,
     },
-    /// Daemon → UI: mở (hoặc đưa lên trước) cửa sổ cài đặt — menu khay "Cài đặt…" khi UI đang chạy (gd1_12).
-    OpenSettings,
+}
+
+/// Nội dung [`DaemonToUi::Restore`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Restore {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view: Option<ViewState>,
+    pub cached: CachedData,
 }
 
 /// Trần nhịp đẩy `Snapshot` + `Progress` cho mỗi client.
@@ -905,6 +924,40 @@ mod tests {
         assert_eq!(serde_json::to_string(&DaemonToUi::Ok).unwrap(), r#"{"type":"ok"}"#);
     }
 
+    /// Khôi phục cửa sổ: `saveView` / `restore` / `cached` đi một dòng, đọc lại đúng.
+    #[test]
+    fn restore_wire_format_round_trips() {
+        use crate::view::{BrowserState, PageState};
+        let dev = DeviceId("3f9a".into());
+        let save =
+            UiToDaemon::SaveView { view: Box::new(ViewState { page: PageState::Devices, ..ViewState::default() }) };
+        let wire = r#"{"type":"save_view","view":{"page":{"page":"devices"},"history":[]}}"#;
+        assert_eq!(serde_json::to_string(&save).unwrap(), wire);
+        assert_eq!(serde_json::from_str::<UiToDaemon>(wire).unwrap(), save);
+        let cached = UiToDaemon::Library { req: 9, op: LibraryOp::Cached { device: dev.clone(), path: "DCIM".into() } };
+        let wire = r#"{"type":"library","req":9,"op":{"op":"cached","device":"3f9a","path":"DCIM"}}"#;
+        assert_eq!(serde_json::to_string(&cached).unwrap(), wire);
+        assert_eq!(serde_json::from_str::<UiToDaemon>(wire).unwrap(), cached);
+        let restore = DaemonToUi::Restore(Box::new(Restore {
+            view: Some(ViewState {
+                page: PageState::Library { device: dev.clone() },
+                browser: Some(BrowserState { device: dev.clone(), at: Some("DCIM".into()), ..BrowserState::default() }),
+                ..ViewState::default()
+            }),
+            cached: CachedData {
+                device: Some(dev.clone()),
+                dirs: vec![DirListing { path: "DCIM".into(), dirs: vec![], files: vec![] }],
+                library: None,
+            },
+        }));
+        let line = serde_json::to_string(&restore).unwrap();
+        assert!(line.starts_with(r#"{"type":"restore","view":{"page":{"page":"library","device":"3f9a"}"#), "{line}");
+        assert_eq!(serde_json::from_str::<DaemonToUi>(&line).unwrap(), restore);
+        // Daemon mới chạy: chưa có gì.
+        let empty = serde_json::to_string(&DaemonToUi::Restore(Box::default())).unwrap();
+        assert_eq!(empty, r#"{"type":"restore","cached":{}}"#);
+    }
+
     /// Mẫu dây của các lệnh / trả lời gd1_07 — cửa sổ (gd1_08) và điện thoại giả của test đọc đúng dạng này.
     #[test]
     fn command_and_reply_wire_format() {
@@ -1002,7 +1055,6 @@ mod tests {
                     r#""theme":"dark","themePreset":"deeppink"}}"#
                 ),
             ),
-            (DaemonToUi::OpenSettings, r#"{"type":"open_settings"}"#),
             (
                 DaemonToUi::Reply { req: 8, outcome: Outcome::Failed { error: CommandError::NotWritable } },
                 r#"{"type":"reply","req":8,"outcome":{"kind":"failed","error":{"code":"not_writable"}}}"#,
