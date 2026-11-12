@@ -971,9 +971,11 @@ fn create_upload(state: &Mutex<State>, req: &Request) -> Reply {
     let Some(name) = req.header("x-file-name").and_then(decode_opt) else { return Reply::status(400) };
     let name = name.rsplit(['/', '\\']).next().unwrap_or("").to_owned();
     let Some(length) = req.header_u64("upload-length").filter(|l| *l > 0) else { return Reply::status(400) };
+    // §6.9: đang khai `browse` thì giữ `.` đầu (thư mục ẩn có thật là đích hợp lệ — W-11).
+    let keep_hidden = state.lock().unwrap().features.iter().any(|f| f == "browse");
     let dir = match req.header("x-file-dir") {
         None => String::new(),
-        Some(raw) => match decode_opt(raw).and_then(|d| sanitize_dir(&d)) {
+        Some(raw) => match decode_opt(raw).and_then(|d| sanitize_dir(&d, keep_hidden)) {
             Some(d) => d,
             None => return Reply::status(400),
         },
@@ -1126,8 +1128,8 @@ fn parse_range(v: &str, size: u64) -> Option<(u64, u64)> {
     (a < size && a <= b).then_some((a, b))
 }
 
-/// Làm sạch `X-File-Dir` như điện thoại (PROTOCOL 6.9). `None` ⇒ `400`.
-fn sanitize_dir(raw: &str) -> Option<String> {
+/// Làm sạch `X-File-Dir` như điện thoại (PROTOCOL 6.9). `None` ⇒ `400`. `keep_hidden` (đang khai `browse`) ⇒ giữ `.` đầu.
+fn sanitize_dir(raw: &str, keep_hidden: bool) -> Option<String> {
     let mut out = Vec::new();
     for seg in raw.split(['/', '\\']) {
         if seg == ".." {
@@ -1135,8 +1137,9 @@ fn sanitize_dir(raw: &str) -> Option<String> {
         }
         let cleaned: String =
             seg.chars().map(|c| if c.is_control() || "\\:*?\"<>|".contains(c) { '_' } else { c }).collect();
-        let cleaned = cleaned.trim().trim_start_matches('.').trim().to_owned();
-        if cleaned.is_empty() {
+        let cleaned = cleaned.trim();
+        let cleaned = if keep_hidden { cleaned } else { cleaned.trim_start_matches('.').trim() }.to_owned();
+        if cleaned.is_empty() || cleaned == "." {
             continue;
         }
         out.push(cleaned);

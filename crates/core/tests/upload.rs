@@ -323,6 +323,21 @@ async fn cw3a_nested_folder_keeps_dirs() {
     }
 }
 
+// W-11 / §6.9 — thư mục ẩn có thật là đích hợp lệ khi điện thoại khai `browse`; không `browse` thì điện thoại bỏ `.` đầu.
+#[tokio::test]
+async fn hidden_dir_kept_only_with_browse() {
+    for (features, want) in [(&["dirs", "browse"][..], ".vdr/media/.cfg"), (&["dirs"][..], "vdr/media/cfg")] {
+        let phone = FakePhone::start().await;
+        phone.set_features(features);
+        let mut rig = Rig::with_phone(phone, small_chunks(), None, true).await;
+        let cfg = rig.src().join(".cfg");
+        write(&cfg, "a.mp4", 40 * KB, 1);
+        rig.add(&[cfg], ".vdr/media");
+        rig.until(|e| matches!(e, TransferEvent::BatchFinished { sent: 1, .. })).await;
+        assert_eq!(rig.phone.files()[0].dir.as_deref(), Some(want), "{features:?}");
+    }
+}
+
 // C-W3a — điện thoại cũ không có `dirs`.
 #[tokio::test]
 async fn cw3a_phone_without_dirs_sends_flat_and_flags() {

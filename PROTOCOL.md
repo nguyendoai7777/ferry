@@ -309,6 +309,9 @@ PC đẩy tệp và thư mục y như copy/paste giữa hai ổ trong Explorer /
   trước khi gửi; điện thoại cũng coi `\` là phân cách).
 - **Điện thoại làm sạch** từng đoạn như tên tệp (ký tự cấm `\ : * ? " < > |` và ký tự điều khiển → `_`, bỏ `.` đầu,
   bỏ khoảng trắng hai đầu), bỏ đoạn rỗng và `.`; `..` ⇒ `400`; quá 8 cấp hoặc quá 255 ký tự sau làm sạch ⇒ `400`.
+  **Đang khai `browse` (W-11, W-12) ⇒ không bỏ `.` đầu**: thư mục ẩn có thật trong bộ nhớ là đích hợp lệ (vd gửi vào
+  `.vdr/media`, thả thư mục `.config`), đoạn đúng bằng `.` / `..` vẫn xử lý như trên. Không `browse` (nơi lưu riêng của
+  app) ⇒ vẫn bỏ `.` đầu như cũ.
   Chuỗi rỗng = gốc. `dir` trong phản hồi (`POST /uploads`, `201` cuối) là bản đã làm sạch — PC lưu lại để đối chiếu.
 - **Trùng**: thư mục đã có ⇒ gộp vào (như paste "merge"); tệp trùng tên trong cùng thư mục ⇒ điện thoại đổi tên
   `a (1).mp4`. PC tránh gửi lại bằng bước Checking (trùng `dir` + tên + cỡ ⇒ bỏ qua, §5).

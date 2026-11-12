@@ -45,6 +45,8 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
     `copy`, `fetch`; gốc `dir` = `Documents`; `Inbox` chỉ đọc; `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`.
     Gặp 12/11/2026: iPhone chỉ khai `ipv6, dirs, batch` ⇒ PC chỉ có cây ảo, `.vdr` gửi vào thành `vdr` (§6.9 bỏ dấu
     chấm) và không sửa được. PC không cần đổi gì: mọi thứ đi theo `features`.
+  - **§6.9 — giữ `.` đầu trong `X-File-Dir` khi khai `browse`** (12/11/2026, cả Android lẫn iPhone): gửi vào thư mục ẩn
+    `.vdr` hiện bị làm sạch thành `vdr`. Điện thoại giả + test `upload::hidden_dir_kept_only_with_browse` đã theo luật mới.
   - **Mã thiết bị bền qua cài lại app** (HMAC của `ANDROID_ID`): cài lại app đổi `id` ⇒ PC đang dò thay thế qua địa chỉ
     (`discovery::find_replacement`).
   - **Điện thoại không quảng bá `_vpsync._tcp`** (gặp 11/11/2026, vivo V2425A, Sync WiFi bật, HTTP `:8080` trả `info`):

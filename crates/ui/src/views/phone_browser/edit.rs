@@ -351,9 +351,9 @@ impl PhoneBrowser {
             let op = LibraryOp::MakeDir { device: self.device.clone(), path: full };
             return self.send_edit(op, Pending::NewFolder { parent, enter }, cx);
         }
-        // Không có `edit`: thư mục ảo phía PC tới khi có tệp gửi vào (§4.6). Điện thoại bỏ `.` đầu mỗi đoạn của
-        // `X-File-Dir` (§6.9) ⇒ thư mục ảo tên ẩn sẽ thành tên thường khi có tệp — chặn ngay, nói rõ.
-        if browse::is_hidden_name(&name) {
+        // Không có `edit`: thư mục ảo phía PC tới khi có tệp gửi vào (§4.6). Không `browse` thì điện thoại bỏ `.` đầu
+        // mỗi đoạn của `X-File-Dir` (§6.9) ⇒ thư mục ảo tên ẩn sẽ thành tên thường khi có tệp — chặn ngay, nói rõ.
+        if !self.browses_storage() && browse::is_hidden_name(&name) {
             return self.field_error("browser.err_hidden_unsupported", cx);
         }
         self.virtual_dirs.push(full.clone());
@@ -375,7 +375,7 @@ impl PhoneBrowser {
             return self.field_error("browser.err_exists", cx);
         }
         if t.is_virtual {
-            if browse::is_hidden_name(&name) {
+            if !self.browses_storage() && browse::is_hidden_name(&name) {
                 return self.field_error("browser.err_hidden_unsupported", cx);
             }
             let new = browse::join_dir(&parent, &name);
