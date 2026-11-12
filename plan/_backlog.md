@@ -23,10 +23,9 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_14 `[owner-qa]` — bản cài Windows / macOS** — lý do: cần máy Windows (`pwsh ./build.ps1 -Package setup,portable`,
   cài, xem luật tường lửa "Ferry (mDNS)" trên mạng Public, gỡ cài) và Mac (`bash build.sh`, `Ferry.app` hỏi quyền mạng
   LAN, cửa sổ `ferry-ui` có lấy focus khi `LSUIElement`). Cả ba OS: cài trên máy sạch ⇒ dò điện thoại, gửi 1 tệp (gd1_14 C1).
-- **gd1_15 C8, C9 `[owner-qa]` — dán ở trình quản lý tệp thật** — lý do: session không có điều khiển màn hình; cần mắt
-  chủ dự án (Ubuntu Files) và máy Windows / Mac. Điện thoại thật đã khai `fetch` (video-player 2a18944, route kiểm
-  bằng client PC 12/11/2026); hoặc `cargo run -p ferry-core --example fake_phone`, ghép, trang thư viện:
-  Sao chép một tệp + một thư mục ⇒ dán ở Files; Cắt ⇒ dán ⇒ mục biến khỏi điện thoại, thông báo "Đã chuyển…".
+- **gd1_15 C9 `[owner-qa]` — dán ở Explorer / Finder** — lý do: cần máy Windows / Mac (Ubuntu Files chủ dự án đã thử
+  ổn 12/11/2026 với điện thoại thật). Sao chép một tệp + một thư mục ⇒ dán; Cắt ⇒ dán (Finder: ⌥⌘V) ⇒ mục biến khỏi
+  điện thoại. macOS: `clipboard/macos.rs` chưa biên dịch lần nào (không check chéo được từ Linux).
 - **Icon nhúng trong exe Windows** (gd1_14 mục 10) — lý do: cần máy Windows kiểm resource; shortcut đã dùng `ferry.ico`.
 - **Chờ app điện thoại `video-player`** — lý do: việc ở repo điện thoại (session mobile), PC đã xong phần mình. Khi điện
   thoại có thì thử thật trên vivo V2425A (`adb connect <ip>:5555`, `~/Android/Sdk/platform-tools/adb`):

@@ -41,7 +41,7 @@ giữa các thư mục điện thoại (W-9) giữ nguyên.
 | C5 | Phiên cũ > 24 h bị dọn lúc khởi động | ✅ |
 | C6 | Engine: Cắt khi thiếu `edit` ⇒ Forbidden; Sao chép ⇒ Ready + clipboard; Bỏ ⇒ xoá thư mục tạm; Cắt + dời ⇒ `Moved{4,0}` + thông báo | `engine::tests::export_copies_then_moves_after_paste` ✅ |
 | C7 | Clipboard X11 thật đưa `TARGETS` + `x-special/gnome-copied-files` (đọc bằng `xclip`) | `cargo test -p ferry-daemon x11_clipboard -- --ignored` ✅ |
-| C8 `[owner-qa]` | `fake_phone` + Files (Ubuntu): Sao chép một tệp, một thư mục ⇒ Dán; Cắt ⇒ Dán ⇒ mục biến khỏi điện thoại | chưa — session không có điều khiển màn hình |
+| C8 `[owner-qa]` | `fake_phone` + Files (Ubuntu): Sao chép một tệp, một thư mục ⇒ Dán; Cắt ⇒ Dán ⇒ mục biến khỏi điện thoại | ✅ chủ dự án 12/11/2026, điện thoại thật |
 | C9 `[owner-qa]` | Explorer (Windows), Finder ⌥⌘V (macOS) | chưa — cần máy |
 
 ## 9. Lựa chọn của Claude (D-9)
