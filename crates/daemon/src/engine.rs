@@ -669,15 +669,31 @@ impl Engine {
                 });
                 None
             }
-            LibraryOp::MakeDir { device, path } => self.edit_op(outbox, req, &device, move |c| async move {
-                c.make_dir(&path).await.map(|path| Outcome::Edited { path })
-            }),
-            LibraryOp::Rename { device, path, name } => self.edit_op(outbox, req, &device, move |c| async move {
-                c.rename(&path, &name).await.map(|path| Outcome::Edited { path })
-            }),
-            LibraryOp::Delete { device, path } => self.edit_op(outbox, req, &device, move |c| async move {
-                c.delete_entry(&path).await.map(|()| Outcome::Done)
-            }),
+            LibraryOp::MakeDir { device, path } => {
+                self.edit_op(outbox, req, &device, feature::EDIT, move |c| async move {
+                    c.make_dir(&path).await.map(|path| Outcome::Edited { path })
+                })
+            }
+            LibraryOp::Rename { device, path, name } => {
+                self.edit_op(outbox, req, &device, feature::EDIT, move |c| async move {
+                    c.rename(&path, &name).await.map(|path| Outcome::Edited { path })
+                })
+            }
+            LibraryOp::Delete { device, path } => {
+                self.edit_op(outbox, req, &device, feature::EDIT, move |c| async move {
+                    c.delete_entry(&path).await.map(|()| Outcome::Done)
+                })
+            }
+            LibraryOp::Copy { device, path, dir } => {
+                self.edit_op(outbox, req, &device, feature::COPY, move |c| async move {
+                    c.copy_entry(&path, &dir).await.map(|path| Outcome::Edited { path })
+                })
+            }
+            LibraryOp::Move { device, path, dir } => {
+                self.edit_op(outbox, req, &device, feature::COPY, move |c| async move {
+                    c.move_entry(&path, &dir).await.map(|path| Outcome::Edited { path })
+                })
+            }
             LibraryOp::Download { device, remote_ids } => {
                 if remote_ids.is_empty() {
                     return Some(Err(CommandError::InvalidInput));
@@ -724,6 +740,8 @@ impl Engine {
         outbox: &Outbox,
         req: u64,
         device: &DeviceId,
+        // `edit` (§6.12) hoặc `copy` (§6.13, luôn đi cùng `edit`).
+        need: &str,
         call: F,
     ) -> Option<Result<Outcome, CommandError>>
     where
@@ -734,7 +752,11 @@ impl Engine {
             Ok(c) => c,
             Err(e) => return Some(Err(e)),
         };
-        if !self.devices.get(device).is_some_and(|d| d.features.iter().any(|f| f == feature::EDIT)) {
+        if !self
+            .devices
+            .get(device)
+            .is_some_and(|d| d.features.iter().any(|f| f == feature::EDIT) && d.features.iter().any(|f| f == need))
+        {
             return Some(Err(CommandError::Forbidden));
         }
         let (outbox, tx, device) = (outbox.clone(), self.internal_tx.clone(), device.clone());
@@ -2313,10 +2335,29 @@ mod tests {
         let (rx, out) =
             call(&rig.engine, &outbox, rx, 6, LibraryOp::Delete { device: dev.clone(), path: "Download".into() }).await;
         assert_eq!(out, Outcome::Done);
-        let (_rx, out) =
-            call(&rig.engine, &outbox, rx, 7, LibraryOp::Delete { device: dev, path: "Download".into() }).await;
+        let (rx, out) =
+            call(&rig.engine, &outbox, rx, 7, LibraryOp::Delete { device: dev.clone(), path: "Download".into() }).await;
         assert_eq!(out, Outcome::Failed { error: CommandError::Missing });
         assert!(phone.files().is_empty() && phone.made_dirs().is_empty());
+
+        // W-9: chưa khai `copy` ⇒ Forbidden; có rồi thì chép / dời tới điện thoại.
+        phone.add_file("c.mp4", Some("Movies"), vec![1; 3]);
+        let copy = || LibraryOp::Copy { device: dev.clone(), path: "Movies/c.mp4".into(), dir: "Movies".into() };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 8, copy()).await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::Forbidden });
+        phone.set_features(&["dirs", "browse", "edit", "copy"]);
+        // Lần đọc `info` trước còn trong `INFO_REFRESH_EVERY`: chờ hết rồi `List` mới đọc lại.
+        tokio::time::sleep(INFO_REFRESH_EVERY).await;
+        let (rx, _) = call(&rig.engine, &outbox, rx, 9, LibraryOp::List { device: dev.clone() }).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (rx, out) = call(&rig.engine, &outbox, rx, 10, copy()).await;
+        assert_eq!(out, Outcome::Edited { path: "Movies/c (2).mp4".into() });
+        let mv = LibraryOp::Move { device: dev.clone(), path: "Movies/c.mp4".into(), dir: String::new() };
+        let (rx, out) = call(&rig.engine, &outbox, rx, 11, mv).await;
+        assert_eq!(out, Outcome::Edited { path: "c.mp4".into() });
+        let mv = LibraryOp::Move { device: dev, path: "Movies".into(), dir: "Movies".into() };
+        let (_rx, out) = call(&rig.engine, &outbox, rx, 12, mv).await;
+        assert_eq!(out, Outcome::Failed { error: CommandError::InvalidInput });
         rig.engine.shutdown();
     }
 

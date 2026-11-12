@@ -30,6 +30,10 @@ pub mod path {
     pub const RENAME: &str = "/api/v1/rename";
     /// `DELETE ?path=<URL-encoded>` — chỉ khi có [`super::feature::EDIT`] (§6.12).
     pub const ENTRIES: &str = "/api/v1/entries";
+    /// `POST` `{"path","dir"}` ⇒ `201` `{"path"}` — chỉ khi có [`super::feature::COPY`] (§6.13).
+    pub const COPY: &str = "/api/v1/copy";
+    /// `POST` `{"path","dir"}` ⇒ `200` `{"path"}` — dời (Cắt → Dán), chỉ khi có [`super::feature::COPY`] (§6.13).
+    pub const MOVE: &str = "/api/v1/move";
 }
 
 /// Tên header riêng của giao thức (PROTOCOL 6.3, 6.5).
@@ -54,6 +58,8 @@ pub mod feature {
     pub const BROWSE: &str = "browse";
     /// Thư mục mới / đổi tên / xoá trên bộ nhớ (§6.12, W-8); chỉ có cùng [`BROWSE`].
     pub const EDIT: &str = "edit";
+    /// Sao chép / dời giữa thư mục (§6.13, W-9); chỉ có cùng [`EDIT`].
+    pub const COPY: &str = "copy";
 }
 
 /// Đuôi video điện thoại nhận (PROTOCOL 6.6), chữ thường.

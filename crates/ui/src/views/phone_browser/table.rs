@@ -15,7 +15,9 @@ use materiant::theme::{ActiveTheme, Neutral};
 use super::PhoneBrowser;
 use crate::{assets, fmt};
 
-pub const ROW_HEIGHT: f32 = 32.;
+pub const ROW_HEIGHT: f32 = 28.;
+/// Khung danh sách chừa trên / dưới, dòng đầu không dính sát đầu bảng.
+const LIST_PAD_Y: f32 = 4.;
 const MODIFIED_W: f32 = 112.;
 const KIND_W: f32 = 84.;
 const SIZE_W: f32 = 72.;
@@ -152,17 +154,21 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                 .into_any_element()
         } else {
             let sel_rows = selected.clone();
+            // Mục đang Cắt vẽ mờ như Explorer (W-9).
+            let cut = this.cut_paths(cx);
             let entries_for_rows = entries.clone();
             let entries_for_activate = entries.clone();
             div()
                 .flex_1()
                 .min_h(px(0.))
+                .py(px(LIST_PAD_Y))
                 .opacity(if dim { 0.6 } else { 1. })
                 .child(
                     VirtualList::new("br-table", count, px(ROW_HEIGHT), move |ix, _, cx| {
                         let e = &entries_for_rows[ix];
                         let c = cx.theme().colors().clone();
                         let is_sel = sel_rows.contains(&ix);
+                        let is_cut = !cut.is_empty() && cut.contains(&super::edit::Target::of(e).path);
                         let click = weak.clone();
                         let right = weak.clone();
                         let menu_weak = weak.clone();
@@ -177,6 +183,7 @@ pub fn table_view(this: &PhoneBrowser, cx: &mut Context<PhoneBrowser>) -> materi
                                 .px(px(ROW_PAD_X))
                                 .rounded(px(ROW_RADIUS))
                                 .when(is_sel, |d| d.bg(c.primary.opacity(0.14)))
+                                .when(is_cut, |d| d.opacity(0.5))
                                 .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
                                     let (ctrl, shift) = (ev.modifiers.secondary(cx), ev.modifiers.shift);
                                     let _ = click.update(cx, |this, cx| this.click_row(ix, ctrl, shift, cx));

@@ -550,6 +550,14 @@ async fn handle(mut sock: TcpStream, state: Arc<Mutex<State>>) {
             Ok(body) => rename(&mut state.lock().unwrap(), &body),
             Err(code) => Reply::status(code),
         },
+        ("POST", "/api/v1/copy") => match read_body(&mut sock, &req, 4096).await {
+            Ok(body) => transfer(&mut state.lock().unwrap(), &body, true),
+            Err(code) => Reply::status(code),
+        },
+        ("POST", "/api/v1/move") => match read_body(&mut sock, &req, 4096).await {
+            Ok(body) => transfer(&mut state.lock().unwrap(), &body, false),
+            Err(code) => Reply::status(code),
+        },
         ("DELETE", "/api/v1/entries") => delete_entry(&mut state.lock().unwrap(), &req),
         ("POST", "/api/v1/uploads") => create_upload(&state, &req),
         (m, p) if p.starts_with("/api/v1/uploads/") => {
@@ -746,6 +754,102 @@ fn delete_entry(s: &mut State, req: &Request) -> Reply {
     s.files.retain(|f| !f.dir.as_deref().is_some_and(|d| d == p || d.starts_with(&prefix)));
     s.made_dirs.retain(|d| *d != p && !d.starts_with(&prefix));
     Reply::empty(204)
+}
+
+// ---- W-9 (§6.13): sao chép / dời ----
+
+fn join(dir: &str, name: &str) -> String {
+    if dir.is_empty() { name.to_owned() } else { format!("{dir}/{name}") }
+}
+
+/// Tên trống ở `dir`: `a.mp4`, `a (2).mp4`… (thư mục: `Phim (2)`).
+fn free_name(s: &State, dir: &str, name: &str, folder: bool) -> String {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((st, e)) if !folder && !st.is_empty() => (st, format!(".{e}")),
+        _ => (name, String::new()),
+    };
+    let mut n = 1;
+    loop {
+        let cand = if n == 1 { name.to_owned() } else { format!("{stem} ({n}){ext}") };
+        if !s.any_exists_ci(&join(dir, &cand)) {
+            return cand;
+        }
+        n += 1;
+    }
+}
+
+fn transfer(s: &mut State, body: &[u8], copy: bool) -> Reply {
+    if !s.features.iter().any(|f| f == "copy") {
+        return Reply::status(403);
+    }
+    let (Some(raw), Some(raw_dir)) = (json_field(body, "path"), json_field(body, "dir")) else {
+        return Reply::status(400);
+    };
+    let (p, dir) = match (clean_path(&raw), clean_path(&raw_dir)) {
+        (Ok(p), Ok(d)) => (p, d),
+        (Err(c), _) | (_, Err(c)) => return Reply::status(c),
+    };
+    if protected(&p) || (!dir.is_empty() && protected(&dir)) {
+        return Reply::status(403);
+    }
+    if !s.dir_exists(&dir) {
+        return Reply::status(404);
+    }
+    let (parent, name) = p.rsplit_once('/').unwrap_or(("", &p));
+    let (parent, name) = (parent.to_owned(), name.to_owned());
+    if let Some(ix) = s.file_index(&p) {
+        if !copy && parent == dir {
+            return Reply::json(200, json!({"path": p}));
+        }
+        let fresh = free_name(s, &dir, &name, false);
+        let target = join(&dir, &fresh);
+        if copy {
+            let mut f = s.files[ix].clone();
+            f.id = s.new_id();
+            f.name = fresh;
+            f.dir = Some(dir);
+            s.files.push(f);
+            return Reply::json(201, json!({"path": target}));
+        }
+        s.files[ix].name = fresh;
+        s.files[ix].dir = Some(dir);
+        return Reply::json(200, json!({"path": target}));
+    }
+    if !s.dir_exists(&p) {
+        return Reply::status(404);
+    }
+    let prefix = format!("{p}/");
+    if dir == p || dir.starts_with(&prefix) {
+        return Reply::status(400);
+    }
+    if !copy && parent == dir {
+        return Reply::json(200, json!({"path": p}));
+    }
+    let target = join(&dir, &free_name(s, &dir, &name, true));
+    let remap = |d: &str| -> Option<String> {
+        if d == p { Some(target.clone()) } else { d.strip_prefix(&prefix).map(|r| format!("{target}/{r}")) }
+    };
+    if copy {
+        let files: Vec<StoredFile> =
+            s.files.iter().filter(|f| f.dir.as_deref().is_some_and(|d| remap(d).is_some())).cloned().collect();
+        for mut f in files {
+            f.id = s.new_id();
+            f.dir = f.dir.as_deref().and_then(remap);
+            s.files.push(f);
+        }
+        let dirs: Vec<String> = s.made_dirs.iter().filter_map(|d| remap(d)).collect();
+        s.made_dirs.extend(dirs);
+        s.made_dirs.insert(target.clone());
+        return Reply::json(201, json!({"path": target}));
+    }
+    for f in &mut s.files {
+        if let Some(n) = f.dir.as_deref().and_then(remap) {
+            f.dir = Some(n);
+        }
+    }
+    s.made_dirs = s.made_dirs.iter().map(|d| remap(d).unwrap_or_else(|| d.clone())).collect();
+    s.made_dirs.insert(target.clone());
+    Reply::json(200, json!({"path": target}))
 }
 
 fn authorized(state: &Mutex<State>, req: &Request) -> bool {

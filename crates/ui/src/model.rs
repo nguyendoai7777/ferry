@@ -21,6 +21,23 @@ pub enum ModelEvent {
     Reply { req: u64, outcome: Outcome },
 }
 
+/// Bảng nháp Cắt / Sao chép của bộ nhớ điện thoại (W-9): chỉ giữ đường, không gọi mạng tới lúc Dán. Sống ở `Model` để
+/// trình duyệt mở lại (chọn đích ⇄ thư viện) vẫn dán được.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageClip {
+    pub device: DeviceId,
+    pub entries: Vec<ClipEntry>,
+    /// Cắt ⇒ Dán là dời, xong thì bảng nháp rỗng; Sao chép thì giữ để dán tiếp.
+    pub cut: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipEntry {
+    /// Đường đầy đủ từ gốc bộ nhớ.
+    pub path: String,
+    pub folder: bool,
+}
+
 pub struct Model {
     pub snapshot: Snapshot,
     /// Đã nhận ít nhất một `Snapshot` (trước đó chưa biết gì về thiết bị).
@@ -31,6 +48,7 @@ pub struct Model {
     /// Các thư mục đã đọc khi điện thoại cho duyệt bộ nhớ (W-7) — trình duyệt mở lại thấy ngay, offline hiện mờ.
     pub storage: HashMap<DeviceId, FsCache>,
     pub state: UiState,
+    pub clip: Option<StorageClip>,
     sender: Option<Sender<UiToDaemon>>,
     next_req: u64,
 }
@@ -46,6 +64,7 @@ impl Model {
             libraries: HashMap::new(),
             storage: HashMap::new(),
             state: UiState::load(),
+            clip: None,
             sender,
             next_req: 1,
         }
@@ -120,6 +139,15 @@ impl Model {
             .iter()
             .find(|d| &d.id == device)
             .is_some_and(|d| d.features.iter().any(|f| f == feature::EDIT))
+    }
+
+    /// Điện thoại cho chép / dời giữa thư mục (W-9, `features: copy`) — chỉ có nghĩa cùng [`Self::edits_storage`].
+    pub fn copies_storage(&self, device: &DeviceId) -> bool {
+        self.snapshot
+            .devices
+            .iter()
+            .find(|d| &d.id == device)
+            .is_some_and(|d| d.features.iter().any(|f| f == feature::COPY))
     }
 
     /// Khoá thư mục đích nhớ theo chế độ: cùng chuỗi `dir` mang nghĩa khác khi có / không `browse` (§6.11).

@@ -9,7 +9,7 @@ mod fake_phone;
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     let phone = fake_phone::FakePhone::start().await;
-    phone.set_features(&["ipv6", "dirs", "batch", "browse", "edit"]);
+    phone.set_features(&["ipv6", "dirs", "batch", "browse", "edit", "copy"]);
     for (name, dir, len) in [
         ("IMG_0001.jpg", "DCIM/Camera", 2_400_000),
         ("IMG_0002.jpg", "DCIM/Camera", 2_100_000),

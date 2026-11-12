@@ -127,8 +127,12 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
   dòng (`context_menu` dừng lan sự kiện), dòng bên trong bắt chuột phải trước để chọn dòng (con nhận trước cha); một hộp
   thoại chung cho thư mục mới / đổi tên / xoá; xoá nhiều mục gửi từng lệnh, đủ trả lời mới đọc lại thư mục cha. Không có
   `edit`: thư mục mới là thư mục ảo như cũ, đổi tên / xoá chỉ cho thư mục ảo. Thử UI không cần điện thoại thật:
-  `cargo run -p ferry-core --example fake_phone` (khai `browse` + `edit`, có sẵn thư mục) rồi nhập tay địa chỉ nó in, PIN
+  `cargo run -p ferry-core --example fake_phone` (khai `browse` + `edit` + `copy`, có sẵn thư mục) rồi nhập tay địa chỉ nó in, PIN
   `123456` — chạy một bản `ferry` riêng với `FERRY_DATA_DIR` / `FERRY_CONFIG_FILE` khác để không đụng bản dev.
+- **Cắt / Sao chép / Dán (W-9, `features: copy`, §6.13)**: `LibraryOp::{Copy, Move}` đi qua cùng `edit_op` (cần cả `edit` lẫn
+  `copy`). Bảng nháp là `Model::clip` (chỉ đường, không gọi mạng; sống qua lần mở lại trình duyệt), UI ở
+  `phone_browser/clip.rs`; Dán gửi từng mục, đủ trả lời mới đọc lại thư mục đích (+ nguồn khi dời). Mục ảo không chép.
+  App điện thoại cài §6.13 sau (12/11/2026 mới có ở PC + `fake_phone`) ⇒ máy thật chưa khai `copy` thì Dán xám.
 - **`features` của máy Online không tự mới** (gặp 11/11/2026: ghép xong mới bật "Cho máy tính duyệt bộ nhớ" ⇒ PC
   vẫn "Chỉ thấy thư mục đã có tệp gửi qua Ferry"): daemon chỉ đọc `info` lúc nối (`Internal::Connected`), probe định kỳ
   chỉ chạy cho máy chưa Online. Màn duyệt điện thoại (`LibraryOp::List` / `Dirs`) đọc lại `info` kèm token (`refresh_info`,

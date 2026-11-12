@@ -142,6 +142,12 @@ pub enum LibraryOp {
     Rename { device: DeviceId, path: String, name: String },
     /// W-8: xoá tệp, hoặc thư mục cùng cây con — không hoàn tác (UI hỏi trước). Một mục mỗi lệnh. Trả `Done`.
     Delete { device: DeviceId, path: String },
+    /// W-9 (§6.13, cần `features: copy`): chép `path` vào thư mục `dir` (rỗng = gốc). Trùng tên ⇒ điện thoại tự đặt
+    /// `tên (2)`. Trả [`Outcome::Edited`] (đường bản chép); lỗi như [`Self::Rename`], chép thư mục vào cây con ⇒
+    /// `InvalidInput`, đang nhận upload vào mục đó ⇒ `Exists`.
+    Copy { device: DeviceId, path: String, dir: String },
+    /// W-9: dời `path` vào `dir` (Cắt → Dán). Trả [`Outcome::Edited`] (đường mới); lỗi như [`Self::Copy`].
+    Move { device: DeviceId, path: String, dir: String },
 }
 
 /// Lệnh màn cài đặt (PROTOCOL 4.5). Quên điện thoại đi [`PhoneOp::Forget`].

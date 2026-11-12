@@ -12,6 +12,7 @@
 //! - Menu chuột phải + thư mục mới / đổi tên / xoá (W-8, §6.12): [`edit`].
 
 mod breadcrumb;
+mod clip;
 mod edit;
 mod table;
 mod tree;
@@ -97,6 +98,8 @@ pub struct PhoneBrowser {
     edit_busy: bool,
     edit_req: HashMap<u64, edit::Pending>,
     deleting: Option<edit::DeleteRun>,
+    /// W-9: lượt Dán đang chờ trả lời.
+    pasting: Option<clip::PasteRun>,
     /// Lỗi của lệnh sửa vừa rồi (băng trên bảng), mất khi đổi thư mục / làm mới.
     notice: Option<String>,
     _subs: Vec<Subscription>,
@@ -191,6 +194,7 @@ impl PhoneBrowser {
             edit_busy: false,
             edit_req: HashMap::new(),
             deleting: None,
+            pasting: None,
             notice: None,
             _subs: subs,
         };

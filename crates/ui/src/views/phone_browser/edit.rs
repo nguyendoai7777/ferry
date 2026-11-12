@@ -1,11 +1,13 @@
 //! Sửa bộ nhớ điện thoại (W-8, PROTOCOL §4.6, §6.12): menu chuột phải theo loại mục, hộp nhập tên (thư mục mới / đổi
 //! tên), hộp xác nhận xoá, và xử lý trả lời của daemon.
 //!
-//! - Tệp: Đổi tên · Xoá. Chọn nhiều + chuột phải lên mục đang chọn ⇒ "Xoá N mục".
-//! - Thư mục (bảng / cây): Mở · Thư mục mới · Đổi tên · Xoá. Gốc cây: Thư mục mới. "Khác": không menu.
-//! - Khoảng trống của bảng: Thư mục mới · Làm mới.
+//! Menu như Explorer (Cắt / Sao chép / Dán ở `clip.rs`, W-9):
+//! - Tệp: Cắt · Sao chép │ Đổi tên · Xoá. Chọn nhiều + chuột phải lên mục đang chọn ⇒ Cắt · Sao chép │ Xoá N mục.
+//! - Thư mục (bảng / cây): Mở │ Cắt · Sao chép · Dán (vào nó) │ Thư mục mới │ Đổi tên · Xoá. Gốc cây: Dán │ Thư mục mới.
+//!   "Khác": không menu.
+//! - Khoảng trống của bảng: Làm mới │ Dán │ Thư mục mới.
 //! - Điện thoại không khai `edit` (hoặc đang dựng từ `list`): thư mục mới là thư mục ảo phía PC như trước; đổi tên / xoá
-//!   chỉ cho thư mục ảo. Offline: mục sửa thật bị tắt.
+//!   chỉ cho thư mục ảo, mục thật vẫn hiện nhưng xám. Offline: mục sửa thật bị tắt.
 
 use std::collections::BTreeSet;
 
@@ -21,6 +23,7 @@ use materiant::overlay::dialog::Dialog;
 use materiant::theme::ActiveTheme;
 
 use super::PhoneBrowser;
+use crate::model::ClipEntry;
 
 /// Một mục bị sửa (đường đầy đủ từ gốc).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +45,7 @@ impl Target {
         }
     }
 
-    fn parent(&self) -> String {
+    pub(super) fn parent(&self) -> String {
         browse::parent_dir(&self.path).to_owned()
     }
 }
@@ -62,9 +65,14 @@ pub enum Edit {
 /// Lệnh đã gửi, chờ điện thoại trả lời.
 #[derive(Debug, Clone)]
 pub enum Pending {
-    NewFolder { parent: String, enter: bool },
+    NewFolder {
+        parent: String,
+        enter: bool,
+    },
     Rename(Target),
     Delete(Target),
+    /// Một mục của lượt Dán (W-9).
+    Paste(ClipEntry),
 }
 
 /// Một lượt xoá nhiều mục: đợi đủ trả lời mới đọc lại các thư mục cha.
@@ -77,7 +85,7 @@ pub struct DeleteRun {
 }
 
 /// `path` nằm trong (hoặc là) thư mục `dir`.
-fn inside(path: &str, dir: &str) -> bool {
+pub(super) fn inside(path: &str, dir: &str) -> bool {
     path == dir || path.starts_with(&format!("{dir}/"))
 }
 
@@ -95,7 +103,7 @@ pub fn sanitize_name(name: &str) -> Option<String> {
     browse::sanitize_folder_name(name).filter(|n| !n.starts_with('.'))
 }
 
-fn error_key(e: &CommandError) -> &'static str {
+pub(super) fn error_key(e: &CommandError) -> &'static str {
     match e {
         CommandError::Exists => "browser.err_exists",
         CommandError::Missing => "browser.err_missing",
@@ -126,30 +134,35 @@ impl PhoneBrowser {
         if self.selected.len() > 1 && self.selected.contains(&ix) {
             let targets: Vec<Target> =
                 self.selected.iter().filter_map(|&i| self.entries.get(i)).map(Target::of).collect();
-            if targets.iter().all(|t| t.is_virtual) || real {
-                let n = targets.len().to_string();
-                let w = weak.clone();
-                let off = !online && targets.iter().any(|t| !t.is_virtual);
-                return menu.item(
-                    MenuItem::new("br-m-delete-n", self.i18n.t_args("browser.menu_delete_n", &[("n", &n)]))
-                        .danger(true)
-                        .disabled(off)
-                        .on_select(move |window, cx| {
-                            let t = targets.clone();
-                            let _ = w.update(cx, |this, cx| this.start_delete(t, window, cx));
-                        }),
-                );
-            }
-            return menu;
+            let n = targets.len().to_string();
+            let all_virtual = targets.iter().all(|t| t.is_virtual);
+            let off = !(all_virtual || real) || (!online && !all_virtual);
+            let w = weak.clone();
+            let del = targets.clone();
+            return self.clip_items(menu, targets, weak, cx).separator().item(
+                MenuItem::new("br-m-delete-n", self.i18n.t_args("browser.menu_delete_n", &[("n", &n)]))
+                    .danger(true)
+                    .disabled(off)
+                    .on_select(move |window, cx| {
+                        let t = del.clone();
+                        let _ = w.update(cx, |this, cx| this.start_delete(t, window, cx));
+                    }),
+            );
         }
         let target = Target::of(e);
         let mut menu = menu;
         if target.folder {
             let (w, path) = (weak.clone(), target.path.clone());
-            menu = menu.item(MenuItem::new("br-m-open", self.label("browser.menu_open")).on_select(move |_, cx| {
-                let p = path.clone();
-                let _ = w.update(cx, |this, cx| this.go(Location::Dir(p), cx));
-            }));
+            menu = menu
+                .item(MenuItem::new("br-m-open", self.label("browser.menu_open")).on_select(move |_, cx| {
+                    let p = path.clone();
+                    let _ = w.update(cx, |this, cx| this.go(Location::Dir(p), cx));
+                }))
+                .separator();
+        }
+        menu = self.clip_items(menu, vec![target.clone()], weak, cx);
+        if target.folder {
+            menu = self.paste_item(menu, &target.path, weak, cx).separator();
             menu = self.new_folder_item(menu, &target.path, weak, real && !online);
         }
         self.rename_delete_items(menu, &target, weak, real, online)
@@ -157,16 +170,17 @@ impl PhoneBrowser {
 
     /// Menu của khoảng trống trong bảng.
     pub(crate) fn blank_menu(&self, menu: Menu, weak: &WeakEntity<Self>, cx: &App) -> Menu {
-        let mut menu = menu;
-        if let Location::Dir(p) = &self.at {
-            menu = self.new_folder_item(menu, p, weak, self.edit_known(cx) && self.offline);
-        }
         let w = weak.clone();
-        menu.item(MenuItem::new("br-m-refresh", self.label("browser.menu_refresh")).icon(IconName::Refresh).on_select(
-            move |_, cx| {
-                let _ = w.update(cx, |this, cx| this.refresh(cx));
-            },
-        ))
+        let menu = menu.item(
+            MenuItem::new("br-m-refresh", self.label("browser.menu_refresh")).icon(IconName::Refresh).on_select(
+                move |_, cx| {
+                    let _ = w.update(cx, |this, cx| this.refresh(cx));
+                },
+            ),
+        );
+        let Location::Dir(p) = &self.at else { return menu };
+        let menu = self.paste_item(menu.separator(), p, weak, cx).separator();
+        self.new_folder_item(menu, p, weak, self.edit_known(cx) && self.offline)
     }
 
     /// Menu của một dòng cây.
@@ -183,14 +197,19 @@ impl PhoneBrowser {
         let real = self.edit_known(cx);
         let online = !self.offline;
         if path.is_empty() {
+            let menu = self.paste_item(menu, "", weak, cx).separator();
             return self.new_folder_item(menu, "", weak, real && !online);
         }
         let target = Target { path: path.clone(), name: label.to_owned(), folder: true, is_virtual };
         let (w, p) = (weak.clone(), path.clone());
-        let menu = menu.item(MenuItem::new("br-m-open", self.label("browser.menu_open")).on_select(move |_, cx| {
-            let p = p.clone();
-            let _ = w.update(cx, |this, cx| this.go(Location::Dir(p), cx));
-        }));
+        let menu = menu
+            .item(MenuItem::new("br-m-open", self.label("browser.menu_open")).on_select(move |_, cx| {
+                let p = p.clone();
+                let _ = w.update(cx, |this, cx| this.go(Location::Dir(p), cx));
+            }))
+            .separator();
+        let menu = self.clip_items(menu, vec![target.clone()], weak, cx);
+        let menu = self.paste_item(menu, path, weak, cx).separator();
         let menu = self.new_folder_item(menu, path, weak, real && !online);
         self.rename_delete_items(menu, &target, weak, real, online)
     }
@@ -205,11 +224,10 @@ impl PhoneBrowser {
         ))
     }
 
+    /// │ Đổi tên · Xoá. Mục thật khi điện thoại chưa khai `edit` (hoặc offline) vẫn hiện, xám — như Explorer, menu không
+    /// đổi hình theo trạng thái.
     fn rename_delete_items(&self, menu: Menu, t: &Target, weak: &WeakEntity<Self>, real: bool, online: bool) -> Menu {
-        if !(t.is_virtual || real) {
-            return menu;
-        }
-        let off = !t.is_virtual && !online;
+        let off = !t.is_virtual && !(real && online);
         let (w1, t1, w2, t2) = (weak.clone(), t.clone(), weak.clone(), t.clone());
         menu.separator()
             .item(MenuItem::new("br-m-rename", self.label("browser.menu_rename")).disabled(off).on_select(
@@ -461,6 +479,7 @@ impl PhoneBrowser {
                 (_, Some(e)) => self.edit_failed(&e, window, cx),
                 _ => self.edit_failed(&CommandError::Internal, window, cx),
             },
+            Pending::Paste(e) => self.on_paste_reply(e, outcome, cx),
             Pending::Delete(t) => {
                 let Some(run) = self.deleting.as_mut() else { return true };
                 run.left = run.left.saturating_sub(1);
@@ -512,6 +531,12 @@ impl PhoneBrowser {
         for p in parents {
             self.fetch_dir(p, cx);
         }
+        self.publish_storage(cx);
+        self.recompute(cx);
+    }
+
+    /// Bộ đệm thư mục vừa sửa tay ⇒ chép sang `Model` (trình duyệt mở lại thấy ngay) và dựng lại `items` / `known`.
+    pub(super) fn publish_storage(&mut self, cx: &mut Context<Self>) {
         if let Some(fs) = &self.storage {
             let snapshot = fs.clone();
             let device = self.device.clone();
@@ -520,11 +545,10 @@ impl PhoneBrowser {
             });
         }
         self.sync_storage();
-        self.recompute(cx);
     }
 
     /// Đang đứng trong thư mục vừa xoá ⇒ về thư mục cha của nó (không ghi lịch sử).
-    fn leave_deleted(&mut self, deleted: &[Target], cx: &mut Context<Self>) {
+    pub(super) fn leave_deleted(&mut self, deleted: &[Target], cx: &mut Context<Self>) {
         let Location::Dir(at) = self.at.clone() else { return };
         if let Some(t) = deleted.iter().find(|t| t.folder && inside(&at, &t.path)) {
             self.at = Location::Dir(t.parent());

@@ -495,3 +495,33 @@ async fn edit_makes_renames_and_deletes() {
     assert!(p.files().is_empty());
     assert_eq!(p.made_dirs(), ["Download/Mới"]);
 }
+
+/// W-9 (§6.13): chép / dời; trùng tên ⇒ điện thoại đặt `tên (2)`, thư mục vào cây con ⇒ `400`, thiếu `copy` ⇒ `403`.
+#[tokio::test]
+async fn copy_and_move_pick_free_names() {
+    let Some((p, c)) = paired(Family::V4).await else { return };
+    p.add_file("a.mp4", Some("Download/Phim"), vec![1; 3]);
+    p.add_file("a.mp4", Some("Movies"), vec![2; 4]);
+    p.set_features(&["dirs", "browse", "edit"]);
+    assert!(matches!(c.copy_entry("Download/Phim/a.mp4", "Movies").await, Err(ClientError::WrongPin)));
+    p.set_features(&["dirs", "browse", "edit", "copy"]);
+
+    assert_eq!(c.copy_entry("Download/Phim/a.mp4", "Movies").await.unwrap(), "Movies/a (2).mp4");
+    assert_eq!(c.copy_entry("Download/Phim/a.mp4", "Download/Phim").await.unwrap(), "Download/Phim/a (2).mp4");
+    assert_eq!(c.copy_entry("Download/Phim", "Movies").await.unwrap(), "Movies/Phim");
+    assert_eq!(c.dirs("Movies/Phim").await.unwrap().files.len(), 2);
+    assert!(matches!(c.copy_entry("Download/Phim", "Download/Phim/x").await, Err(ClientError::NotFound)));
+    assert!(matches!(c.move_entry("Movies", "Movies/Phim").await, Err(ClientError::BadRequest)));
+    assert!(matches!(c.copy_entry("Download/Phim", "Android").await, Err(ClientError::WrongPin)));
+
+    assert_eq!(c.move_entry("Movies/a.mp4", "Download").await.unwrap(), "Download/a.mp4");
+    assert_eq!(
+        c.move_entry("Download/a.mp4", "Download").await.unwrap(),
+        "Download/a.mp4",
+        "cùng thư mục: không làm gì"
+    );
+    assert_eq!(c.move_entry("Movies/Phim", "Download").await.unwrap(), "Download/Phim (2)");
+    assert!(matches!(c.dirs("Movies/Phim").await, Err(ClientError::NotFound)));
+    assert_eq!(c.dirs("Download/Phim (2)").await.unwrap().files.len(), 2);
+    assert_eq!(p.files().len(), 6);
+}

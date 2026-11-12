@@ -3,7 +3,7 @@
 > Hợp đồng chung với app điện thoại `video-player` (Android đã cài — `video-player/android`, task_09; iOS cài đúng giao
 > thức này sau). Tệp này **tự đủ**: triết lý, mô hình, màn hình, và **giao thức v1**. Ngày chốt: 2026-11-10 (W-1);
 > bổ sung IPv6 (§6.8) + thư mục kiểu copy/paste (§6.9) 2026-11-11 (W-3); duyệt bộ nhớ điện thoại (§6.11) 2026-11-11 (W-7); thư mục mới / đổi tên / xoá trên điện thoại (§6.12)
-> 2026-11-11 (W-8).
+> 2026-11-11 (W-8); sao chép / dời trên điện thoại (§6.13) 2026-11-12 (W-9).
 > **Đổi giao thức = sửa tệp này trước, rồi sửa cả hai phía** (bản bên `video-player` phải giống hệt mục 6).
 > Mục 3 là đề xuất gốc; bố cục thật của repo ở `CLAUDE.md`.
 
@@ -398,6 +398,24 @@ Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai k
 - PC: `409` ⇒ "Đã có mục tên này"; `404` ⇒ đọc lại thư mục cha; `403` ⇒ "Điện thoại không cho sửa ở đây". Xong mọi
   việc ⇒ đọc lại (`GET /dirs`) thư mục cha của mục vừa sửa.
 
+### 6.13 Sao chép / dời trên điện thoại — Cắt · Sao chép · Dán
+
+Chỉ khi `info.features` có **`copy`** (W-9), và `copy` chỉ được khai khi đang có `edit` (§6.12). Như Cắt / Sao chép / Dán
+của Explorer: PC giữ "bảng nháp" (đường các mục đã chọn), điện thoại chỉ làm từng mục khi PC dán. Chung với §6.12: Bearer,
+`path` / `dir` làm sạch như `X-File-Dir`, thân JSON ≤ 4 KB, `400` / `403` / `404` như §6.12 (vùng cấm áp cho cả `path`
+lẫn `dir`, trừ `dir` rỗng = gốc là đích hợp lệ), mỗi request một mục — chọn nhiều thì PC gửi lần lượt.
+
+- **Sao chép** — `POST /api/v1/copy` `{"path":"Download/a.mp4","dir":"Movies"}` ⇒ `201` `{"path":"Movies/a.mp4"}`.
+  Tệp hay thư mục (chép cả cây con). Đích đã có mục cùng tên (không phân biệt hoa thường) ⇒ điện thoại **tự đặt tên mới**
+  `a (2).mp4`, `a (3).mp4`… (thư mục: `Phim (2)`) rồi trả đường thật — không `409`; chép vào chính thư mục đang chứa nó
+  cũng ra bản `(2)`. Chép thư mục vào chính nó / cây con của nó ⇒ `400`. Thiếu chỗ ⇒ `507` (dở dang thì dọn bản chép dở).
+- **Dời (Cắt → Dán)** — `POST /api/v1/move` `{"path":"Download/a.mp4","dir":"Movies"}` ⇒ `200` `{"path":"Movies/a.mp4"}`.
+  Trùng tên ở đích ⇒ tự đặt tên mới như trên. `dir` = thư mục đang chứa ⇒ `200` không làm gì. Dời thư mục vào chính nó /
+  cây con ⇒ `400`.
+- Đang nhận upload vào mục đó ⇒ `409` (PC thử lại sau). Thư viện (`list`) đi theo như §6.12.
+- PC: Cắt / Sao chép không gọi mạng; Dán bật khi bảng nháp có mục và điện thoại có `copy`. Dán xong ⇒ đọc lại thư mục
+  đích (và thư mục nguồn khi dời); dời xong thì bảng nháp rỗng, sao chép thì giữ để dán tiếp.
+
 ## 7. Kiểm thử
 
 - **Không cần điện thoại thật**: Android emulator + `adb forward tcp:18080 tcp:8080` → nhập tay `127.0.0.1:18080`
@@ -416,6 +434,6 @@ Chỉ khi `info.features` có **`edit`** (W-8), và `edit` chỉ được khai k
 
 ## 8. Ngoài phạm vi v1 (đừng làm trước)
 
-Đồng bộ thư mục hai chiều · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
+Đồng bộ thư mục hai chiều · kéo thả để dời / chép giữa thư mục trên điện thoại (dùng Cắt / Sao chép / Dán §6.13) · mã hoá TLS / ghép bằng QR · đánh thức điện thoại từ xa
 (điện thoại phải tự bật Sync WiFi) · nhiều điện thoại gửi song song cùng lúc (cho phép chọn, nhưng hàng đợi mỗi máy chạy
 tuần tự) · iOS (chờ phía iOS cài giao thức này).

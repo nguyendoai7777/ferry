@@ -301,6 +301,23 @@ impl PhoneClient {
         self.send(self.request(Method::DELETE, &q)).await.map(drop)
     }
 
+    /// `POST /api/v1/copy` (§6.13) — chép tệp / thư mục `entry` vào thư mục `dir` (rỗng = gốc). Trùng tên ⇒ điện thoại tự
+    /// đặt `tên (2)`; trả đường thật của bản chép.
+    pub async fn copy_entry(&self, entry: &str, dir: &str) -> Result<String> {
+        self.transfer(path::COPY, entry, dir).await
+    }
+
+    /// `POST /api/v1/move` (§6.13) — dời `entry` vào `dir`; trả đường mới.
+    pub async fn move_entry(&self, entry: &str, dir: &str) -> Result<String> {
+        self.transfer(path::MOVE, entry, dir).await
+    }
+
+    async fn transfer(&self, route: &str, entry: &str, dir: &str) -> Result<String> {
+        let body = serde_json::json!({ "path": protocol::normalize_dir(entry), "dir": protocol::normalize_dir(dir) });
+        let r: EntryPath = json(self.send(self.json_request(Method::POST, route, &body)).await?).await?;
+        Ok(r.path)
+    }
+
     fn json_request(&self, method: Method, path: &str, body: &serde_json::Value) -> RequestBuilder {
         let bytes = serde_json::to_vec(body).unwrap_or_default();
         self.request(method, path)
