@@ -4,7 +4,6 @@
 //! `cargo run -p ferry-core --example fake_phone`
 
 #[path = "../tests/fake_phone/mod.rs"]
-#[allow(dead_code)]
 mod fake_phone;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]

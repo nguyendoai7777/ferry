@@ -11,10 +11,10 @@ fn read(rel: &str) -> String {
 #[test]
 fn linux_desktop_entry_matches_window_app_id_and_binaries() {
     let entry = read("packaging/linux/ferry.desktop");
-    // Cửa sổ `ferry-ui` đặt `app_id: "ferry"` (crates/ui/src/main.rs) ⇒ tệp tên `ferry.desktop` + `StartupWMClass=ferry`
+    // Cửa sổ `ferry-ui` bản phát hành đặt `app_id: "ferry"` (crates/ui/src/main.rs) ⇒ tệp tên `ferry.desktop` + `StartupWMClass=ferry`
     // để dock gom đúng cửa sổ (bàn giao gd1_12).
     let ui_main = read("crates/ui/src/main.rs");
-    assert!(ui_main.contains(r#"app_id: Some("ferry".into())"#), "app_id của cửa sổ đổi ⇒ sửa ferry.desktop");
+    assert!(ui_main.contains(r#"{ "ferry.dev" } else { "ferry" }"#), "app_id của cửa sổ đổi ⇒ sửa ferry.desktop");
     for line in ["StartupWMClass=ferry\n", "Exec=ferry\n", "Icon=ferry\n", "Exec=ferry-ui --settings\n"] {
         assert!(entry.contains(line), "ferry.desktop thiếu {line:?}");
     }

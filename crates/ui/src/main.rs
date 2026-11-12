@@ -32,6 +32,9 @@ use views::main_window::MainWindow;
 /// Cỡ mở đầu của cửa sổ chính, px logic.
 const WINDOW_SIZE: (f32, f32) = (860., 620.);
 const WINDOW_MIN_SIZE: (f32, f32) = (640., 460.);
+/// Wayland: dock lấy icon từ `<app_id>.desktop`. Bản cài là `ferry` (`packaging/linux/ferry.desktop`); bản debug mã riêng
+/// `ferry.dev` ⇒ mục `ferry.dev.desktop` do `start.sh` ghi, chạy cạnh bản đã cài không gộp nhầm icon.
+const APP_ID: &str = if cfg!(debug_assertions) { "ferry.dev" } else { "ferry" };
 
 fn main() {
     let log_file = logging::init("ui");
@@ -74,7 +77,7 @@ fn main() {
             titlebar: window_controls::titlebar(i18n.t("app.name"), app_bar::HEIGHT),
             window_decorations: Some(WindowDecorations::Client),
             window_min_size: Some(size(px(WINDOW_MIN_SIZE.0), px(WINDOW_MIN_SIZE.1))),
-            app_id: Some("ferry".into()),
+            app_id: Some(APP_ID.into()),
             ..materiant::window::window_options()
         };
         let (handle, main) = match gpui_kit::open_window(options, cx, |window, cx| {

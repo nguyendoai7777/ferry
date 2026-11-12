@@ -38,3 +38,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [lints]
 workspace = true
+
+[build-dependencies]
+# Icon của exe Windows (`build.rs`); nền khác không gọi.
+embed-resource = "3"

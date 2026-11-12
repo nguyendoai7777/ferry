@@ -79,6 +79,7 @@ Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb for
 
 ## Bẫy
 
+- **Icon dock / taskbar**: Wayland lấy icon theo `app_id` ⇒ `<app_id>.desktop`. Bản cài `ferry` (`packaging/linux/ferry.desktop`); bản debug `ferry.dev` (`APP_ID` trong `crates/ui/src/main.rs`), `start.sh` ghi `~/.local/share/applications/ferry.dev.desktop` "Ferry (dev)". Windows: `crates/ui/build.rs` nhúng `packaging/windows/ferry.ico` vào `ferry-ui.exe`; macOS bản dev nhúng `ferry.icns`.
 - **Socket Unix ≤ 104 byte** (macOS; Linux 108): `FERRY_DATA_DIR` sâu làm `bind` hỏng ("exceeds capacity of sun_path").
   `ipc::Endpoint::daemon` tự rơi về `<tmp>/ferry-<băm>/daemon.sock` khi đường dẫn quá 100 byte — đừng gỡ.
 - **Khay Linux là SNI tự viết** (`platform/linux/sni.rs`, bê từ fastcast, gd1_07): `zbus` chạy trên runtime engine,

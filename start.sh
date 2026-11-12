@@ -32,6 +32,29 @@ export CARGO_TARGET_DIR="$root/ferry/target/$(xd_target_name "$repo" ferry)"
 dev="$root/ferry/target/dev"
 export FERRY_DATA_DIR="$dev/data" FERRY_CONFIG_FILE="$dev/config.json"
 echo "ferry từ $repo (dữ liệu dev: $dev)"
+# Wayland không cho app tự gửi icon: GNOME ghép cửa sổ theo `app_id` với `<app_id>.desktop` để lấy icon cho dock. Cửa sổ
+# bản debug có mã riêng `ferry.dev` (crates/ui/src/main.rs `APP_ID`) ⇒ mục "Ferry (dev)" cạnh "Ferry" của gói, không đè.
+# Tệp tự ghi có dấu `X-Xdesktop-Dev=true`; tệp cùng tên không có dấu (người dùng tự viết) thì không đụng.
+ferry_dev_desktop_entry() {
+  local dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications" marker="X-Xdesktop-Dev=true"
+  local file="$dir/ferry.dev.desktop"
+  if [ -f "$file" ] && ! grep -qx "$marker" "$file"; then return 0; fi
+  mkdir -p "$dir"
+  cat > "$file.tmp" <<ENTRY
+[Desktop Entry]
+Type=Application
+Name=Ferry (dev)
+Exec=$CARGO_TARGET_DIR/debug/ferry
+Icon=$repo/packaging/linux/icons/256x256.png
+Terminal=false
+Categories=Network;FileTransfer;
+StartupWMClass=ferry.dev
+$marker
+ENTRY
+  mv "$file.tmp" "$file"
+}
+[ "$(uname -s)" = Linux ] && ferry_dev_desktop_entry
+
 m="$root/materiant"
 xd_run_app --scope ferry.dev "$CARGO_TARGET_DIR/debug/ferry" \
   "$repo/crates|$repo/i18n|$repo/Cargo.toml|$m/src|$m/assets|$m/vendor|$m/Cargo.toml" \
