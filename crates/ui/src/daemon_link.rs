@@ -20,7 +20,8 @@ use crate::model::Model;
 const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
 
 enum Incoming {
-    Message(DaemonToUi),
+    // Hộp: `Snapshot` lớn, `Closed` không mang gì (clippy `large_enum_variant`).
+    Message(Box<DaemonToUi>),
     Closed,
 }
 
@@ -50,7 +51,7 @@ pub fn connect() -> Option<Link> {
             match conn.recv() {
                 Ok(Some(msg)) => {
                     let snapshot = matches!(msg, DaemonToUi::Snapshot(_));
-                    if tx.unbounded_send(Incoming::Message(msg)).is_err() {
+                    if tx.unbounded_send(Incoming::Message(Box::new(msg))).is_err() {
                         return;
                     }
                     if snapshot && let Some(f) = first.take() {
@@ -78,7 +79,7 @@ pub fn connect() -> Option<Link> {
     let (mut initial, mut closed) = (Vec::new(), false);
     while let Ok(incoming) = rx.try_recv() {
         match incoming {
-            Incoming::Message(msg) => initial.push(msg),
+            Incoming::Message(msg) => initial.push(*msg),
             Incoming::Closed => closed = true,
         }
     }
@@ -102,18 +103,18 @@ pub fn listen(link: Link, model: Entity<Model>, window: AnyWindowHandle, cx: &mu
     }
     cx.spawn(async move |cx| {
         while let Some(incoming) = rx.next().await {
-            match incoming {
-                Incoming::Message(DaemonToUi::Focus) => {
+            match incoming.map_msg() {
+                Some(DaemonToUi::Focus) => {
                     let _ = cx.update_window(window, |_, window, cx| {
                         cx.activate(true);
                         window.activate_window();
                     });
                 }
-                Incoming::Message(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
-                Incoming::Message(msg) => {
+                Some(DaemonToUi::Error { message }) => log::warn!("ipc: daemon error: {message}"),
+                Some(msg) => {
                     model.update(cx, |model, cx| model.handle(msg, cx));
                 }
-                Incoming::Closed => {
+                None => {
                     log::info!("ipc: daemon is gone, quitting");
                     cx.update(|cx| cx.quit());
                     break;
@@ -122,4 +123,14 @@ pub fn listen(link: Link, model: Entity<Model>, window: AnyWindowHandle, cx: &mu
         }
     })
     .detach();
+}
+
+impl Incoming {
+    /// Mở hộp để `match` theo biến thể.
+    fn map_msg(self) -> Option<DaemonToUi> {
+        match self {
+            Incoming::Message(msg) => Some(*msg),
+            Incoming::Closed => None,
+        }
+    }
 }

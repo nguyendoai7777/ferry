@@ -5,6 +5,7 @@
 name = "Ferry"
 
 [tray]
+update = "Cập nhật lên v{version}"
 open = "Mở"
 quit = "Thoát"
 sending = "Đang gửi {count} tệp — {percent} %"
@@ -97,6 +98,7 @@ back = "Quay lại"
 [menu]
 about = "Giới thiệu {app}"
 settings = "Cài đặt…"
+check_updates = "Kiểm tra cập nhật…"
 services = "Dịch vụ"
 hide = "Ẩn {app}"
 hide_others = "Ẩn ứng dụng khác"
@@ -342,3 +344,20 @@ language_en = "English"
 [settings.error]
 no_daemon = "Ferry chưa chạy — mở Ferry rồi thử lại"
 internal = "Ferry gặp lỗi khi lưu — thử lại, nếu vẫn lỗi hãy khởi động lại Ferry"
+
+[update]
+nav = "Cập nhật lên v{version}"
+downloading = "Đang tải bản cập nhật… {percent}%"
+installing = "Đang cài bản cập nhật…"
+failed = "Chưa cập nhật được — bấm để thử lại"
+about = "Phiên bản {version}"
+check = "Kiểm tra cập nhật"
+checking = "Đang kiểm tra cập nhật…"
+up_to_date = "Bạn đang dùng bản mới nhất"
+check_failed = "Không kiểm tra được — xem lại mạng rồi thử lại"
+available = "Đã có bản {version}"
+
+[whats_new]
+title = "Có gì mới"
+version = "Ferry {version}"
+ok = "OK"

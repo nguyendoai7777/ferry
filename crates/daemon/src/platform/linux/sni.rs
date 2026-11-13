@@ -54,6 +54,8 @@ pub struct Tray {
     shared: Shared,
     tx: UnboundedSender<Refresh>,
     status: Option<TrayStatus>,
+    /// ferry-gd2_01: bản mới cho mục "Cập nhật lên v<x>".
+    update: Option<String>,
 }
 
 impl Tray {
@@ -63,12 +65,23 @@ impl Tray {
             title: i18n.t("app.name").to_owned(),
             tooltip: i18n.t("app.name").to_owned(),
             mode: TrayMode::Idle,
-            menu: tray::menu_entries(i18n),
+            menu: tray::menu_entries(i18n, None),
             revision: 1,
         }));
         let (tx, rx) = unbounded_channel();
         rt.spawn(run(shared.clone(), rx, waker));
-        Tray { shared, tx, status: None }
+        Tray { shared, tx, status: None, update: None }
+    }
+
+    /// Có / hết bản mới: dựng lại menu.
+    pub fn set_update(&mut self, version: Option<&str>, i18n: &I18n) {
+        self.update = version.map(str::to_owned);
+        let status = self.status.take().unwrap_or_else(|| TrayStatus {
+            mode: TrayMode::Idle,
+            tooltip: i18n.t("app.name").to_owned(),
+            language: i18n.language(),
+        });
+        self.apply(&status, i18n);
     }
 
     pub fn apply(&mut self, status: &TrayStatus, i18n: &I18n) {
@@ -86,7 +99,7 @@ impl Tray {
                 c.tooltip.clone_from(&status.tooltip);
                 r.tooltip = true;
             }
-            let menu = tray::menu_entries(i18n);
+            let menu = tray::menu_entries(i18n, self.update.as_deref());
             if menu != c.menu {
                 c.menu = menu;
                 c.revision += 1;
@@ -410,7 +423,7 @@ mod tests {
     /// Menu thật (Mở · Thoát) + một mục tắt đặt thêm để thử cờ `enabled` của dbusmenu.
     fn content() -> Content {
         let i18n = I18n::new(Language::En);
-        let mut menu = tray::menu_entries(&i18n);
+        let mut menu = tray::menu_entries(&i18n, None);
         menu.push(MenuEntry::Item { id: "off", label: "Off".into(), enabled: false });
         Content { title: "Ferry".into(), tooltip: String::new(), mode: TrayMode::Idle, menu, revision: 1 }
     }

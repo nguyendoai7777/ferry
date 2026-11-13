@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dựng `<out>/Ferry.app` + `ferry_<version>_macos_<arm64|x64>[_draft].dmg`, ký ad-hoc (ferry-gd1_14, bê groove). Chạy trên Mac.
+# Dựng `<out>/Ferry.app` + `ferry_<version>_macos_<arm64|x64>[_draft].dmg` + tệp tự cập nhật `….app.zip` (ferry-gd2_01), ký ad-hoc (ferry-gd1_14, bê groove). Chạy trên Mac.
 # Không Developer ID / notarize: dịch vụ trả phí, chủ dự án quyết; lần đầu mở thì Gatekeeper cảnh báo, chuột phải > Open.
 #   bash packaging/macos/build-macos.sh                # bản phát hành: thiếu trang giấy phép là dừng
 #   bash packaging/macos/build-macos.sh --draft        # bản thử: thiếu thì cảnh báo, tên `.dmg` có `_draft`
@@ -88,4 +88,19 @@ ln -s /Applications "$stage/Applications"
 hdiutil create -quiet -volname "Ferry $version" -srcfolder "$stage" -format UDZO -ov "$dmg"
 ( cd "$out" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256" )
 
-printf '\nXong: %s (%s)\n%s\n%s' "$dmg" "$(du -h "$dmg" | cut -f1)" "$app" "$warnings"
+# Tệp tự cập nhật (ferry-gd2_01, crate `updater`): app tải `.app.zip`, soát sha256, thay `Ferry.app` đang chạy. Bản nháp không
+# đăng lên kênh cập nhật nên không ra tệp này.
+publish=""
+if [ -z "$draft" ]; then
+  update_zip="$out/ferry_${version}_macos_${arch/x86_64/x64}.app.zip"
+  rm -f "$update_zip"
+  ditto -c -k --keepParent "$app" "$update_zip"
+  ( cd "$out" && shasum -a 256 "$(basename "$update_zip")" > "$(basename "$update_zip").sha256" )
+  rel="${update_zip#"$(cd "$repo/.." && pwd)/"}"
+  publish="Tệp tự cập nhật: $update_zip
+Đăng lên kênh cập nhật (đứng ở gốc xdesktop, khi chủ dự án bảo):
+  bash cloud/deploy/publish-release.sh ferry $rel --version $version --os macos --arch ${arch/x86_64/x64} --plan free --notes ferry/release-notes/v$version.md
+"
+fi
+
+printf '\nXong: %s (%s)\n%s\n%s%s' "$dmg" "$(du -h "$dmg" | cut -f1)" "$app" "$warnings" "$publish"

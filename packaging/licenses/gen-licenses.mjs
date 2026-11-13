@@ -35,7 +35,7 @@ const extra = [
 // Không thành phần LGPL nào được chấp nhận ở ferry (D-2).
 const lgplAllowed = null;
 // Thứ phải có: một target rơi khỏi cây thì tên của nó biến mất (tray-icon: Windows / macOS; zbus: Linux; objc2: macOS).
-const required = ['gpui-pre', 'gpui-kit', 'reqwest', 'rusqlite', 'mdns-sd', 'keyring', 'notify', 'tray-icon', 'zbus', 'windows-sys', 'objc2'];
+const required = ['gpui-pre', 'gpui-kit', 'reqwest', 'rusqlite', 'mdns-sd', 'keyring', 'notify-rust', 'ureq', 'tray-icon', 'zbus', 'windows-sys', 'objc2'];
 
 function fail(message) {
   console.error(`gen-licenses: ${message}`);

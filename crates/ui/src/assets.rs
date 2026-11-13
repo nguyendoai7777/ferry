@@ -49,6 +49,7 @@ ferry_icons! {
     Send => "send",
     Phone => "phone",
     Wifi => "wifi",
+    Update => "update",
 }
 
 impl From<FerryIcon> for IconSource {

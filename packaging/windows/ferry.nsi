@@ -18,6 +18,7 @@ RequestExecutionLevel admin
 
 !include "MUI2.nsh"
 !include "Sections.nsh"
+!include "FileFunc.nsh"
 !include "x64.nsh"
 
 !define APP_NAME "Ferry"
@@ -190,6 +191,17 @@ Function .onInit
   SetShellVarContext all
   IfFileExists "${DESKTOP_LINK}" 0 +2
     SectionSetFlags ${SecDesktop} ${SF_SELECTED}
+FunctionEnd
+
+# Tự cập nhật (ferry-gd2_01): daemon chạy `_setup.exe /S /UPDATE /D=<thư mục cài>` rồi thoát ⇒ StopApp chờ exe hết khoá, cài
+# xong bật lại Ferry qua Explorer (không chạy app bằng quyền admin của bộ cài) — app mở cửa sổ, hộp "Có gì mới" hiện. Cài
+# im lặng thường (không `/UPDATE`) không bật app.
+Function .onInstSuccess
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  IfErrors +2
+    Call RunAsUser
 FunctionEnd
 
 Function un.onInit

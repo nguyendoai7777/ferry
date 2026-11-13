@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 ferry-core.workspace = true
+# Release note cho hộp "Có gì mới" (ferry-gd2_01); cửa sổ không gọi mạng, chỉ dùng `updater::notes`.
+updater.workspace = true
 # GPUI đi qua materiant (`materiant::gpui_kit`), không ghim gpui-kit lần hai (D-6).
 materiant.workspace = true
 # Ctrl+Shift+I / Ctrl+Shift+C ở bản debug (D-19, D-25); bản release crate rỗng.

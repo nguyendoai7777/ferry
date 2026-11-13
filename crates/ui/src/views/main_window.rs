@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::i18n::I18n;
-use ferry_core::ipc::{Action, CommandError, Outcome, PhoneOp, QueueOp};
+use ferry_core::ipc::{Action, CommandError, Outcome, PhoneOp, QueueOp, UpdateView};
 use ferry_core::queue::BatchId;
 use ferry_core::view::{BrowserState, PageState, TRAY_MAX, ViewState, WindowState};
 use materiant::button::{Button, Size};
@@ -40,7 +40,7 @@ use super::phone_library::PhoneLibrary;
 use super::queue_list::{self, RowCommand, RowKind, queue_list};
 use super::send_tray::{self, TrayEntry, lacks_dirs, send_tray};
 use super::settings::{SettingsEvent, SettingsPage};
-use super::side_nav::{self, Active, NavItem, SideNav};
+use super::side_nav::{self, Active, NavItem, SideNav, UpdateRow};
 use crate::fmt;
 use crate::model::{Model, ModelEvent};
 
@@ -351,13 +351,20 @@ impl MainWindow {
         }
     }
 
+    /// ferry-gd2_01: menu macOS "Kiểm tra cập nhật…" ⇒ trang Cài đặt (thẻ Giới thiệu hiện kết quả) + hỏi server ngay.
+    pub fn check_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(window, cx);
+        self.model.update(cx, |m, _| m.check_update());
+    }
+
     /// Trang Cài đặt (mục đáy cột trái, menu khay "Cài đặt…", `ferry-ui --settings`).
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.page, Page::Settings { .. }) {
             return;
         }
         let i18n = I18n::new(self.i18n.language());
-        let view = cx.new(|cx| SettingsPage::new(i18n, window, cx));
+        let model = self.model.clone();
+        let view = cx.new(|cx| SettingsPage::new(i18n, model, window, cx));
         let sub = cx.subscribe_in(&view, window, |this, _, ev: &SettingsEvent, _, cx| match ev {
             SettingsEvent::LanguageChanged(language) => {
                 this.i18n = Rc::new(I18n::new(*language));
@@ -688,7 +695,29 @@ impl MainWindow {
                 let _ = w2.update(cx, |this, cx| this.open_settings(window, cx));
             },
         )
+        .update(self.update_row(cx))
         .into_any_element()
+    }
+
+    /// ferry-gd2_01: hàng "Cập nhật lên v<x>" trên Cài đặt ở đáy cột trái khi có bản mới (đang tải: %, lỗi: thử lại).
+    fn update_row(&self, cx: &mut Context<Self>) -> Option<UpdateRow> {
+        let view = self.model.read(cx).snapshot.update.clone();
+        let version = view.version()?.to_owned();
+        let label = match &view {
+            UpdateView::Downloading { percent, .. } => {
+                self.i18n.t_args("update.downloading", &[("percent", &percent.to_string())])
+            }
+            UpdateView::Installing { .. } => self.i18n.t("update.installing").to_owned(),
+            UpdateView::Failed { .. } => self.i18n.t("update.failed").to_owned(),
+            _ => self.i18n.t_args("update.nav", &[("version", &version)]),
+        };
+        let idle = matches!(view, UpdateView::Available { .. } | UpdateView::Failed { .. });
+        let model = self.model.clone();
+        Some(UpdateRow {
+            label: label.into(),
+            shortcut: idle.then(|| crate::update::shortcut_label().into()),
+            on_click: Rc::new(move |_, cx| model.update(cx, |m, _| m.install_update())),
+        })
     }
 
     /// Trang Gửi: đầu thiết bị + vùng thả + khay chờ + hàng đợi.

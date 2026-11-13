@@ -5,6 +5,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    release_note();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_icon();
         return;
@@ -33,6 +34,25 @@ fn main() {
 "#;
     std::fs::write(&plist, body).expect("write Info.plist");
     println!("cargo:rustc-link-arg-bin=ferry-ui=-Wl,-sectcreate,__TEXT,__info_plist,{}", plist.display());
+}
+
+/// ferry-gd2_01: nhúng release note của bản đang build (`release-notes/v<version>.md`, D-22) cho hộp "Có gì mới"; chưa có
+/// tệp (version chưa tag) ⇒ `None`.
+fn release_note() {
+    let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let dir = manifest.join("../../release-notes");
+    let note = dir.join(format!("v{version}.md"));
+    // Theo dõi cả thư mục: tệp của version đang build có thể được tạo sau lần build trước.
+    println!("cargo:rerun-if-changed={}", dir.display());
+    println!("cargo:rerun-if-changed={}", note.display());
+    let value = match note.canonicalize() {
+        Ok(path) => format!("Some(include_str!({:?}))", path.display().to_string()),
+        Err(_) => "None".to_owned(),
+    };
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(out.join("release_note.rs"), format!("pub const RELEASE_NOTE: Option<&str> = {value};\n"))
+        .expect("write release_note.rs");
 }
 
 /// Icon của `ferry-ui.exe`: tài nguyên ICON đầu tiên của exe là icon cửa sổ trên taskbar.

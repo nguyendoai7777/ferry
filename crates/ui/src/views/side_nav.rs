@@ -65,6 +65,14 @@ pub enum Active {
 
 type Handler<T> = Rc<dyn Fn(T, &mut Window, &mut App)>;
 
+/// ferry-gd2_01: hàng "Cập nhật lên v<x>" ngay trên Cài đặt, chỉ khi có bản mới. Chữ + phím tắt đã dịch ở cửa sổ chính.
+pub struct UpdateRow {
+    pub label: SharedString,
+    /// "⌘D" / "Ctrl+D" — `None` khi đang tải / cài (bấm không làm gì thêm).
+    pub shortcut: Option<SharedString>,
+    pub on_click: Rc<dyn Fn(&mut Window, &mut App)>,
+}
+
 #[derive(IntoElement)]
 pub struct SideNav {
     title: SharedString,
@@ -74,9 +82,16 @@ pub struct SideNav {
     settings_label: SharedString,
     on_select: Handler<NavItem>,
     on_settings: Handler<()>,
+    update: Option<UpdateRow>,
 }
 
 impl SideNav {
+    /// Hàng cập nhật (ferry-gd2_01); `None` ⇒ không có.
+    pub fn update(mut self, row: Option<UpdateRow>) -> SideNav {
+        self.update = row;
+        self
+    }
+
     pub fn new(
         title: SharedString,
         active: Active,
@@ -92,6 +107,7 @@ impl SideNav {
             settings_label,
             on_select: Rc::new(on_select),
             on_settings: Rc::new(move |(), window, cx| on_settings(window, cx)),
+            update: None,
         }
     }
 }
@@ -122,6 +138,7 @@ impl RenderOnce for SideNav {
                     self.labels.get(ix).cloned().unwrap_or_default(),
                     self.active == Active::Item(item),
                     Rc::new(move |(), window, cx| on_select(item, window, cx)),
+                    None,
                     window,
                     cx,
                 )
@@ -141,9 +158,24 @@ impl RenderOnce for SideNav {
             self.settings_label,
             self.active == Active::Settings,
             self.on_settings,
+            None,
             window,
             cx,
         );
+        // Bản mới: icon màu nhấn để dễ thấy, phím tắt mờ ở cuối hàng.
+        let update = self.update.map(|row| {
+            let on_click = row.on_click;
+            nav_button(
+                ("side-nav-update", 0),
+                FerryIcon::Update,
+                row.label,
+                false,
+                Rc::new(move |(), window, cx| on_click(window, cx)),
+                Some(NavExtra { shortcut: row.shortcut, accent: true }),
+                window,
+                cx,
+            )
+        });
         // Cài đặt ở đáy không dùng chung vạch trượt với các mục trên: tự vẽ vạch khi đang mở.
         let settings_bar = (self.active == Active::Settings)
             .then(|| div().absolute().top_0().left_0().bottom_0().w(px(ACTIVE_BAR)).bg(c.primary));
@@ -163,8 +195,8 @@ impl RenderOnce for SideNav {
                     .flex_none()
                     .border_t_1()
                     .border_color(c.border.opacity(0.3))
-                    .child(settings)
-                    .children(settings_bar),
+                    .children(update)
+                    .child(div().relative().child(settings).children(settings_bar)),
             )
     }
 }
@@ -201,17 +233,31 @@ impl NavInk {
     }
 }
 
-/// Một hàng cao 42 px toàn bề ngang, vạch trái 3 px: icon + chữ.
+/// Phần thêm của hàng cập nhật: phím tắt ở cuối, icon màu nhấn.
+struct NavExtra {
+    shortcut: Option<SharedString>,
+    accent: bool,
+}
+
+/// Một hàng cao 42 px toàn bề ngang, vạch trái 3 px: icon + chữ (+ phím tắt mờ ở cuối).
+#[allow(clippy::too_many_arguments)]
 fn nav_button(
     id: (&'static str, usize),
     icon: FerryIcon,
     label: SharedString,
     active: bool,
     on_click: Handler<()>,
+    extra: Option<NavExtra>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let ink = NavInk::resolve(active, cx);
+    let mut ink = NavInk::resolve(active, cx);
+    if extra.as_ref().is_some_and(|e| e.accent) {
+        ink.icon = cx.theme().colors().primary;
+    }
+    let shortcut = extra.and_then(|e| e.shortcut);
+    let muted = cx.theme().colors().muted;
+    let caption = cx.theme().caption_size();
     let element_id = ElementId::from((SharedString::from(id.0), id.1));
     let focus = window
         .use_keyed_state(ElementId::from((SharedString::from(format!("{}-focus", id.0)), id.1)), cx, |_, cx| {
@@ -280,5 +326,6 @@ fn nav_button(
                 .when(!active, |t| t.group_hover(group.clone(), move |s| s.text_color(ink.hover)))
                 .child(label),
         )
+        .children(shortcut.map(|k| div().flex_none().text_size(caption).text_color(muted).child(k)))
         .into_any_element()
 }

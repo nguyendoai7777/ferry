@@ -26,6 +26,13 @@ ngay, không vào đây). Có task thì trỏ tới tệp task, đừng chép l�
 - **gd1_15 C9 `[owner-qa]` — dán ở Explorer / Finder** — lý do: cần máy Windows / Mac (Ubuntu Files chủ dự án đã thử
   ổn 12/11/2026 với điện thoại thật). Sao chép một tệp + một thư mục ⇒ dán; Cắt ⇒ dán (Finder: ⌥⌘V) ⇒ mục biến khỏi
   điện thoại. macOS: `clipboard/macos.rs` chưa biên dịch lần nào (không check chéo được từ Linux).
+- **gd2_01 C6 `[owner-qa]` — tự cập nhật trên Windows** — lý do: cần máy Windows: cài `_setup.exe` bản cũ, đăng bản mới lên
+  server (hoặc server giả `materiant/updater/tools/fake-server.mjs` + bản debug-assertions), bấm "Cập nhật lên v<x>" ⇒ UAC (bản cài
+  cần admin) ⇒ cài im lặng `/S /UPDATE` ⇒ Ferry tự bật lại, hộp "Có gì mới".
+- **gd2_01 — tự cập nhật trên Linux** — lý do: bản `.deb` ở `/usr` cần root nên chỉ mở trang tải; cần đường cài lần đầu vào thư mục
+  người dùng + tệp `.tar.gz` (như fastcast, chưa làm ở cả hai app).
+- **gd2_01 — server cập nhật thật** — lý do: chủ dự án thêm DNS + Caddy cho `cloud.ferry.sandtechs.com` (D-27) và deploy `cloud`
+  (khoá `cloud/secrets/ferry/update-prod-key.json`); tới lúc đó bản phát hành soát lỗi mạng, chỉ log.
 - **Icon nhúng trong exe Windows** (gd1_14 mục 10) — lý do: cần máy Windows kiểm resource; shortcut đã dùng `ferry.ico`.
 - **Chờ app điện thoại `video-player`** — lý do: việc ở repo điện thoại (session mobile), PC đã xong phần mình. Khi điện
   thoại có thì thử thật trên vivo V2425A (`adb connect <ip>:5555`, `~/Android/Sdk/platform-tools/adb`):

@@ -3,6 +3,7 @@
 //!
 //! `ferry` chạy tay ⇒ mở cửa sổ ngay; lần hai (đã có instance giữ khoá) ⇒ nhờ instance đó mở cửa sổ rồi thoát.
 //! `ferry --autostart` (OS bật lúc đăng nhập, `autostart.rs`) chỉ nằm ở khay, gặp instance đã chạy thì thoát im lặng.
+//! `ferry --updated` (tự cập nhật bật lại bản mới, ferry-gd2_01) = chạy tay: mở cửa sổ, cửa sổ hiện hộp "Có gì mới".
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -17,6 +18,7 @@ mod platform;
 mod tray;
 mod tray_state;
 mod ui_process;
+mod update;
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};

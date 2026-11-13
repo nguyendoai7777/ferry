@@ -20,6 +20,8 @@ ferry-core = { path = "crates/core" }
 materiant = { path = "../materiant", features = ["font-mona-sans"] }
 # Inspector kiểu DevTools (crate `devtool` trong repo materiant, D-25): chỉ bản debug, bản release rỗng.
 devtool = { path = "../materiant/devtool" }
+# Tự cập nhật dùng chung (crate `updater` trong repo materiant, không GPUI): daemon soát / tải / cài, ferry-ui đọc release note.
+updater = { path = "../materiant/updater" }
 
 futures = "0.3"
 interprocess = "2.4"

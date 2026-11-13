@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 ferry-core.workspace = true
+# Tự cập nhật (ferry-gd2_01): crate chung của materiant, không GPUI. Kéo ureq + rustls vào daemon — chỉ chạy lúc soát.
+updater.workspace = true
 interprocess.workspace = true
 log.workspace = true
 futures.workspace = true

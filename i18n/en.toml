@@ -5,6 +5,7 @@
 name = "Ferry"
 
 [tray]
+update = "Update to v{version}"
 open = "Open"
 quit = "Quit"
 sending = "Sending {count} files — {percent}%"
@@ -97,6 +98,7 @@ back = "Back"
 [menu]
 about = "About {app}"
 settings = "Settings…"
+check_updates = "Check for Updates…"
 services = "Services"
 hide = "Hide {app}"
 hide_others = "Hide Others"
@@ -342,3 +344,20 @@ language_en = "English"
 [settings.error]
 no_daemon = "Ferry isn't running — open Ferry, then try again"
 internal = "Ferry hit an error while saving — try again, and restart Ferry if it keeps failing"
+
+[update]
+nav = "Update to v{version}"
+downloading = "Downloading update… {percent}%"
+installing = "Installing update…"
+failed = "Couldn't update — click to try again"
+about = "Version {version}"
+check = "Check for updates"
+checking = "Checking for updates…"
+up_to_date = "You're on the latest version"
+check_failed = "Couldn't check — check your network and try again"
+available = "Version {version} is available"
+
+[whats_new]
+title = "What's new"
+version = "Ferry {version}"
+ok = "OK"

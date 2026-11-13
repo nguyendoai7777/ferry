@@ -102,6 +102,8 @@ pub enum Input {
     },
     /// `UiToDaemon::SaveView`: giữ trong RAM, trả lại cho UI nối sau (`DaemonToUi::Restore`).
     SaveView(Box<ViewState>),
+    /// Trạng thái tự cập nhật đổi (ferry-gd2_01, `update.rs` trên luồng chính) ⇒ ảnh chụp kế mang nó.
+    Update(ferry_core::ipc::UpdateView),
     /// Dừng runner rồi báo `done`.
     Shutdown {
         done: std::sync::mpsc::Sender<()>,
@@ -316,6 +318,8 @@ struct Engine {
     /// trong RAM; daemon thoát thì mất.
     view: Option<ViewState>,
     dir_cache: DirCache,
+    /// ferry-gd2_01: trạng thái tự cập nhật do luồng chính báo.
+    update: ferry_core::ipc::UpdateView,
 }
 
 struct Subscriber {
@@ -383,6 +387,7 @@ impl Engine {
             clipboard: cfg.clipboard,
             view: None,
             dir_cache: DirCache::default(),
+            update: ferry_core::ipc::UpdateView::Idle,
         };
         // Phiên Cắt / Sao chép của lần chạy trước: còn trong hạn thì giữ (Windows / macOS clipboard sống qua tiến trình).
         ferry_core::export::clean_stale(&engine.export_base, ferry_core::export::KEEP_FOR);
@@ -472,6 +477,12 @@ impl Engine {
                 view.clamp();
                 let view = *view;
                 self.view = Some(view);
+            }
+            Input::Update(view) => {
+                if self.update != view {
+                    self.update = view;
+                    self.dirty = true;
+                }
             }
             Input::Shutdown { .. } => unreachable!("handled in run"),
         }
@@ -1514,6 +1525,7 @@ impl Engine {
             firewall::hint_needed(self.firewall.may_block, self.mdns_since.is_some(), self.mdns_found)
                 .then(|| self.firewall.hint());
         snapshot.export = self.export_view();
+        snapshot.update = self.update.clone();
         snapshot
     }
 
@@ -1699,6 +1711,7 @@ fn snapshot_parts(
         downloads_omitted,
         mdns_firewall: None,
         export: None,
+        update: Default::default(),
     }
 }
 
@@ -1871,7 +1884,7 @@ mod tests {
 
     use ferry_core::config::PairedDevice;
     use ferry_core::i18n::Language;
-    use ferry_core::ipc::{ExportEntry, ExportState};
+    use ferry_core::ipc::{ExportEntry, ExportState, UpdateView};
     use ferry_core::pairing::MemoryKeyring;
 
     use super::fake_phone::{self, FakePhone};
@@ -2055,6 +2068,24 @@ mod tests {
             "{} pushes in {span:.2} s",
             pushes.len()
         );
+        rig.engine.shutdown();
+    }
+
+    /// ferry-gd2_01: trạng thái cập nhật luồng chính báo ⇒ ảnh chụp kế mang nó (nút Cập nhật của cửa sổ).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn update_state_reaches_the_window_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let phone = FakePhone::start().await;
+        let rig = start(tmp.path(), &phone, None).await;
+        let (outbox, rx) = Outbox::new();
+        rig.engine.send(Input::Subscribe { conn: 1, outbox: outbox.clone() });
+        let (rx, first) = collect(rx, |m| matches!(m, DaemonToUi::Snapshot(_))).await;
+        assert!(first.iter().any(|(_, m)| matches!(m, DaemonToUi::Snapshot(s) if s.update == UpdateView::Idle)));
+        let view = UpdateView::Downloading { version: "0.1.1".into(), percent: 30 };
+        rig.engine.send(Input::Update(view.clone()));
+        let want = view.clone();
+        let (_rx, got) = collect(rx, move |m| matches!(m, DaemonToUi::Snapshot(s) if s.update == want)).await;
+        assert!(!got.is_empty());
         rig.engine.shutdown();
     }
 

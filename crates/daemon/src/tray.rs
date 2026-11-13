@@ -13,10 +13,13 @@ use crate::tray_state::TrayMode;
 
 pub const OPEN_ID: &str = "open";
 pub const QUIT_ID: &str = "quit";
+/// ferry-gd2_01: "Cập nhật lên v<x>" — chỉ có khi có bản mới.
+pub const UPDATE_ID: &str = "update";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MenuAction {
     OpenWindow,
+    Update,
     Quit,
 }
 
@@ -24,6 +27,7 @@ pub fn menu_action(id: &str) -> Option<MenuAction> {
     match id {
         OPEN_ID => Some(MenuAction::OpenWindow),
         QUIT_ID => Some(MenuAction::Quit),
+        UPDATE_ID => Some(MenuAction::Update),
         _ => None,
     }
 }
@@ -35,14 +39,25 @@ pub enum MenuEntry {
     Separator,
 }
 
-/// Menu khay: Mở · Thoát (12/11/2026: bỏ "Cài đặt…" và "Tạm dừng / Tiếp tục tất cả" — cả hai có trong cửa sổ).
+/// Menu khay: Mở · Thoát (12/11/2026: bỏ "Cài đặt…" và "Tạm dừng / Tiếp tục tất cả" — cả hai có trong cửa sổ); có bản mới
+/// (ferry-gd2_01) ⇒ thêm "Cập nhật lên v<x>" đứng đầu.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn menu_entries(i18n: &I18n) -> Vec<MenuEntry> {
-    vec![
+pub fn menu_entries(i18n: &I18n, update: Option<&str>) -> Vec<MenuEntry> {
+    let mut menu = Vec::new();
+    if let Some(version) = update {
+        menu.push(MenuEntry::Item { id: UPDATE_ID, label: update_label(i18n, version), enabled: true });
+        menu.push(MenuEntry::Separator);
+    }
+    menu.extend([
         MenuEntry::Item { id: OPEN_ID, label: i18n.t("tray.open").to_owned(), enabled: true },
         MenuEntry::Separator,
         MenuEntry::Item { id: QUIT_ID, label: i18n.t("tray.quit").to_owned(), enabled: true },
-    ]
+    ]);
+    menu
+}
+
+pub fn update_label(i18n: &I18n, version: &str) -> String {
+    i18n.t_args("tray.update", &[("version", version)])
 }
 
 /// Icon chỉ đổi theo bậc này (đang gửi: theo phần tư) — khỏi đẩy ảnh mới cho OS mỗi % tiến độ.
@@ -179,8 +194,13 @@ mod native {
 
     pub struct Tray {
         icon: TrayIcon,
+        menu: Menu,
         open: MenuItem,
         quit: MenuItem,
+        /// ferry-gd2_01: mục "Cập nhật lên v<x>" + vạch ngăn, chèn đầu menu khi có bản mới.
+        update: MenuItem,
+        update_sep: PredefinedMenuItem,
+        update_version: Option<String>,
         key: u8,
         status: Option<TrayStatus>,
     }
@@ -212,10 +232,34 @@ mod native {
             let builder = builder.with_icon(icon(TrayMode::Idle)).with_menu_on_left_click(false);
             let icon = builder
                 .with_tooltip(i18n.t("app.name"))
-                .with_menu(Box::new(menu))
+                .with_menu(Box::new(menu.clone()))
                 .build()
                 .map_err(|e| e.to_string())?;
-            Ok(Tray { icon, open, quit, key: 0, status: None })
+            let update = MenuItem::with_id(UPDATE_ID, "", true, None);
+            let update_sep = PredefinedMenuItem::separator();
+            Ok(Tray { icon, menu, open, quit, update, update_sep, update_version: None, key: 0, status: None })
+        }
+
+        /// Có / hết bản mới, hoặc đổi ngôn ngữ.
+        pub fn set_update(&mut self, version: Option<&str>, i18n: &I18n) {
+            match (self.update_version.is_some(), version) {
+                (false, Some(_)) => {
+                    let inserted =
+                        self.menu.insert(&self.update, 0).and_then(|()| self.menu.insert(&self.update_sep, 1));
+                    if let Err(e) = inserted {
+                        log::warn!("tray: insert update item: {e}");
+                    }
+                }
+                (true, None) => {
+                    let _ = self.menu.remove(&self.update);
+                    let _ = self.menu.remove(&self.update_sep);
+                }
+                _ => {}
+            }
+            if let Some(v) = version {
+                self.update.set_text(update_label(i18n, v));
+            }
+            self.update_version = version.map(str::to_owned);
         }
 
         pub fn apply(&mut self, status: &TrayStatus, i18n: &I18n) {
@@ -239,6 +283,9 @@ mod native {
             if self.status.as_ref().is_none_or(|s| s.language != status.language) {
                 self.open.set_text(i18n.t("tray.open"));
                 self.quit.set_text(i18n.t("tray.quit"));
+                if let Some(v) = &self.update_version {
+                    self.update.set_text(update_label(i18n, v));
+                }
             }
             self.status = Some(status.clone());
         }
@@ -262,7 +309,7 @@ mod tests {
     #[test]
     fn menu_is_open_and_quit_in_the_language() {
         let labels = |lang| {
-            menu_entries(&I18n::new(lang))
+            menu_entries(&I18n::new(lang), None)
                 .into_iter()
                 .map(|e| match e {
                     MenuEntry::Item { id, label, enabled } => {
@@ -275,6 +322,18 @@ mod tests {
         };
         assert_eq!(labels(Language::En), ["Open", "-", "Quit"]);
         assert_eq!(labels(Language::Vi), ["Mở", "-", "Thoát"]);
+    }
+
+    /// ferry-gd2_01: có bản mới ⇒ mục cập nhật đứng đầu, bấm ra `MenuAction::Update`.
+    #[test]
+    fn update_item_leads_the_menu_when_a_version_is_available() {
+        assert_eq!(menu_action(UPDATE_ID), Some(MenuAction::Update));
+        for (lang, want) in [(Language::En, "Update to v0.1.1"), (Language::Vi, "Cập nhật lên v0.1.1")] {
+            let menu = menu_entries(&I18n::new(lang), Some("0.1.1"));
+            assert_eq!(menu[0], MenuEntry::Item { id: UPDATE_ID, label: want.into(), enabled: true });
+            assert_eq!(menu[1], MenuEntry::Separator);
+            assert_eq!(menu.len(), 5);
+        }
     }
 
     #[test]

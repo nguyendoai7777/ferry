@@ -34,6 +34,12 @@ C1 máy sạch, ghép + khởi động lại, tự chạy, icon khay) rồi `clo
 
 Làn song song sau 01: {02 → 04, 05 → 06} và 03 chạy song song (khác tệp); 08, 09, 12 song song sau 07.
 
+## GĐ2 — phát hành, cập nhật
+
+| Task | Việc | Phụ thuộc | Model |
+| --- | --- | --- | --- |
+| `gd2_01` `auto-update` | tự cập nhật như fastcast (crate chung `materiant/updater`, server `cloud` app `ferry`): daemon soát / tải / cài, mục khay + hàng cột trái + Cmd/Ctrl+D, hộp "Có gì mới", tệp `.app.zip` / `_setup.exe /UPDATE` | gd1_14 | opus |
+
 ## Ngoài GĐ1
 
 PROTOCOL mục 8: xoá video từ PC, đồng bộ hai chiều, TLS / ghép QR, đánh thức điện thoại, gửi song song nhiều máy, iOS.

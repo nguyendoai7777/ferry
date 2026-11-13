@@ -19,6 +19,7 @@ mod model;
 mod platform;
 mod settings_link;
 mod ui_state;
+mod update;
 mod views;
 
 use std::rc::Rc;
@@ -39,7 +40,7 @@ const WINDOW_SIZE: (f32, f32) = (860., 620.);
 const WINDOW_MIN_SIZE: (f32, f32) = (640., 460.);
 /// Wayland: dock lấy icon từ `<app_id>.desktop`. Bản cài là `ferry` (`packaging/linux/ferry.desktop`); bản debug mã riêng
 /// `ferry.dev` ⇒ mục `ferry.dev.desktop` do `start.sh` ghi, chạy cạnh bản đã cài không gộp nhầm icon.
-const APP_ID: &str = if cfg!(debug_assertions) { "ferry.dev" } else { "ferry" };
+pub const APP_ID: &str = if cfg!(debug_assertions) { "ferry.dev" } else { "ferry" };
 
 fn main() {
     let log_file = logging::init("ui");
@@ -73,6 +74,8 @@ fn main() {
         }
 
         let model = cx.new(|_| Model::new(sender));
+        // ferry-gd2_01: Cmd / Ctrl+D cài bản mới.
+        update::bind(model.clone(), cx);
         // `Restore` + `Snapshot` đầu (đã nhận trước khi mở) ⇒ khung đầu vẽ đúng trang, thư mục, hàng đợi.
         for msg in link.as_mut().map(|l| std::mem::take(&mut l.initial)).unwrap_or_default() {
             model.update(cx, |m, cx| m.handle(msg, cx));
@@ -142,6 +145,8 @@ fn main() {
         })
         .detach();
         cx.activate(true);
+        // ferry-gd2_01: bản mới bật lần đầu ⇒ hộp "Có gì mới".
+        update::whats_new_on_start(I18n::new(i18n.language()), cx);
         if let Some(link) = link {
             daemon_link::listen(link, model, handle, cx);
         }

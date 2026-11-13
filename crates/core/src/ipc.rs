@@ -22,6 +22,7 @@
 //! - W-10 thêm: [`LibraryOp::Export`] / [`LibraryOp::CancelExport`], [`Snapshot::export`], [`CommandError::TooMany`].
 //! - Khôi phục cửa sổ (12/11/2026, `crate::view`): [`UiToDaemon::SaveView`] (không trả lời), [`DaemonToUi::Restore`]
 //!   ngay sau `Ok` của `Hello`, trước `Snapshot` đầu; [`LibraryOp::Cached`] đọc thư mục từ bộ đệm của daemon.
+//! - ferry-gd2_01 (tự cập nhật) thêm: [`UiToDaemon::Update`] ([`UpdateOp`], không trả lời), [`Snapshot::update`].
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -70,6 +71,58 @@ pub enum UiToDaemon {
     /// Trạng thái cửa sổ để mở lại y như cũ (`crate::view`): khi đổi (gộp) và lúc thoát. Không trả lời; daemon kẹp theo
     /// trần rồi giữ trong RAM, kết nối `Ui` sau nhận lại trong [`DaemonToUi::Restore`].
     SaveView { view: Box<ViewState> },
+    /// Tự cập nhật (ferry-gd2_01): soát ngay / cài bản mới. Không trả lời; kết quả đi qua [`Snapshot::update`].
+    Update { op: UpdateOp },
+}
+
+/// Lệnh cập nhật của cửa sổ (ferry-gd2_01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateOp {
+    /// Hỏi server ngay (menu macOS "Check for Updates…", nút Kiểm tra ở Cài đặt).
+    Check,
+    /// Tải + cài bản đang có (nút Cập nhật, Cmd / Ctrl+D); bản major / không tự cài được ⇒ mở trang tải.
+    Install,
+}
+
+/// Trạng thái tự cập nhật trong ảnh chụp (ferry-gd2_01). Daemon soát server, cửa sổ chỉ vẽ.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum UpdateView {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    /// Có bản mới. `opensPage`: bản major / bản không tự cài được (dev, `.deb`, `.zip`) ⇒ bấm mở trang tải.
+    Available {
+        version: String,
+        opens_page: bool,
+    },
+    Downloading {
+        version: String,
+        percent: u8,
+    },
+    /// Đã tải + thay bản cài, app sắp thoát và bật lại.
+    Installing {
+        version: String,
+    },
+    /// Hỏi / tải / cài lỗi. `version` còn ⇒ bấm lại thử lại.
+    Failed {
+        version: Option<String>,
+    },
+}
+
+impl UpdateView {
+    /// Bản mới để vẽ nút Cập nhật (`None` ⇒ không có nút).
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            UpdateView::Available { version, .. }
+            | UpdateView::Downloading { version, .. }
+            | UpdateView::Installing { version }
+            | UpdateView::Failed { version: Some(version) } => Some(version),
+            _ => None,
+        }
+    }
 }
 
 /// Thao tác người dùng trên mục / lô (nút ở hàng đợi). Ánh xạ sang `transfer::ItemAction` ở daemon.
@@ -321,6 +374,9 @@ pub struct Snapshot {
     /// W-10: lần Cắt / Sao chép sang máy tính gần nhất (`LibraryOp::Export`). `None` ⇒ không có.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<Box<ExportView>>,
+    /// ferry-gd2_01: tự cập nhật.
+    #[serde(default)]
+    pub update: UpdateView,
 }
 
 /// W-10 (§6.14): tiến độ Cắt / Sao chép sang máy tính.
@@ -1226,5 +1282,24 @@ mod tests {
         client.send(&UiToDaemon::Focus).unwrap();
         drop(client);
         server.join().unwrap();
+    }
+
+    /// ferry-gd2_01: lệnh cập nhật + trạng thái trong ảnh chụp; ảnh chụp cũ (không có `update`) vẫn đọc được.
+    #[test]
+    fn update_wire_format() {
+        let cmd = UiToDaemon::Update { op: UpdateOp::Install };
+        let wire = r#"{"type":"update","op":"install"}"#;
+        assert_eq!(serde_json::to_string(&cmd).unwrap(), wire);
+        assert_eq!(serde_json::from_str::<UiToDaemon>(wire).unwrap(), cmd);
+        let view = UpdateView::Available { version: "0.1.1".into(), opens_page: false };
+        let wire = r#"{"state":"available","version":"0.1.1","opensPage":false}"#;
+        assert_eq!(serde_json::to_string(&view).unwrap(), wire);
+        assert_eq!(view.version(), Some("0.1.1"));
+        assert_eq!(UpdateView::Failed { version: None }.version(), None);
+        let old: Snapshot = serde_json::from_str(
+            &serde_json::to_string(&Snapshot::default()).unwrap().replace(r#","update":{"state":"idle"}"#, ""),
+        )
+        .unwrap();
+        assert_eq!(old.update, UpdateView::Idle);
     }
 }

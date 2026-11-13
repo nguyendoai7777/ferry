@@ -1,7 +1,7 @@
 //! Thanh menu của OS (macOS; GPUI chỉ dựng menu trên macOS, nền khác `set_menus` không làm gì). Không có menu thì AppKit
 //! không có menu chính cho app ⇒ thanh menu giữ tên + menu của app trước đó (chủ dự án gặp 11/11/2026: "Claude").
 //!
-//! Menu tối thiểu: menu app (Giới thiệu, Cài đặt…, Dịch vụ, Ẩn / Ẩn ứng dụng khác / Hiện tất cả, Thoát) + Cửa sổ (Thu nhỏ,
+//! Menu tối thiểu: menu app (Giới thiệu, Kiểm tra cập nhật… — ferry-gd2_01, Cài đặt…, Dịch vụ, Ẩn / Ẩn ứng dụng khác / Hiện tất cả, Thoát) + Cửa sổ (Thu nhỏ,
 //! Phóng to, Đóng). Chữ qua i18n, dựng lại khi đổi ngôn ngữ ([`install`]). Tên in đậm đầu thanh menu là tên app của AppKit:
 //! `CFBundleName` của `Ferry.app`; exe trần (bản dev) lấy tên tiến trình `ferry-ui` — chỉ bản đóng gói hiện "Ferry".
 
@@ -15,7 +15,10 @@ use materiant::gpui_kit as gpui;
 use crate::platform::window_controls;
 use crate::views::main_window::MainWindow;
 
-gpui_kit::actions!(ferry, [About, OpenSettings, HideApp, HideOthers, ShowAll, Quit, Minimize, Zoom, CloseWindow]);
+gpui_kit::actions!(
+    ferry,
+    [About, CheckForUpdates, OpenSettings, HideApp, HideOthers, ShowAll, Quit, Minimize, Zoom, CloseWindow]
+);
 
 /// Phím tắt chuẩn của macOS. Gọi một lần lúc khởi động (phím hiện cạnh mục menu).
 pub fn bind_keys(cx: &mut App) {
@@ -35,6 +38,14 @@ pub fn register(handle: AnyWindowHandle, main: &Entity<MainWindow>, cx: &mut App
     cx.on_action(|_: &About, cx| {
         let name = cx.try_global::<MenuName>().map(|n| n.0.clone()).unwrap_or_else(|| "Ferry".into());
         about(&name);
+    });
+    let check_main = main.clone();
+    cx.on_action(move |_: &CheckForUpdates, cx| {
+        let main = check_main.clone();
+        let _ = handle.update(cx, move |_, window, cx| {
+            window.activate_window();
+            let _ = main.update(cx, |main, cx| main.check_update(window, cx));
+        });
     });
     cx.on_action(move |_: &OpenSettings, cx| {
         let main = main.clone();
@@ -73,6 +84,7 @@ pub fn install(i18n: &I18n, cx: &mut App) {
             disabled: false,
             items: vec![
                 MenuItem::action(t("menu.about"), About),
+                MenuItem::action(t("menu.check_updates"), CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::action(t("menu.settings"), OpenSettings),
                 MenuItem::separator(),

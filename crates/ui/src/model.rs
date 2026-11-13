@@ -8,7 +8,7 @@ use ferry_core::browse::FsCache;
 use ferry_core::device::{DeviceId, DeviceState};
 use ferry_core::ipc::{
     DaemonToUi, DeviceView, LibraryOp, Outcome, PhoneOp, ProgressDelta, QueueOp, Sender, SettingsOp, Snapshot,
-    UiToDaemon,
+    UiToDaemon, UpdateOp,
 };
 use ferry_core::protocol::{LibraryItem, feature};
 use ferry_core::view::{CachedData, ClipPath, ClipState, ViewState, WindowState};
@@ -193,6 +193,26 @@ impl Model {
         }
         if let Some(items) = cached.library {
             self.libraries.entry(device).or_insert(items);
+        }
+    }
+
+    /// ferry-gd2_01: tải + cài bản mới (nút ở cột trái, Cmd / Ctrl+D). Không có bản mới ⇒ không gửi gì.
+    pub fn install_update(&mut self) {
+        if self.snapshot.update.version().is_some() {
+            self.send_update(UpdateOp::Install);
+        }
+    }
+
+    /// ferry-gd2_01: hỏi server ngay (menu macOS "Kiểm tra cập nhật…", nút ở Cài đặt).
+    pub fn check_update(&mut self) {
+        self.send_update(UpdateOp::Check);
+    }
+
+    fn send_update(&mut self, op: UpdateOp) {
+        if let Some(sender) = self.sender.as_ref()
+            && let Err(e) = sender.send(&UiToDaemon::Update { op })
+        {
+            log::warn!("ipc: send failed: {e}");
         }
     }
 

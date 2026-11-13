@@ -1,6 +1,7 @@
 //! Trang Cài đặt (gd1_12, PROTOCOL 4.5). Nằm trong cửa sổ chính, mở bằng mục Cài đặt ở đáy cột trái (hoặc menu khay
 //! "Cài đặt…"). Bố cục theo Cài đặt của macOS / iOS (12/11/2026): các card `CardGroup::standalone` không tiêu đề, mỗi mục
-//! một dòng có đường kẻ chia — Ngôn ngữ + khởi động cùng hệ thống; Giao diện (nền + bảng màu, như Groovex). Không
+//! một dòng có đường kẻ chia — Ngôn ngữ + khởi động cùng hệ thống; Giao diện (nền + bảng màu, như Groovex); Giới thiệu
+//! (phiên bản + kiểm tra / cài bản mới, ferry-gd2_01 — trạng thái lấy từ ảnh chụp của `Model`, lệnh đi IPC chính). Không
 //! có giới hạn tốc độ, địa chỉ tay, thư mục theo dõi, thư mục tải về (gỡ 12/11/2026; thêm điện thoại bằng địa chỉ ở màn
 //! Thêm điện thoại).
 //!
@@ -9,16 +10,18 @@
 //! hiện dưới đúng mục bằng câu nói việc cần làm. Điện thoại đã ghép (đổi tên, xoá) ở màn Danh sách thiết bị
 //! (`views/devices.rs`), không ở đây.
 
+use ferry_core::VERSION;
 use ferry_core::config::ThemeChoice;
 use ferry_core::i18n::{I18n, Language, LanguagePref};
-use ferry_core::ipc::{SettingsOp, SettingsView};
+use ferry_core::ipc::{SettingsOp, SettingsView, UpdateView};
 use materiant::button::Button;
 use materiant::button::segmented::SegmentedButtons;
 use materiant::card::CardGroup;
 use materiant::gpui_kit::base::Disableable;
 use materiant::gpui_kit::prelude::*;
 use materiant::gpui_kit::{
-    self, App, AppContext, ClickEvent, Context, EventEmitter, IntoElement, Render, SharedString, Window, div, px,
+    self, App, AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, Render, SharedString, Subscription,
+    Window, div, px,
 };
 use materiant::scroll::ScrollArea;
 use materiant::select::Select;
@@ -26,6 +29,7 @@ use materiant::switch::Switch;
 use materiant::theme::ActiveTheme;
 use materiant::theme::picker::ThemePicker;
 
+use crate::model::{Model, ModelEvent};
 use crate::settings_link::{CallError, Request, SettingsClient, expect_settings};
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -100,13 +104,23 @@ pub struct SettingsPage {
     errors: [Option<SharedString>; Section::COUNT],
     /// Giao diện vừa đổi trên cửa sổ, chưa gửi daemon.
     appearance_dirty: bool,
+    /// ferry-gd2_01: trạng thái cập nhật (ảnh chụp) + lệnh Kiểm tra / Cập nhật.
+    model: Entity<Model>,
+    _model_sub: Subscription,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsPage {}
 
 impl SettingsPage {
-    pub fn new(i18n: I18n, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
+    pub fn new(i18n: I18n, model: Entity<Model>, window: &mut Window, cx: &mut Context<Self>) -> SettingsPage {
+        let _model_sub = cx.subscribe(&model, |_, _, ev: &ModelEvent, cx| {
+            if matches!(ev, ModelEvent::Changed) {
+                cx.notify();
+            }
+        });
         let mut page = SettingsPage {
+            model,
+            _model_sub,
             client: SettingsClient::new(),
             i18n,
             load: Load::Loading,
@@ -336,6 +350,41 @@ impl SettingsPage {
             .child(palette)
     }
 
+    /// Giới thiệu: phiên bản + trạng thái cập nhật; nút Kiểm tra cập nhật, hoặc Cập nhật lên v<x> khi đã có bản mới.
+    fn render_about(&self, cx: &mut Context<Self>) -> CardGroup {
+        let view = self.model.read(cx).snapshot.update.clone();
+        let hint: Option<SharedString> = match &view {
+            UpdateView::Idle => None,
+            UpdateView::Checking => Some(self.t("update.checking")),
+            UpdateView::UpToDate => Some(self.t("update.up_to_date")),
+            UpdateView::Available { version, .. } => {
+                Some(self.i18n.t_args("update.available", &[("version", version)]).into())
+            }
+            UpdateView::Downloading { percent, .. } => {
+                Some(self.i18n.t_args("update.downloading", &[("percent", &percent.to_string())]).into())
+            }
+            UpdateView::Installing { .. } => Some(self.t("update.installing")),
+            UpdateView::Failed { version: Some(_) } => Some(self.t("update.failed")),
+            UpdateView::Failed { version: None } => Some(self.t("update.check_failed")),
+        };
+        let busy =
+            matches!(view, UpdateView::Checking | UpdateView::Downloading { .. } | UpdateView::Installing { .. });
+        let button = match view.version() {
+            Some(version) => Button::new("settings-update", self.i18n.t_args("update.nav", &[("version", version)]))
+                .disabled(busy)
+                .on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                    page.model.update(cx, |m, _| m.install_update());
+                })),
+            None => Button::new("settings-check-update", self.t("update.check")).outlined().disabled(busy).on_click(
+                cx.listener(|page, _: &ClickEvent, _, cx| {
+                    page.model.update(cx, |m, _| m.check_update());
+                }),
+            ),
+        };
+        let label: SharedString = self.i18n.t_args("update.about", &[("version", VERSION)]).into();
+        CardGroup::new().standalone().child(cell(setting_row(cx, label, hint, button)))
+    }
+
     fn render_autostart(&self, data: &SettingsView, cx: &mut Context<Self>) -> gpui_kit::Div {
         let busy = self.busy[Section::System.ix()];
         let row = setting_row(
@@ -405,7 +454,8 @@ impl Render for SettingsPage {
                     .gap_4()
                     .py_4()
                     .child(self.render_language(&data, cx))
-                    .child(self.render_appearance(&data, cx));
+                    .child(self.render_appearance(&data, cx))
+                    .child(self.render_about(cx));
                 ScrollArea::new("settings-scroll")
                     .vertical()
                     .flex_1()

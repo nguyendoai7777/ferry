@@ -89,6 +89,10 @@ try {
             (Join-Path $repo 'packaging/windows/ferry.nsi')
         if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit $LASTEXITCODE)" }
         Write-Sha $setup
+        # Tệp tự cập nhật (ferry-gd2_01): app chạy bản cài này với `/S /UPDATE`. Đăng khi chủ dự án bảo.
+        $rel = [IO.Path]::GetRelativePath((Split-Path -Parent $repo), $setup).Replace([IO.Path]::DirectorySeparatorChar, '/')
+        Write-Host "Đăng lên kênh cập nhật (đứng ở gốc xdesktop, Git Bash):"
+        Write-Host "  bash cloud/deploy/publish-release.sh ferry $rel --version $version --os windows --arch x64 --plan free --notes ferry/release-notes/v$version.md"
     }
     if ('portable' -in $Package) {
         # Giải nén ra một thư mục `ferry`, không rải tệp ra chỗ giải nén.
