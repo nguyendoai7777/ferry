@@ -73,7 +73,14 @@ node packaging/icons/gen-icons.mjs # vẽ lại icon app máy bay giấy: png hi
 - Soát xanh mỗi task: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check licenses`.
   Đổi mã theo OS ⇒ thêm `cargo clippy -p ferry-core -p ferry-daemon --all-targets --target x86_64-pc-windows-msvc` (và
   `x86_64-unknown-linux-gnu`) — không cần máy kia, chỉ cần `rustup target add`; đặt `LIBSQLITE3_SYS_USE_PKG_CONFIG=1`
-  cho lệnh chéo (bẫy SQLite bên dưới).
+  cho lệnh chéo (bẫy SQLite bên dưới). Từ ferry-gd2_01 daemon kéo `ring` (C, qua `updater` → `rustls`) ⇒ lệnh chéo cho
+  `ferry-daemon` cần trình biên dịch C của đích (macOS không có sẵn `x86_64-linux-gnu-gcc` / header MSVC); thiếu thì chỉ
+  chéo `-p ferry-core`, daemon soát trên máy đích.
+- **Tự cập nhật** (ferry-gd2_01, crate chung `materiant/updater`): daemon soát `https://cloud.ferry.sandtechs.com` 10 s sau khi
+  bật rồi mỗi 6 giờ (`crates/daemon/src/update.rs`), có bản mới ⇒ mục khay + hàng cột trái + Cmd/Ctrl+D, cài xong daemon thoát,
+  bản mới bật với `--updated` (= chạy tay), cửa sổ hiện "Có gì mới" (`crates/ui/src/update.rs`). Bản `debug_assertions` tin khoá
+  dev + đọc `FERRY_CLOUD_URL`, `FERRY_UPDATE_AUTOINSTALL=1`; chạy thử gói `.app`: build `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true`,
+  đặt ngoài `target/`, server giả `node ../materiant/updater/tools/fake-server.mjs` (cách làm: `plan/ferry-gd2_01_auto-update.md` mục 9).
 - `ferry` chạy tay ⇒ mở cửa sổ ngay (`--autostart` thì chỉ nằm ở khay); lần hai ⇒ IPC `Focus` cho daemon đang chạy (mở cửa sổ) rồi thoát. `ferry-ui` chạy thẳng không có daemon vẫn mở cửa sổ.
 
 Thử không cần điện thoại thật: PROTOCOL mục 7 (emulator + `adb forward tcp:18080 tcp:8080`, nhập tay `127.0.0.1:18080`).
